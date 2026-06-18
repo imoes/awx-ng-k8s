@@ -1,7 +1,15 @@
-# awx-ng Custom Settings — mounted into /etc/tower/conf.d/custom.py
-# This file is picked up by AWX's production settings loader.
+# awx-ng Custom Settings — mounted as /etc/tower/settings.py
+# AWX production.py lädt diese Datei als primäre Konfiguration.
 
 import os
+
+# ── Secret Key ────────────────────────────────────────────────────────────────
+# AWX liest SECRET_KEY aus /etc/tower/SECRET_KEY (defaults.py).
+# Wir mounten das Docker Secret direkt dorthin — kein Code nötig hier.
+# Fallback: SECRET_KEY_FILE env var (falls abweichend gemountet)
+_sk_file = os.environ.get('SECRET_KEY_FILE', '/run/secrets/secret_key')
+if os.path.exists(_sk_file):
+    SECRET_KEY = open(_sk_file).read().strip()
 
 # ── Database ──────────────────────────────────────────────────────────────────
 _pg_pw_file = os.environ.get('DATABASE_PASSWORD_FILE', '')
@@ -22,21 +30,27 @@ DATABASES = {
 # ── Cache / Redis ─────────────────────────────────────────────────────────────
 _redis_host = os.environ.get('REDIS_HOST', 'redis')
 _redis_port = os.environ.get('REDIS_PORT', '6379')
+_redis_url = f'redis://{_redis_host}:{_redis_port}'
+
+# AWX nutzt seinen eigenen Cache-Backend (Django built-in RedisCache-Subklasse)
 CACHES = {
     'default': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': f'redis://{_redis_host}:{_redis_port}/1',
-        'OPTIONS': {'CLIENT_CLASS': 'django_redis.client.DefaultClient'},
+        'BACKEND': 'awx.main.cache.AWXRedisCache',
+        'LOCATION': f'{_redis_url}/1',
         'TIMEOUT': None,
     }
 }
+DJANGO_REDIS_IGNORE_EXCEPTIONS = True
+
+# Celery/Dispatcherd Broker-URL (TCP statt Unix-Socket)
+BROKER_URL = f'{_redis_url}/0'
 
 # ── Channel Layers (websocket) ────────────────────────────────────────────────
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
-            'hosts': [(f'redis://{_redis_host}:{_redis_port}/2')],
+            'hosts': [f'{_redis_url}/2'],
             'capacity': 10000,
         }
     }

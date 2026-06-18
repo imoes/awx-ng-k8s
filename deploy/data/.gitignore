@@ -1,0 +1,6 @@
+# Daten-Verzeichnisse werden nicht versioniert
+# Bind-Mount-Ziele: postgres/, redis/, projects/, receptor/
+postgres/
+redis/
+projects/
+receptor/

@@ -60,7 +60,7 @@ class RoleVariable(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = [("project_id", "role_name", "var_name")]
+        unique_together = [("project_id", "role_name", "var_name", "source")]
         ordering = ["role_name", "var_name"]
         verbose_name = "Role Variable"
 

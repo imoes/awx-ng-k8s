@@ -15,9 +15,17 @@ Endpunkte:
   POST /api/v2/locations/reconcile/                      — NetBox-Reconcile
 """
 
-import crypt
 import json
 import os
+
+try:
+    import crypt as _crypt
+    def _sha512_crypt(password: str) -> str:
+        return _crypt.crypt(password, _crypt.mksalt(_crypt.METHOD_SHA512))
+except ImportError:
+    # Python 3.13+ removed the crypt module; install passlib for sha512-crypt
+    def _sha512_crypt(password: str) -> str:
+        raise RuntimeError("sha512-crypt requires the 'crypt' module (Python ≤ 3.12) or 'passlib'")
 
 from rest_framework import generics, serializers as drf_serializers, filters, status
 from rest_framework.response import Response
@@ -106,7 +114,7 @@ class ProjectRoleScanView(APIView):
 
     Liefert den letzten Scan-Audit-Eintrag für das Projekt.
     """
-    def get(self, request, project_id):
+    def get(self, request, project_id, **kwargs):
         get_object_or_404(Project, pk=project_id)
         scan = RoleScan.objects.filter(project_id=project_id).first()
         if not scan:
@@ -122,7 +130,7 @@ class ProjectRoleScanTriggerView(APIView):
     """
     permission_classes = [IsSystemAdminOrAuditor]
 
-    def post(self, request, project_id):
+    def post(self, request, project_id, **kwargs):
         project = get_object_or_404(Project, pk=project_id)
         project_path = project.get_project_path(check_if_exists=False)
         revision = project.scm_revision or ''
@@ -262,7 +270,7 @@ class GenerateSurveyFromRolesView(APIView):
     Response: das gespeicherte survey_spec-Dict + Zähler
     """
 
-    def post(self, request, pk):
+    def post(self, request, pk, **kwargs):
         jt = get_object_or_404(JobTemplate, pk=pk)
         if not request.user.can_access(JobTemplate, 'change', jt, None):
             from rest_framework.exceptions import PermissionDenied
@@ -374,7 +382,7 @@ class HostAggregatedVariablesView(APIView):
       }
     """
 
-    def get(self, request, pk):
+    def get(self, request, pk, **kwargs):
         host = get_object_or_404(Host, pk=pk)
 
         # Tracking: pro Variable alle Quell-Schichten
@@ -396,12 +404,13 @@ class HostAggregatedVariablesView(APIView):
             host_roles = [r.strip() for r in host_roles.split(',') if r.strip()]
 
         if host_roles:
+            rv_filter = {'role_name__in': host_roles, 'source': 'defaults'}
+            project_id_param = request.query_params.get('project_id')
+            if project_id_param:
+                rv_filter['project_id'] = int(project_id_param)
             role_vars_qs = (
                 RoleVariable.objects
-                .filter(
-                    role_name__in=host_roles,
-                    source='defaults',
-                )
+                .filter(**rv_filter)
                 .order_by('role_name', 'var_name')
             )
             role_defaults: dict = {}
@@ -454,11 +463,11 @@ class HashPasswordView(APIView):
     Das Plaintext-Passwort wird nie geloggt oder gespeichert.
     """
 
-    def post(self, request):
+    def post(self, request, **kwargs):
         password = request.data.get('password', '')
         if not password or not isinstance(password, str):
             return Response({'error': "'password' ist Pflichtfeld (String)."}, status=status.HTTP_400_BAD_REQUEST)
-        hashed = crypt.crypt(password, crypt.mksalt(crypt.METHOD_SHA512))
+        hashed = _sha512_crypt(password)
         return Response({'hash': hashed})
 
 
@@ -471,7 +480,7 @@ class HostSetRootPasswordView(APIView):
     Der Klartext wird nicht gespeichert.
     """
 
-    def post(self, request, pk):
+    def post(self, request, pk, **kwargs):
         host = get_object_or_404(Host, pk=pk)
         if not request.user.can_access(Host, 'change', host, None):
             from rest_framework.exceptions import PermissionDenied
@@ -482,7 +491,7 @@ class HostSetRootPasswordView(APIView):
         if not password or not isinstance(password, str):
             return Response({'error': "'password' ist Pflichtfeld."}, status=status.HTTP_400_BAD_REQUEST)
 
-        hashed = crypt.crypt(password, crypt.mksalt(crypt.METHOD_SHA512))
+        hashed = _sha512_crypt(password)
         hvars = host.variables_dict or {}
         hvars[var_name] = hashed
 
@@ -502,7 +511,7 @@ class HostAssignRolesView(APIView):
     Ein generisches site.yml-Template liest host_roles und führt die Rollen aus.
     """
 
-    def post(self, request, pk):
+    def post(self, request, pk, **kwargs):
         host = get_object_or_404(Host, pk=pk)
         if not request.user.can_access(Host, 'change', host, None):
             from rest_framework.exceptions import PermissionDenied
@@ -545,7 +554,7 @@ class LocationReconcileView(APIView):
     """
     permission_classes = [IsSystemAdminOrAuditor]
 
-    def post(self, request):
+    def post(self, request, **kwargs):
         import urllib.request
         import urllib.error
         from django.conf import settings
