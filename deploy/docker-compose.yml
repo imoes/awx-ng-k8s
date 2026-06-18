@@ -76,6 +76,14 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       SECRET_KEY_FILE: /run/secrets/secret_key
+      # NetBox-Reconcile (optional — leer lassen wenn nicht genutzt)
+      NETBOX_URL: ${NETBOX_URL:-}
+      NETBOX_TOKEN: ${NETBOX_TOKEN:-}
+      # OIDC/SSO (optional — alle drei setzen oder alle drei leer lassen)
+      OIDC_KEY: ${OIDC_KEY:-}
+      OIDC_SECRET: ${OIDC_SECRET:-}
+      OIDC_ENDPOINT: ${OIDC_ENDPOINT:-}
+      OIDC_VERIFY_SSL: ${OIDC_VERIFY_SSL:-true}
     healthcheck:
       test: ["CMD-SHELL", "curl -sk http://localhost:8052/api/v2/ping/ | grep -q status"]
       interval: 30s
@@ -115,6 +123,12 @@ services:
       REDIS_PORT: "6379"
       SECRET_KEY_FILE: /run/secrets/secret_key
       CONTROL_PLANE_NODE_COUNT: "1"
+      NETBOX_URL: ${NETBOX_URL:-}
+      NETBOX_TOKEN: ${NETBOX_TOKEN:-}
+      OIDC_KEY: ${OIDC_KEY:-}
+      OIDC_SECRET: ${OIDC_SECRET:-}
+      OIDC_ENDPOINT: ${OIDC_ENDPOINT:-}
+      OIDC_VERIFY_SSL: ${OIDC_VERIFY_SSL:-true}
 
   # ── Lokaler Execution Node (Receptor + ansible-runner) ────────────────────
   # Dieser Node führt Jobs aus, wenn kein Remote-Proxy ausgewählt ist.

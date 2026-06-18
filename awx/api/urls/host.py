@@ -3,6 +3,13 @@
 
 from django.urls import re_path
 
+# awx-ng: per-Host Aggregat-Vars, rootpw, Rollen-Klick
+from awx.customvars.api import (
+    HostAggregatedVariablesView,
+    HostSetRootPasswordView,
+    HostAssignRolesView,
+)
+
 from awx.api.views import (
     HostList,
     HostDetail,
@@ -32,6 +39,10 @@ urls = [
     re_path(r'^(?P<pk>[0-9]+)/smart_inventories/$', HostSmartInventoriesList.as_view(), name='host_smart_inventories_list'),
     re_path(r'^(?P<pk>[0-9]+)/ad_hoc_commands/$', HostAdHocCommandsList.as_view(), name='host_ad_hoc_commands_list'),
     re_path(r'^(?P<pk>[0-9]+)/ad_hoc_command_events/$', HostAdHocCommandEventsList.as_view(), name='host_ad_hoc_command_events_list'),
+    # awx-ng: aggregierte Variablen + rootpw + Rollen
+    re_path(r'^(?P<pk>[0-9]+)/aggregated_variables/$', HostAggregatedVariablesView.as_view(), name='host_aggregated_variables'),
+    re_path(r'^(?P<pk>[0-9]+)/set_root_password/$', HostSetRootPasswordView.as_view(), name='host_set_root_password'),
+    re_path(r'^(?P<pk>[0-9]+)/assign_roles/$', HostAssignRolesView.as_view(), name='host_assign_roles'),
 ]
 
 __all__ = ['urls']

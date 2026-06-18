@@ -51,6 +51,24 @@ AWX_NG_ANSIBLE03_PATH = '/var/lib/awx/ansible03'
 # awx.customvars: Rollen-Variablen, Locations/Subnets, Proxy-Site-Zuordnung
 INSTALLED_APPS = INSTALLED_APPS + ['awx.customvars']
 
+# ── NetBox-Integration (Reconcile) ───────────────────────────────────────────
+# Gesetzt via docker-compose environment: NETBOX_URL, NETBOX_TOKEN
+NETBOX_URL = os.environ.get('NETBOX_URL', '')
+NETBOX_TOKEN = os.environ.get('NETBOX_TOKEN', '')
+
+# ── SSO / Generic OIDC ───────────────────────────────────────────────────────
+# Wird in AWX über /api/v2/settings/oidc/ gesetzt; hier als Startup-Default.
+# Env-Vars: OIDC_KEY, OIDC_SECRET, OIDC_ENDPOINT
+_oidc_key = os.environ.get('OIDC_KEY', '')
+_oidc_secret = os.environ.get('OIDC_SECRET', '')
+_oidc_endpoint = os.environ.get('OIDC_ENDPOINT', '')
+
+if _oidc_key and _oidc_secret and _oidc_endpoint:
+    SOCIAL_AUTH_OIDC_KEY = _oidc_key
+    SOCIAL_AUTH_OIDC_SECRET = _oidc_secret
+    SOCIAL_AUTH_OIDC_OIDC_ENDPOINT = _oidc_endpoint
+    SOCIAL_AUTH_OIDC_VERIFY_SSL = os.environ.get('OIDC_VERIFY_SSL', 'true').lower() != 'false'
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOGGING['handlers']['console']['level'] = 'INFO'
 
