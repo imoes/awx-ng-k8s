@@ -47,10 +47,9 @@ PROJECTS_ROOT = '/var/lib/awx/projects/'
 # Path where ansible03 is mounted (for custom variable extraction)
 AWX_NG_ANSIBLE03_PATH = '/var/lib/awx/ansible03'
 
-# ── Custom app registration (added in Phase 0) ───────────────────────────────
-# INSTALLED_APPS is extended, not replaced, by appending here.
-# This will be uncommented once awx.customvars app is built.
-# INSTALLED_APPS = INSTALLED_APPS + ['awx.customvars']
+# ── Custom app registration ───────────────────────────────────────────────────
+# awx.customvars: Rollen-Variablen, Locations/Subnets, Proxy-Site-Zuordnung
+INSTALLED_APPS = INSTALLED_APPS + ['awx.customvars']
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOGGING['handlers']['console']['level'] = 'INFO'
