@@ -1,0 +1,143 @@
+---
+# Installiert und konfiguriert einen awx-ng Remote Execution Node Proxy (Receptor + ansible-runner)
+# Verwendung: siehe deploy/PROXIES.md
+#
+# Variablen (required):
+#   proxy_node_id       — eindeutige ID für diesen Proxy (z.B. ansible03-ippen-media)
+#   awx_ng_control_host — Hostname/IP des awx-ng Control Nodes
+#   awx_ng_control_port — Receptor-Port (default: 2222)
+#   site_name           — Name der Location/Site für diesen Proxy (z.B. MUE-0)
+
+- name: Install awx-ng Receptor Proxy (Execution Node)
+  hosts: all
+  become: true
+  vars:
+    awx_ng_control_port: "2222"
+    receptor_version: "latest"
+    receptor_bin: /usr/local/bin/receptor
+    receptor_conf_dir: /etc/receptor
+    receptor_run_dir: /var/run/receptor
+    receptor_user: awx
+
+  tasks:
+    - name: Create awx user for receptor
+      ansible.builtin.user:
+        name: "{{ receptor_user }}"
+        system: true
+        shell: /bin/false
+        home: /var/lib/awx
+        create_home: true
+
+    - name: Install python3-pip and dependencies
+      ansible.builtin.package:
+        name:
+          - python3-pip
+          - python3-setuptools
+        state: present
+
+    - name: Install ansible-runner and receptorctl
+      ansible.builtin.pip:
+        name:
+          - ansible-runner
+          - receptorctl
+        executable: pip3
+        state: present
+
+    - name: Download receptor binary
+      ansible.builtin.get_url:
+        url: "https://github.com/ansible/receptor/releases/latest/download/receptor_linux_amd64"
+        dest: "{{ receptor_bin }}"
+        mode: '0755'
+        owner: root
+        group: root
+      when: receptor_version == "latest"
+
+    - name: Create receptor directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ receptor_user }}"
+        group: "{{ receptor_user }}"
+        mode: '0750'
+      loop:
+        - "{{ receptor_conf_dir }}"
+        - "{{ receptor_run_dir }}"
+
+    - name: Write receptor configuration
+      ansible.builtin.copy:
+        dest: "{{ receptor_conf_dir }}/receptor.conf"
+        owner: root
+        group: "{{ receptor_user }}"
+        mode: '0640'
+        content: |
+          ---
+          - node:
+              id: {{ proxy_node_id }}
+
+          - log-level: info
+
+          # Outbound connection to awx-ng control node (NAT-friendly, no incoming port needed)
+          - tcp-peer:
+              address: {{ awx_ng_control_host }}:{{ awx_ng_control_port }}
+              redial: true
+
+          - control-service:
+              service: control
+              filename: {{ receptor_run_dir }}/receptor.sock
+
+          # Execute ansible-runner jobs locally (close to the targets at site: {{ site_name }})
+          - work-command:
+              worktype: ansible-runner
+              command: ansible-runner
+              params: worker
+              allowruntimeparams: true
+              verifysignature: false
+      notify: Restart receptor
+
+    - name: Write receptor systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/receptor.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=awx-ng Receptor Execution Node Proxy (Site: {{ site_name }})
+          After=network.target
+
+          [Service]
+          ExecStart={{ receptor_bin }} --config {{ receptor_conf_dir }}/receptor.conf
+          RuntimeDirectory=receptor
+          Restart=always
+          RestartSec=10
+          User={{ receptor_user }}
+          Group={{ receptor_user }}
+
+          [Install]
+          WantedBy=multi-user.target
+      notify:
+        - Reload systemd
+        - Restart receptor
+
+    - name: Enable and start receptor
+      ansible.builtin.systemd:
+        name: receptor
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Print registration info
+      ansible.builtin.debug:
+        msg: |
+          Proxy {{ proxy_node_id }} installed.
+          Site: {{ site_name }}
+          Connect: {{ awx_ng_control_host }}:{{ awx_ng_control_port }}
+          Next step: Register in awx-ng → Administration → Instances
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart receptor
+      ansible.builtin.systemd:
+        name: receptor
+        state: restarted

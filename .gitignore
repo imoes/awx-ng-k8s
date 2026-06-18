@@ -177,3 +177,9 @@ _readthedocs/
 
 # Pyenv
 .python-version
+
+# awx-ng deploy secrets (NEVER commit these)
+deploy/secrets/secret_key
+deploy/secrets/SECRET_KEY
+deploy/secrets/pg_password
+deploy/secrets/broadcast_websocket_secret

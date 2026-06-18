@@ -1,0 +1,150 @@
+# awx-ng Production Docker Compose  (Dreiergespann: Control + local Execution Node + Remote Proxies)
+# AWX 24.6.1 — unoffizielles docker-compose Produktionsbetrieb
+#
+# Komponenten:
+#   awx_web      — Web UI + REST API
+#   awx_task     — Dispatcher/Controller (AWX task engine)
+#   awx_ee       — Lokaler Execution Node (Receptor + ansible-runner)
+#   postgres     — PostgreSQL 15
+#   redis        — Redis 7
+#
+# Für Remote-Proxies (ansible03.ippen.media etc.):
+#   → Siehe deploy/receptor/receptor-proxy.conf.template + deploy/PROXIES.md
+
+name: awx-ng
+
+services:
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: awx
+      POSTGRES_USER: awx
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+    secrets:
+      - pg_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U awx -d awx"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Control Node (Web) ────────────────────────────────────────────────────
+  awx_web:
+    image: ghcr.io/ansible/awx:24.6.1
+    restart: unless-stopped
+    entrypoint: ["dumb-init", "--", "/usr/bin/launch_awx_web.sh"]
+    hostname: awx-ng-control
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8052:8052"
+    secrets:
+      - pg_password
+      - secret_key
+    volumes:
+      - ./config/custom.py:/etc/tower/conf.d/custom.py:ro
+      - awx_projects:/var/lib/awx/projects
+      - receptor_socket:/var/run/receptor
+      - ${ANSIBLE_REPO_PATH:-/home/mutkluge/Dev/ansible/ansible03}:/var/lib/awx/ansible03:rw
+    environment:
+      DATABASE_USER: awx
+      DATABASE_NAME: awx
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_PASSWORD_FILE: /run/secrets/pg_password
+      AWX_ADMIN_USER: admin
+      AWX_ADMIN_EMAIL: admin@awx-ng.local
+      AWX_LOGGING_MODE: stdout
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SECRET_KEY_FILE: /run/secrets/secret_key
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sk http://localhost:8052/api/v2/ping/ | grep -q status"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  # ── Control Node (Task/Dispatcher) ────────────────────────────────────────
+  awx_task:
+    image: ghcr.io/ansible/awx:24.6.1
+    restart: unless-stopped
+    entrypoint: ["dumb-init", "--", "/usr/bin/launch_awx_task.sh"]
+    hostname: awx-ng-control
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      awx_web:
+        condition: service_healthy
+    secrets:
+      - pg_password
+      - secret_key
+    volumes:
+      - ./config/custom.py:/etc/tower/conf.d/custom.py:ro
+      - awx_projects:/var/lib/awx/projects
+      - receptor_socket:/var/run/receptor
+      - ${ANSIBLE_REPO_PATH:-/home/mutkluge/Dev/ansible/ansible03}:/var/lib/awx/ansible03:rw
+    environment:
+      DATABASE_USER: awx
+      DATABASE_NAME: awx
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_PASSWORD_FILE: /run/secrets/pg_password
+      AWX_LOGGING_MODE: stdout
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SECRET_KEY_FILE: /run/secrets/secret_key
+      CONTROL_PLANE_NODE_COUNT: "1"
+
+  # ── Lokaler Execution Node (Receptor + ansible-runner) ────────────────────
+  # Dieser Node führt Jobs aus, wenn kein Remote-Proxy ausgewählt ist.
+  # Remote-Proxies (ansible03, ansible01.dierichs.de etc.) verbinden sich
+  # ebenfalls über den Receptor-Port 2222 und können Jobs lokal ausführen.
+  awx_ee:
+    image: ghcr.io/ansible/awx-ee:latest
+    restart: unless-stopped
+    entrypoint: ["receptor", "--config", "/etc/receptor/receptor.conf"]
+    hostname: awx-ng-local-ee
+    depends_on:
+      - awx_task
+    ports:
+      - "2222:2222"   # Receptor port — Remote-Proxies verbinden sich hier
+    volumes:
+      - ./receptor/receptor-control.conf:/etc/receptor/receptor.conf:ro
+      - awx_projects:/var/lib/awx/projects
+      - receptor_socket:/var/run/receptor
+      - ${ANSIBLE_REPO_PATH:-/home/mutkluge/Dev/ansible/ansible03}:/var/lib/awx/ansible03:rw
+    environment:
+      AWX_NG_CONTROL: "true"
+
+secrets:
+  pg_password:
+    file: ./secrets/pg_password
+  secret_key:
+    file: ./secrets/secret_key
+
+volumes:
+  postgres_data:
+  redis_data:
+  awx_projects:
+  receptor_socket:   # shared between awx_task, awx_web, awx_ee
