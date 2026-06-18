@@ -1417,6 +1417,20 @@ class RunProjectUpdate(BaseTask):
             if instance.launch_type != 'sync':
                 self.release_lock(instance.project)
 
+        # awx-ng: scan role variables after every successful project sync
+        if status == 'successful' and 'install_' not in (instance.job_tags or ''):
+            try:
+                from awx.customvars.extract import scan_project_roles
+                project_path = instance.get_project_path(check_if_exists=False)
+                revision = (
+                    getattr(self.runner_callback, 'playbook_new_revision', None)
+                    or instance.scm_revision
+                    or ''
+                )
+                scan_project_roles(instance.project_id, project_path, revision)
+            except Exception as exc:
+                logger.warning('awx-ng role scan failed for project %s: %s', instance.project_id, exc)
+
         p = instance.project
         if instance.job_type == 'check' and status not in ('failed', 'canceled'):
             if self.runner_callback.playbook_new_revision:

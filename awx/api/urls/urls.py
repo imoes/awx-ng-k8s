@@ -86,6 +86,8 @@ from .workflow_approval_template import urls as workflow_approval_template_urls
 from .workflow_approval import urls as workflow_approval_urls
 from .analytics import urls as analytics_urls
 from .receptor_address import urls as receptor_address_urls
+# awx-ng: Locations & Subnets (Foreman-Stil)
+from awx.customvars.urls import urls as customvars_location_urls
 
 v2_urls = [
     re_path(r'^$', ApiV2RootView.as_view(), name='api_v2_root_view'),
@@ -157,6 +159,8 @@ v2_urls = [
     re_path(r'^bulk/host_delete/$', BulkHostDeleteView.as_view(), name='bulk_host_delete'),
     re_path(r'^bulk/job_launch/$', BulkJobLaunchView.as_view(), name='bulk_job_launch'),
     re_path(r'^receptor_addresses/', include(receptor_address_urls)),
+    # awx-ng: Locations & Subnets
+    re_path(r'^locations/', include(customvars_location_urls)),
 ]
 
 

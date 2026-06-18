@@ -3,6 +3,13 @@
 
 from django.urls import re_path
 
+# awx-ng: role variable extraction API
+from awx.customvars.api import (
+    ProjectRoleVariableListView,
+    ProjectRoleScanView,
+    ProjectRoleScanTriggerView,
+)
+
 from awx.api.views import (
     ProjectList,
     ProjectDetail,
@@ -50,6 +57,10 @@ urls = [
     re_path(r'^(?P<pk>[0-9]+)/object_roles/$', ProjectObjectRolesList.as_view(), name='project_object_roles_list'),
     re_path(r'^(?P<pk>[0-9]+)/access_list/$', ProjectAccessList.as_view(), name='project_access_list'),
     re_path(r'^(?P<pk>[0-9]+)/copy/$', ProjectCopy.as_view(), name='project_copy'),
+    # awx-ng: role variable extraction endpoints
+    re_path(r'^(?P<project_id>[0-9]+)/role_variables/$', ProjectRoleVariableListView.as_view(), name='project_role_variables'),
+    re_path(r'^(?P<project_id>[0-9]+)/role_variables/scan/$', ProjectRoleScanView.as_view(), name='project_role_scan'),
+    re_path(r'^(?P<project_id>[0-9]+)/role_variables/scan/trigger/$', ProjectRoleScanTriggerView.as_view(), name='project_role_scan_trigger'),
 ]
 
 __all__ = ['urls']
