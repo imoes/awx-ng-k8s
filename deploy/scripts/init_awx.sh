@@ -8,6 +8,9 @@ ADMIN_USER="${AWX_ADMIN_USER:-admin}"
 ADMIN_EMAIL="${AWX_ADMIN_EMAIL:-admin@awx-ng.local}"
 ADMIN_PW="${AWX_ADMIN_PASSWORD:-}"
 
+echo "[init] Receptor-Socket-Verzeichnis freigeben..."
+chmod 777 /var/run/receptor 2>/dev/null || true
+
 echo "[init] Migrationen ausführen..."
 awx-manage migrate --no-input
 

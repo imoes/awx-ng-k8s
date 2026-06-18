@@ -19,7 +19,8 @@ COPY deploy/config/nginx_awx.conf /etc/nginx/nginx.conf
 
 # ── Init-Skript (DB-Migration + Admin-User) ───────────────────────────────────
 COPY deploy/scripts/init_awx.sh /usr/local/bin/init_awx.sh
-RUN chmod +x /usr/local/bin/init_awx.sh
+COPY deploy/scripts/launch_awx_task_ng.sh /usr/bin/launch_awx_task_ng.sh
+RUN chmod +x /usr/local/bin/init_awx.sh /usr/bin/launch_awx_task_ng.sh
 
 # ── awx.customvars installieren ───────────────────────────────────────────────
 COPY awx/customvars/ ${AWX_PKG}/customvars/
