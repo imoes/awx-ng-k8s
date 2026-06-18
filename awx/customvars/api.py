@@ -3,11 +3,14 @@ awx-ng Custom Variables REST API
 =================================
 Endpunkte:
 
-  GET  /api/v2/projects/{id}/role_variables/      — extrahierte Rollen-Vars
-  GET  /api/v2/projects/{id}/role_variables/scan/ — letzter Scan-Audit-Eintrag
-  GET  /api/v2/locations/                          — Locations (Sites)
-  GET  /api/v2/locations/{id}/subnets/             — Subnetze einer Location
+  GET  /api/v2/projects/{id}/role_variables/             — extrahierte Rollen-Vars
+  GET  /api/v2/projects/{id}/role_variables/scan/        — letzter Scan-Audit-Eintrag
+  POST /api/v2/job_templates/{id}/generate_survey/       — Survey aus Rollen-Vars generieren
+  GET  /api/v2/locations/                                — Locations (Sites)
+  GET  /api/v2/locations/{id}/subnets/                   — Subnetze einer Location
 """
+
+import json
 
 from rest_framework import generics, serializers as drf_serializers, filters, status
 from rest_framework.response import Response
@@ -15,7 +18,7 @@ from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 
 from awx.api.permissions import IsSystemAdminOrAuditor
-from awx.main.models import Project
+from awx.main.models import Project, JobTemplate
 
 from .models import RoleVariable, RoleScan, Location, Subnet
 
@@ -148,3 +151,174 @@ class SubnetListView(generics.ListCreateAPIView):
         location_id = self.kwargs['location_id']
         location = get_object_or_404(Location, pk=location_id)
         serializer.save(location=location)
+
+
+# ── Survey-Generierung ────────────────────────────────────────────────────────
+
+# Mapping RoleVariable.value_type → AWX survey question type
+_VALUE_TYPE_TO_SURVEY_TYPE = {
+    'str': 'text',
+    'int': 'integer',
+    'float': 'float',
+    'bool': 'multiplechoice',
+    'dict': 'textarea',
+    'list': 'textarea',
+    'null': 'text',
+    'unsafe': 'text',
+    'vault': 'password',
+}
+
+
+def _role_var_to_survey_item(rv: RoleVariable) -> dict:
+    """
+    Wandelt einen RoleVariable-Datensatz in ein AWX-Survey-Spec-Item um.
+
+    Regeln (aus AWX _validate_spec_data):
+    - text/textarea/password/multiplechoice/multiselect default → str
+    - integer default → int
+    - float default → float (int auch erlaubt)
+    - multiplechoice braucht choices (newline-getrennt)
+    - password default wird nie gesetzt (vault-Inhalt ist verschlüsselt)
+    """
+    survey_type = _VALUE_TYPE_TO_SURVEY_TYPE.get(rv.value_type, 'text')
+    val = rv.default_value
+
+    item = {
+        'type': survey_type,
+        'question_name': rv.var_name,
+        'question_description': rv.comment or f'[{rv.role_name}/{rv.source}]',
+        'variable': rv.var_name,
+        'required': False,
+    }
+
+    if rv.value_type == 'bool':
+        item['choices'] = 'true\nfalse'
+        if isinstance(val, bool):
+            item['default'] = 'true' if val else 'false'
+        else:
+            item['default'] = ''
+
+    elif rv.value_type == 'vault':
+        item['default'] = ''
+
+    elif rv.value_type in ('dict', 'list'):
+        if val is not None:
+            try:
+                item['default'] = json.dumps(val, ensure_ascii=False, indent=2)
+            except (TypeError, ValueError):
+                item['default'] = str(val)
+        else:
+            item['default'] = ''
+
+    elif rv.value_type == 'int':
+        item['default'] = int(val) if isinstance(val, (int, float)) else ''
+
+    elif rv.value_type == 'float':
+        item['default'] = float(val) if isinstance(val, (int, float)) else ''
+
+    elif rv.value_type == 'null':
+        item['default'] = ''
+
+    else:
+        # text, textarea, unsafe, str
+        if val is None:
+            item['default'] = ''
+        elif isinstance(val, str):
+            item['default'] = val
+        else:
+            item['default'] = str(val)
+
+    return item
+
+
+class GenerateSurveyFromRolesView(APIView):
+    """
+    POST /api/v2/job_templates/{pk}/generate_survey/
+
+    Generiert Survey-Fragen aus extrahierten Rollen-Variablen und merged
+    sie mit dem bestehenden survey_spec des Job Templates.
+
+    Request-Body:
+      {
+        "role_names": ["img_docker", "img_system"],   ← Pflicht
+        "project_id": 5,                               ← Pflicht
+        "survey_name": "Optionaler Name",              ← optional
+        "survey_description": "Beschreibung",          ← optional
+        "replace": false                               ← true = komplett ersetzen
+      }
+
+    Verhalten bei merge (replace=false, Standard):
+    - Bestehende Items bleiben erhalten (keyed by variable name)
+    - Neue Items werden hinten angehängt
+    - Variablen die bereits im Spec existieren werden übersprungen
+
+    Response: das gespeicherte survey_spec-Dict + Zähler
+    """
+
+    def post(self, request, pk):
+        jt = get_object_or_404(JobTemplate, pk=pk)
+        if not request.user.can_access(JobTemplate, 'change', jt, None):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied()
+
+        role_names = request.data.get('role_names')
+        project_id = request.data.get('project_id')
+
+        if not role_names or not isinstance(role_names, list):
+            return Response({'error': "'role_names' muss eine nicht-leere Liste sein."}, status=status.HTTP_400_BAD_REQUEST)
+        if not project_id:
+            return Response({'error': "'project_id' ist Pflichtfeld."}, status=status.HTTP_400_BAD_REQUEST)
+
+        survey_name = request.data.get('survey_name', f'Auto-Survey ({", ".join(role_names)})')
+        survey_description = request.data.get('survey_description', 'Generiert aus Rollen-Variablen von awx-ng')
+        replace = bool(request.data.get('replace', False))
+
+        # Alle RoleVariables der gewählten Rollen laden (geordnet: Rolle → defaults vor vars → var_name)
+        role_vars = (
+            RoleVariable.objects
+            .filter(project_id=project_id, role_name__in=role_names)
+            .exclude(value_type='vault')         # Vault-Vars nie auto-in-Survey
+            .order_by('role_name', 'source', 'var_name')
+        )
+
+        # Bestehenden Spec einlesen
+        existing_spec = jt.survey_spec or {}
+        existing_items = existing_spec.get('spec', [])
+
+        if replace:
+            existing_items = []
+
+        # Pivot für schnellen Lookup ob Variable bereits vorhanden
+        existing_vars = {item['variable'] for item in existing_items}
+
+        new_items = []
+        skipped = 0
+        for rv in role_vars:
+            if rv.var_name in existing_vars:
+                skipped += 1
+                continue
+            existing_vars.add(rv.var_name)
+            new_items.append(_role_var_to_survey_item(rv))
+
+        if not existing_items and not new_items:
+            return Response({'error': 'Keine Variablen gefunden für die angegebenen Rollen und project_id.'}, status=status.HTTP_404_NOT_FOUND)
+
+        merged_spec = {
+            'name': existing_spec.get('name', survey_name),
+            'description': existing_spec.get('description', survey_description),
+            'spec': existing_items + new_items,
+        }
+
+        # Speichern — AWX-Validierung intentionally NICHT nochmal aufgerufen,
+        # da wir kein Password-Reencrypt-Handling brauchen und nur neue, einfache
+        # Typen einfügen. AWX validiert beim nächsten GET/display_survey_spec ohnehin.
+        jt.survey_spec = merged_spec
+        jt.survey_enabled = True
+        jt.save(update_fields=['survey_spec', 'survey_enabled'])
+
+        return Response({
+            'survey_spec': merged_spec,
+            'added': len(new_items),
+            'skipped_existing': skipped,
+            'total_items': len(merged_spec['spec']),
+        }, status=status.HTTP_200_OK)

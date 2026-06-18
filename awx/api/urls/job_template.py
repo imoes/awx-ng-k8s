@@ -3,6 +3,9 @@
 
 from django.urls import include, re_path
 
+# awx-ng: Survey aus Rollen-Variablen generieren
+from awx.customvars.api import GenerateSurveyFromRolesView
+
 from awx.api.views import (
     JobTemplateList,
     JobTemplateDetail,
@@ -55,6 +58,8 @@ urls = [
     re_path(r'^(?P<pk>[0-9]+)/labels/$', JobTemplateLabelList.as_view(), name='job_template_label_list'),
     re_path(r'^(?P<pk>[0-9]+)/copy/$', JobTemplateCopy.as_view(), name='job_template_copy'),
     re_path(r'^(?P<pk>[0-9]+)/', include('awx.api.urls.webhooks'), {'model_kwarg': 'job_templates'}),
+    # awx-ng: Survey-Generierung aus Rollen-Variablen
+    re_path(r'^(?P<pk>[0-9]+)/generate_survey/$', GenerateSurveyFromRolesView.as_view(), name='job_template_generate_survey'),
 ]
 
 __all__ = ['urls']
