@@ -1,0 +1,33 @@
+---
+# awx-ng: Generisches site.yml — führt host_roles der Zielhosts aus.
+#
+# Dieses Playbook liegt im ansible-Repo (z.B. ansible03:/home/mutkluge/Dev/ansible/ansible03/).
+# In AWX als Job Template mit Playbook "site.yml" anlegen.
+#
+# host_roles wird geschrieben via:
+#   POST /api/v2/hosts/{id}/assign_roles/ {"roles": ["img_docker", "img_system"]}
+# Oder direkt in host_vars/<hostname>.yml:
+#   host_roles:
+#     - img_system
+#     - img_docker
+#
+# Survey-Variablen (generiert via generate_survey/) werden als extra_vars übergeben
+# und überschreiben Rollen-Defaults — wie in AWX vorgesehen.
+
+- name: Rollen-Ausführung via host_roles
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: true
+  become: true
+
+  pre_tasks:
+    - name: host_roles validieren
+      ansible.builtin.assert:
+        that: host_roles is defined and host_roles | length > 0
+        fail_msg: "host_roles ist nicht gesetzt für {{ inventory_hostname }}"
+
+  roles:
+    - role: "{{ item }}"
+      loop: "{{ host_roles }}"
+      loop_control:
+        loop_var: item
+        label: "{{ item }}"
