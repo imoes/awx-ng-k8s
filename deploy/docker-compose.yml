@@ -136,7 +136,7 @@ services:
   # Remote-Proxies (ansible03, ansible01.dierichs.de etc.) verbinden sich
   # ebenfalls über den Receptor-Port 2222 und können Jobs lokal ausführen.
   awx_ee:
-    image: ghcr.io/ansible/awx-ee:latest
+    image: ghcr.io/ansible/awx-ee:24.6.1
     restart: unless-stopped
     entrypoint: ["receptor", "--config", "/etc/receptor/receptor.conf"]
     hostname: awx-ng-local-ee
