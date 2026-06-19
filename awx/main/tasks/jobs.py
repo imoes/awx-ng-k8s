@@ -1423,7 +1423,7 @@ class RunProjectUpdate(BaseTask):
                 self.release_lock(instance.project)
 
         # awx-ng: scan role variables after every successful project sync
-        if status == 'successful' and 'install_' not in (instance.job_tags or ''):
+        if status == 'successful' and 'update_git' in (instance.job_tags or 'update_git'):
             try:
                 from awx.customvars.extract import scan_project_roles
                 project_path = instance.get_project_path(check_if_exists=False)
