@@ -1,5 +1,6 @@
 /* eslint-disable i18next/no-literal-string */
-// awx-ng: Role management screen — lists all roles per project, shows vars, triggers scan.
+// awx-ng: Role management screen — lists all roles per project, shows vars, triggers scan,
+// opens roles in the file editor, and allows deleting roles from disk + DB.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
@@ -26,15 +27,18 @@ import {
   Thead,
   Tr,
 } from '@patternfly/react-table';
+import { useHistory } from 'react-router-dom';
 import ScreenHeader from 'components/ScreenHeader/ScreenHeader';
 import {
   readProjects,
   readProjectRoles,
   readProjectRoleVariables,
   triggerProjectRoleScan,
+  deleteProjectFile,
 } from './api';
 
 function Roles() {
+  const history = useHistory();
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState('');
   const [roles, setRoles] = useState([]);
@@ -97,6 +101,23 @@ function Roles() {
       } catch {
         setRoleVars((prev) => ({ ...prev, [roleName]: [] }));
       }
+    }
+  };
+
+  const openInEditor = (roleName) =>
+    history.push(
+      `/editor?project=${projectId}&path=${encodeURIComponent(`roles/${roleName}/defaults/main.yml`)}`
+    );
+
+  const deleteRole = async (roleName) => {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Delete role "${roleName}" from disk and database?`)) return;
+    setErr(null);
+    try {
+      await deleteProjectFile(projectId, `roles/${roleName}`);
+      await loadRoles();
+    } catch (e) {
+      setErr(e?.response?.data || e.message);
     }
   };
 
@@ -212,6 +233,7 @@ function Roles() {
                     <Th>Role</Th>
                     <Th>Variables</Th>
                     <Th>Status</Th>
+                    <Th>Actions</Th>
                   </Tr>
                 </Thead>
                 <Tbody>
@@ -253,10 +275,28 @@ function Roles() {
                             </Label>
                           )}
                         </Td>
+                        <Td dataLabel="Actions">
+                          <Button
+                            variant="link"
+                            isInline
+                            onClick={() => openInEditor(role.role_name)}
+                          >
+                            Open in Editor
+                          </Button>
+                          {' '}
+                          <Button
+                            variant="link"
+                            isDanger
+                            isInline
+                            onClick={() => deleteRole(role.role_name)}
+                          >
+                            Delete
+                          </Button>
+                        </Td>
                       </Tr>
                       {expanded[role.role_name] && (
                         <Tr>
-                          <Td colSpan={3} style={{ paddingLeft: 32, background: '#f5f5f5' }}>
+                          <Td colSpan={4} style={{ paddingLeft: 32, background: '#f5f5f5' }}>
                             {!roleVars[role.role_name] ? (
                               <Spinner size="sm" />
                             ) : roleVars[role.role_name].length === 0 ? (

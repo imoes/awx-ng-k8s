@@ -125,8 +125,8 @@ function getRouteConfig(userProfile = {}) {
           screen: NgPlaybooks,
         },
         {
-          // awx-ng: Playbook/Rollen-Editor mit Monaco + YAML-Linter
-          title: <Trans>Playbook Editor</Trans>,
+          // awx-ng: file editor for playbooks and roles (Monaco + YAML linter)
+          title: <Trans>Editor</Trans>,
           path: '/editor',
           screen: NgProjectEditor,
         },

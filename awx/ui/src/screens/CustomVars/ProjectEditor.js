@@ -1,5 +1,6 @@
 /* eslint-disable i18next/no-literal-string */
-// awx-ng: Playbook / Rollen-Editor — VS Code-artiger 2-Panel-Editor mit YAML-Linter.
+// awx-ng: File editor for Ansible playbooks and roles — VS Code-style 2-panel editor
+// with file tree, Monaco YAML editor, and YAML linter.
 import React, {
   Suspense,
   lazy,
@@ -56,13 +57,14 @@ function FileIcon({ suffix }) {
   return <span style={{ marginRight: 4, fontSize: 11, color: '#6a6e73' }}>·</span>;
 }
 
-function FileTreeNode({ projectId, entry, depth = 0, onSelect, selectedPath }) {
+function FileTreeNode({ projectId, entry, depth = 0, onSelect, selectedPath, dirtyPath }) {
   const [open, setOpen] = useState(false);
   const [children, setChildren] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const indent = depth * 16;
   const isSelected = selectedPath === entry.path;
+  const isDirtyFile = entry.type === 'file' && entry.path === dirtyPath;
 
   const toggle = async () => {
     if (entry.type === 'file') {
@@ -121,6 +123,9 @@ function FileTreeNode({ projectId, entry, depth = 0, onSelect, selectedPath }) {
         <span style={{ fontSize: 13, color: isSelected ? '#0066cc' : '#151515' }}>
           {entry.name}
         </span>
+        {isDirtyFile && (
+          <span style={{ color: '#795600', marginLeft: 5, fontSize: 10 }} title="Unsaved changes">●</span>
+        )}
         {loading && <Spinner size="sm" style={{ marginLeft: 6 }} />}
       </div>
       {open && children && children.map((child) => (
@@ -131,13 +136,14 @@ function FileTreeNode({ projectId, entry, depth = 0, onSelect, selectedPath }) {
           depth={depth + 1}
           onSelect={onSelect}
           selectedPath={selectedPath}
+          dirtyPath={dirtyPath}
         />
       ))}
     </div>
   );
 }
 
-function FileTree({ projectId, onSelect, selectedPath }) {
+function FileTree({ projectId, onSelect, selectedPath, dirtyPath }) {
   const [roots, setRoots] = useState(null);
   const [err, setErr] = useState(null);
 
@@ -164,6 +170,7 @@ function FileTree({ projectId, onSelect, selectedPath }) {
           depth={0}
           onSelect={onSelect}
           selectedPath={selectedPath}
+          dirtyPath={dirtyPath}
         />
       ))}
     </div>
@@ -365,17 +372,24 @@ export default function ProjectEditor() {
     [projectId, selectedFile]
   );
 
-  // Datei speichern
+  // Save file; if a role defaults/vars file, backend auto-rescans the DB
   const save = useCallback(async () => {
     if (!selectedFile || !dirty) return;
     setSaving(true);
     setErr(null);
     setMsg(null);
     try {
-      await saveProjectFile(projectId, selectedFile.path, content);
+      const { data } = await saveProjectFile(projectId, selectedFile.path, content);
       setSavedContent(content);
-      setMsg(`Gespeichert: ${selectedFile.path}`);
-      setTimeout(() => setMsg(null), 4000);
+      let successMsg = `Saved: ${selectedFile.path}`;
+      const ri = data?.rescanned_role;
+      if (ri) {
+        successMsg += ri.error
+          ? ` — role rescan error: ${ri.error}`
+          : ` — role variables re-scanned: ${ri.role} (${ri.vars} vars)`;
+      }
+      setMsg(successMsg);
+      setTimeout(() => setMsg(null), 5000);
     } catch (e) {
       setErr(e?.response?.data?.detail || e.message);
     } finally {
@@ -396,7 +410,7 @@ export default function ProjectEditor() {
     <>
       <ScreenHeader
         streamType="none"
-        breadcrumbConfig={{ '/editor': 'Playbook Editor' }}
+        breadcrumbConfig={{ '/editor': 'Editor' }}
       />
       <PageSection style={{ padding: 0, height: 'calc(100vh - 120px)' }}>
         <Card style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -493,6 +507,7 @@ export default function ProjectEditor() {
                 projectId={projectId}
                 onSelect={openFile}
                 selectedPath={selectedFile?.path}
+                dirtyPath={dirty ? selectedFile?.path : null}
               />
             </div>
 

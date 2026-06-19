@@ -29,7 +29,7 @@ import {
   Tr,
 } from '@patternfly/react-table';
 import ScreenHeader from 'components/ScreenHeader/ScreenHeader';
-import { readProjects, readProjectPlays } from './api';
+import { readProjects, readProjectPlays, deleteProjectFile } from './api';
 
 function Playbooks() {
   const history = useHistory();
@@ -94,6 +94,18 @@ function Playbooks() {
     history.push(`/editor?project=${projectId}&path=${encodeURIComponent(playbook)}`);
 
   const createTemplate = () => history.push('/templates/job_template/add');
+
+  const deletePlaybook = async (playbook) => {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Delete playbook "${playbook}"?`)) return;
+    setErr(null);
+    try {
+      await deleteProjectFile(projectId, playbook);
+      await load();
+    } catch (e) {
+      setErr(e?.response?.data || e.message);
+    }
+  };
 
   return (
     <>
@@ -185,6 +197,14 @@ function Playbooks() {
                           </Button>{' '}
                           <Button variant="link" isInline onClick={createTemplate}>
                             Create template
+                          </Button>{' '}
+                          <Button
+                            variant="link"
+                            isDanger
+                            isInline
+                            onClick={() => deletePlaybook(pb.playbook)}
+                          >
+                            Delete
                           </Button>
                         </Td>
                       </Tr>

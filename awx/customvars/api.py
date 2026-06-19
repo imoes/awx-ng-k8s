@@ -17,6 +17,8 @@ Endpunkte:
 
 import json
 import os
+import re
+import shutil
 
 try:
     import crypt as _crypt
@@ -1338,7 +1340,94 @@ class ProjectFileContentView(APIView):
         except Exception:
             pass  # git not available or not a repo — write succeeded anyway
 
-        return Response({'path': rel, 'saved': True})
+        # Auto-rescan DB when a role defaults or vars file is saved
+        rescan_info = None
+        m = re.match(r'^roles/([^/]+)/(defaults|vars)/main\.yml$', rel)
+        if m:
+            role_name = m.group(1)
+            try:
+                from awx.customvars.extract import extract_role, extract_role_tags, extract_role_handlers
+                role_dir = project_path / 'roles' / role_name
+                project_id_int = int(pk)
+                revision = 'editor'
+                extracted = extract_role(role_dir, project_id_int, revision)
+                RoleVariable.objects.filter(project_id=project_id_int, role_name=role_name).delete()
+                RoleVariable.objects.bulk_create([RoleVariable(**v) for v in extracted])
+                tags = extract_role_tags(role_dir)
+                RoleTag.objects.filter(project_id=project_id_int, role_name=role_name).delete()
+                RoleTag.objects.bulk_create([
+                    RoleTag(
+                        project_id=project_id_int, role_name=role_name,
+                        tag_name=t, task_count=c, scanned_revision=revision,
+                    )
+                    for t, c in tags.items()
+                ])
+                handlers = extract_role_handlers(role_dir)
+                RoleHandler.objects.filter(project_id=project_id_int, role_name=role_name).delete()
+                RoleHandler.objects.bulk_create([
+                    RoleHandler(
+                        project_id=project_id_int, role_name=role_name,
+                        scanned_revision=revision, **h,
+                    )
+                    for h in handlers
+                ])
+                rescan_info = {'role': role_name, 'vars': len(extracted)}
+            except Exception as exc:
+                rescan_info = {'role': role_name, 'error': str(exc)}
+
+        resp = {'path': rel, 'saved': True}
+        if rescan_info:
+            resp['rescanned_role'] = rescan_info
+        return Response(resp)
+
+    def delete(self, request, pk, **kwargs):
+        if not request.user.is_superuser:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Only superusers may delete project files.')
+
+        project_path = _get_project_path(pk)
+        rel = request.query_params.get('path', '')
+        if not rel:
+            return Response({'detail': 'path parameter required.'}, status=400)
+
+        target = _safe_resolve(project_path, rel)
+        is_dir = target.is_dir()
+        if not is_dir and not target.is_file():
+            return Response({'detail': 'Not found.'}, status=404)
+
+        # For role directories: remove DB records before touching disk
+        if is_dir:
+            parts = target.relative_to(project_path).parts
+            if len(parts) == 2 and parts[0] == 'roles':
+                project_id_int = int(pk)
+                role_name = target.name
+                RoleVariable.objects.filter(project_id=project_id_int, role_name=role_name).delete()
+                RoleTag.objects.filter(project_id=project_id_int, role_name=role_name).delete()
+                RoleHandler.objects.filter(project_id=project_id_int, role_name=role_name).delete()
+
+        # git rm removes from index and disk atomically; fall back to manual removal
+        repo = project_path.resolve()
+        git_rm = subprocess.run(
+            ['git', 'rm', '-rf', str(target)],
+            cwd=str(repo), capture_output=True, timeout=15,
+        )
+        if git_rm.returncode != 0:
+            # Not tracked or not a git repo — delete from filesystem manually
+            if is_dir:
+                shutil.rmtree(target, ignore_errors=True)
+            elif target.exists():
+                target.unlink()
+
+        try:
+            subprocess.run(
+                ['git', 'commit', '-m', f'awx-ng editor: delete {rel}',
+                 '--author', f'{request.user.username} <awx-ng@localhost>'],
+                cwd=str(repo), capture_output=True, timeout=10,
+            )
+        except Exception:
+            pass
+
+        return Response(status=204)
 
 
 class ProjectFileLintView(APIView):

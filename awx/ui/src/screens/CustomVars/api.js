@@ -159,3 +159,8 @@ export function lintProjectFile(projectId, content, path = '') {
     path,
   });
 }
+export function deleteProjectFile(projectId, path) {
+  return LocationsAPI.http.delete(
+    `/api/v2/projects/${projectId}/files/content/?path=${encodeURIComponent(path)}`
+  );
+}
