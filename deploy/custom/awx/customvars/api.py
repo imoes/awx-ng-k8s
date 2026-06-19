@@ -1078,3 +1078,196 @@ class LocationReconcileView(APIView):
             'drift': drift,
             'errors': errors,
         })
+
+
+# ─── Project File Editor ──────────────────────────────────────────────────────
+
+import pathlib
+import subprocess
+
+_ALLOWED_SUFFIXES = {'.yml', '.yaml', '.j2', '.jinja2', '.conf', '.ini', '.md', '.txt', '.cfg'}
+_MAX_FILE_BYTES = 512 * 1024  # 512 KB
+
+
+def _get_project_path(pk):
+    """Return the on-disk path for a project, or raise Http404."""
+    from awx.main.models import Project
+    from django.http import Http404
+    try:
+        project = Project.objects.get(pk=pk)
+    except Project.DoesNotExist:
+        raise Http404
+    path = pathlib.Path(project.get_project_path(check_if_exists=False))
+    if not path.exists():
+        raise Http404
+    return path
+
+
+def _safe_resolve(project_path: pathlib.Path, rel: str) -> pathlib.Path:
+    """Resolve rel against project_path and raise PermissionDenied on traversal."""
+    from rest_framework.exceptions import PermissionDenied
+    # Normalise separators, strip leading slashes
+    clean = rel.replace('\\', '/').lstrip('/')
+    resolved = (project_path / clean).resolve()
+    try:
+        resolved.relative_to(project_path.resolve())
+    except ValueError:
+        raise PermissionDenied('Path traversal detected.')
+    return resolved
+
+
+class ProjectFilesListView(APIView):
+    """
+    GET /api/v2/projects/{pk}/files/?path=roles/img_docker
+    Returns a directory listing (one level).
+    """
+    def get(self, request, pk, **kwargs):
+        project_path = _get_project_path(pk)
+        rel = request.query_params.get('path', '')
+        target = _safe_resolve(project_path, rel) if rel else project_path.resolve()
+
+        if not target.is_dir():
+            return Response({'detail': 'Not a directory.'}, status=400)
+
+        entries = []
+        for item in sorted(target.iterdir(), key=lambda p: (p.is_file(), p.name)):
+            if item.name.startswith('.'):
+                continue
+            entries.append({
+                'name': item.name,
+                'type': 'file' if item.is_file() else 'dir',
+                'path': str(item.relative_to(project_path)),
+                'size': item.stat().st_size if item.is_file() else None,
+                'suffix': item.suffix if item.is_file() else None,
+            })
+        return Response({'path': rel or '', 'entries': entries})
+
+
+class ProjectFileContentView(APIView):
+    """
+    GET /api/v2/projects/{pk}/files/content/?path=roles/img_docker/tasks/main.yml
+    PUT /api/v2/projects/{pk}/files/content/?path=...
+        Body: {"content": "---\n..."}
+    """
+    def get(self, request, pk, **kwargs):
+        project_path = _get_project_path(pk)
+        rel = request.query_params.get('path', '')
+        if not rel:
+            return Response({'detail': 'path parameter required.'}, status=400)
+
+        target = _safe_resolve(project_path, rel)
+        if not target.is_file():
+            return Response({'detail': 'File not found.'}, status=404)
+        if target.suffix not in _ALLOWED_SUFFIXES:
+            return Response({'detail': 'File type not allowed.'}, status=403)
+        if target.stat().st_size > _MAX_FILE_BYTES:
+            return Response({'detail': 'File too large (max 512 KB).'}, status=413)
+
+        try:
+            content = target.read_text(encoding='utf-8')
+        except UnicodeDecodeError:
+            return Response({'detail': 'File is not valid UTF-8.'}, status=400)
+
+        return Response({
+            'path': rel,
+            'content': content,
+            'size': target.stat().st_size,
+            'suffix': target.suffix,
+        })
+
+    def put(self, request, pk, **kwargs):
+        if not request.user.is_superuser:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Only superusers may write project files.')
+
+        project_path = _get_project_path(pk)
+        rel = request.query_params.get('path', '')
+        if not rel:
+            return Response({'detail': 'path parameter required.'}, status=400)
+
+        content = request.data.get('content')
+        if content is None:
+            return Response({'detail': '"content" field required.'}, status=400)
+        if len(content.encode('utf-8')) > _MAX_FILE_BYTES:
+            return Response({'detail': 'Content too large (max 512 KB).'}, status=413)
+
+        target = _safe_resolve(project_path, rel)
+        if target.suffix not in _ALLOWED_SUFFIXES:
+            return Response({'detail': 'File type not allowed.'}, status=403)
+
+        # Create parent dirs if needed (within project only)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding='utf-8')
+
+        # Optional: git add + commit (silently skip if not a git repo)
+        try:
+            repo = project_path.resolve()
+            subprocess.run(
+                ['git', 'add', str(target)],
+                cwd=str(repo), capture_output=True, timeout=10
+            )
+            subprocess.run(
+                ['git', 'commit', '-m', f'awx-ng editor: update {rel}',
+                 '--author', f'{request.user.username} <awx-ng@localhost>'],
+                cwd=str(repo), capture_output=True, timeout=10
+            )
+        except Exception:
+            pass  # git not available or not a repo — write succeeded anyway
+
+        return Response({'path': rel, 'saved': True})
+
+
+class ProjectFileLintView(APIView):
+    """
+    POST /api/v2/projects/{pk}/files/lint/
+    Body: {"content": "---\n...", "path": "roles/img_docker/tasks/main.yml"}
+    Returns: {"valid": bool, "errors": [{"line", "col", "message", "severity"}]}
+    """
+    def post(self, request, pk, **kwargs):
+        # Just verify the project exists
+        _get_project_path(pk)
+
+        content = request.data.get('content', '')
+        errors = []
+
+        # ── Stufe 1: PyYAML Syntax-Check ─────────────────────────────────────
+        import yaml as _yaml
+        try:
+            list(_yaml.safe_load_all(content))
+        except _yaml.YAMLError as exc:
+            mark = getattr(exc, 'problem_mark', None)
+            errors.append({
+                'line': (mark.line + 1) if mark else 1,
+                'col': (mark.column + 1) if mark else 1,
+                'message': str(exc.problem) if hasattr(exc, 'problem') else str(exc),
+                'severity': 'error',
+                'source': 'yaml',
+            })
+            return Response({'valid': False, 'errors': errors})
+
+        # ── Stufe 2: ansible-lint (graceful fallback) ─────────────────────────
+        try:
+            result = subprocess.run(
+                ['ansible-lint', '--format', 'json', '--nocolor', '-'],
+                input=content.encode('utf-8'),
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode not in (0, 2):
+                raise RuntimeError('ansible-lint not available')
+
+            lint_output = result.stdout.decode('utf-8', errors='replace').strip()
+            if lint_output:
+                for item in json.loads(lint_output):
+                    errors.append({
+                        'line': item.get('line', 1),
+                        'col': item.get('col', 1),
+                        'message': item.get('message', str(item)),
+                        'severity': 'warning' if item.get('severity') != 'error' else 'error',
+                        'source': 'ansible-lint',
+                        'rule': item.get('rule', {}).get('id', ''),
+                    })
+        except (FileNotFoundError, RuntimeError, json.JSONDecodeError, subprocess.TimeoutExpired):
+            pass  # ansible-lint not installed — YAML syntax check already done
+
+        return Response({'valid': True, 'errors': errors})
