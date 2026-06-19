@@ -1,1 +1,13 @@
+# Secrets — niemals einchecken
+.env
+secrets/pg_password
+secrets/secret_key
+
+# Laufzeit-Daten
+data/postgres/
+data/redis/
+data/receptor/
+data/projects/
+
+# Heruntergeladene Collections (Binaries)
 collections/

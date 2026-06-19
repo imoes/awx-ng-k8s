@@ -47,8 +47,8 @@ services:
   # Läuft bei jedem Start, aber migrate ist idempotent (keine Dopplungen).
   awx_init:
     build:
-      context: ..
-      dockerfile: deploy/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     restart: "no"
     entrypoint: ["bash", "/usr/local/bin/init_awx.sh"]
     depends_on:
@@ -79,8 +79,8 @@ services:
   # ── Control Node (Web) ────────────────────────────────────────────────────
   awx_web:
     build:
-      context: ..
-      dockerfile: deploy/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
     entrypoint: ["dumb-init", "--", "/usr/bin/launch_awx_web.sh"]
     hostname: awx-ng-control
@@ -131,8 +131,8 @@ services:
   # ── Control Node (Task/Dispatcher) ────────────────────────────────────────
   awx_task:
     build:
-      context: ..
-      dockerfile: deploy/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
     entrypoint: ["dumb-init", "--", "/usr/bin/launch_awx_task_ng.sh"]
     hostname: awx-ng-control
@@ -177,8 +177,8 @@ services:
   # ── Lokaler Execution Node (Receptor + ansible-runner + docker CLI) ─────────
   awx_ee:
     build:
-      context: ..
-      dockerfile: deploy/Dockerfile.ee
+      context: .
+      dockerfile: Dockerfile.ee
     restart: unless-stopped
     entrypoint: ["sh", "-c", "rm -f /var/run/receptor/receptor.sock* && exec receptor --config /etc/receptor/receptor.conf"]
     hostname: awx-ng-local-ee
