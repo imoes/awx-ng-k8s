@@ -6,18 +6,26 @@ FROM ghcr.io/ansible/awx-ee:24.6.1
 
 USER root
 
-# Ansible Collections für Inventar-Plugins (via pip als Fallback für galaxy-API-Bug)
-# netbox.netbox nutzt pynetbox als Backend → über pip installierbar
+# Proxy-Unterstützung: Werte kommen aus Build-Args (gesetzt via docker-compose.yml + .env).
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+ENV http_proxy=${HTTP_PROXY} \
+    https_proxy=${HTTPS_PROXY} \
+    no_proxy=${NO_PROXY}
+
+# Ansible Collections aus lokal vorgehaltenen Tarballs installieren.
+# Kein Netzwerkzugriff nötig — Galaxy-API ist häufig instabil (HTTP 500).
+# Tarballs liegen in deploy/collections/ und werden mit dem Build-Context kopiert.
+COPY collections/netbox-netbox-3.20.0.tar.gz     /tmp/collections/
+COPY collections/community-general-10.7.0.tar.gz  /tmp/collections/
+
 RUN pip install pynetbox requests && \
     ansible-galaxy collection install \
-        netbox.netbox:3.20.0 \
-        community.general:9.6.0 \
-        --server https://galaxy.ansible.com \
-        --collections-path /usr/share/ansible/collections \
-    || ansible-galaxy collection install \
-        "https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/netbox-netbox-3.20.0.tar.gz" \
-        "https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-general-9.6.0.tar.gz" \
-        --collections-path /usr/share/ansible/collections
+        /tmp/collections/netbox-netbox-3.20.0.tar.gz \
+        /tmp/collections/community-general-10.7.0.tar.gz \
+        --collections-path /usr/share/ansible/collections && \
+    rm -rf /tmp/collections
 
 # Receptor-Socket-Verzeichnis sicherstellen
 RUN mkdir -p /var/run/receptor && chmod 777 /var/run/receptor

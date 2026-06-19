@@ -9,5 +9,5 @@ data/redis/
 data/receptor/
 data/projects/
 
-# Heruntergeladene Collections (Binaries)
-collections/
+# Collections-Tarballs sind absichtlich eingecheckt (für Offline-Build ohne Galaxy)
+# collections/
