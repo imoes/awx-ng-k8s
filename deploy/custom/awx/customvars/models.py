@@ -70,6 +70,41 @@ class RoleVariable(models.Model):
         return f"{self.role_name}.{self.var_name} ({self.source})"
 
 
+class HostRoleVariable(models.Model):
+    """
+    Foreman-Stil Override-Tabelle: pro Host + Rolle + Variable ein editierbarer Wert.
+
+    Wird beim Zuweisen einer Rolle an einen Host materialisiert — vorbelegt mit
+    dem Rollen-Default (default_value als unveränderliche Referenz). Editiert der
+    Nutzer den Wert, wird is_overridden=True und nur die Abweichung gespeichert.
+
+    Der Rollen-Default in RoleVariable bleibt unangetastet → Herkunft bleibt
+    nachvollziehbar; aggregated_variables kann beide Schichten zeigen.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    host_id = models.IntegerField(db_index=True)          # AWX Host pk
+    project_id = models.IntegerField(db_index=True)        # Herkunfts-Projekt der Rolle
+    role_name = models.CharField(max_length=255, db_index=True)
+    var_name = models.CharField(max_length=255, db_index=True)
+    source = models.CharField(max_length=10, blank=True)   # defaults|vars (aus RoleVariable)
+    value = models.JSONField(null=True, blank=True)        # effektiver/überschriebener Wert
+    default_value = models.JSONField(null=True, blank=True)  # Snapshot des Rollen-Defaults (Referenz)
+    value_type = models.CharField(max_length=20, blank=True)
+    is_overridden = models.BooleanField(default=False)     # value weicht vom default ab (vom Nutzer editiert)
+    has_jinja = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [("host_id", "role_name", "var_name")]
+        ordering = ["role_name", "var_name"]
+        verbose_name = "Host Role Variable"
+
+    def __str__(self):
+        flag = "*" if self.is_overridden else ""
+        return f"host={self.host_id} {self.role_name}.{self.var_name}{flag}"
+
+
 class RoleHandler(models.Model):
     """
     Ein Handler aus handlers/main.yml einer Rolle.
@@ -177,9 +212,15 @@ class Subnet(models.Model):
 
 class ExecutionNodeLocation(models.Model):
     """
-    Zuordnung eines AWX Execution Node (receptor-node-id) zu einer Location/Site.
-    Ein Job-Template kann über 'preferred_execution_location' einen Job an den
-    Proxy der entsprechenden Location delegieren.
+    Zuordnung eines AWX Execution Node (receptor-node-id) zu einer Location/Site,
+    inkl. site-spezifischer Ansible-Verbindungsparameter.
+
+    Ein Runner pro Site kann eigene Defaults haben:
+      - ssh_user        : Standard-SSH-User für Hosts dieser Site
+      - ssh_credential_id: Referenz auf eine AWX Machine-Credential (SSH-Key,
+                           nutzt den nativen AWX-Keystore — kein Klartext hier)
+      - ansible_cfg     : roher ansible.cfg-Inhalt, der für Jobs dieser Site
+                           verwendet wird (z.B. eigener known_hosts, Forks, Timeouts)
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     # AWX Instance hostname (entspricht Receptor-Node-ID)
@@ -187,6 +228,10 @@ class ExecutionNodeLocation(models.Model):
     location = models.ForeignKey(
         Location, on_delete=models.SET_NULL, null=True, blank=True, related_name="execution_nodes"
     )
+    # ── Site-spezifische Ansible-Verbindungsparameter ──────────────────────
+    ssh_user = models.CharField(max_length=255, blank=True)
+    ssh_credential_id = models.IntegerField(null=True, blank=True)  # AWX Credential pk (Machine/SSH)
+    ansible_cfg = models.TextField(blank=True)                       # roher ansible.cfg-Inhalt
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

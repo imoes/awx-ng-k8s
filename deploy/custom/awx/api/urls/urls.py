@@ -88,7 +88,10 @@ from .analytics import urls as analytics_urls
 from .receptor_address import urls as receptor_address_urls
 # awx-ng: Locations & Subnets (Foreman-Stil) + Tools
 from awx.customvars.urls import urls as customvars_location_urls
-from awx.customvars.api import HashPasswordView, LocationReconcileView
+from awx.customvars.api import (
+    HashPasswordView, LocationReconcileView,
+    ExecutionNodeLocationListView, ExecutionNodeLocationDetailView,
+)
 
 v2_urls = [
     re_path(r'^$', ApiV2RootView.as_view(), name='api_v2_root_view'),
@@ -163,6 +166,8 @@ v2_urls = [
     # awx-ng: Locations & Subnets + Reconcile
     re_path(r'^locations/reconcile/$', LocationReconcileView.as_view(), name='locations_reconcile'),
     re_path(r'^locations/', include(customvars_location_urls)),
+    re_path(r'^execution_node_locations/$', ExecutionNodeLocationListView.as_view(), name='execution_node_locations'),
+    re_path(r'^execution_node_locations/(?P<pk>[0-9a-f-]+)/$', ExecutionNodeLocationDetailView.as_view(), name='execution_node_location_detail'),
     # awx-ng: Tools
     re_path(r'^tools/hash_password/$', HashPasswordView.as_view(), name='tools_hash_password'),
 ]
