@@ -1,0 +1,9 @@
+/* awx-ng: UI-Tweaks.
+   Vergrößert die Variablen-/Code-Editoren (CodeMirror) auf ~halbe Seite,
+   damit das Variablenfeld auf der Host-Detailseite nicht mehr winzig ist. */
+.CodeMirror {
+  min-height: 45vh !important;
+}
+.CodeMirror-scroll {
+  min-height: 45vh !important;
+}

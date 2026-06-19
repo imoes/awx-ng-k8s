@@ -1,0 +1,70 @@
+// awx-ng: API-Helfer für die customvars-Endpunkte.
+// Eigenständig, damit api/index.js nicht angefasst werden muss (rebase-freundlich).
+import Base from 'api/Base';
+
+class CustomEndpoint extends Base {
+  constructor(baseUrl) {
+    super();
+    this.baseUrl = baseUrl;
+  }
+}
+
+export const LocationsAPI = new CustomEndpoint('/api/v2/locations/');
+export const ExecNodeLocationsAPI = new CustomEndpoint(
+  '/api/v2/execution_node_locations/'
+);
+
+// Subnetze hängen unter einer Location
+export function readSubnets(locationId) {
+  return LocationsAPI.http.get(`/api/v2/locations/${locationId}/subnets/`);
+}
+export function createSubnet(locationId, data) {
+  return LocationsAPI.http.post(
+    `/api/v2/locations/${locationId}/subnets/`,
+    data
+  );
+}
+export function reconcileLocations() {
+  return LocationsAPI.http.post('/api/v2/locations/reconcile/', {});
+}
+
+// Hosts (für die Variablen-Verwaltung)
+export function readHosts(params) {
+  return LocationsAPI.http.get('/api/v2/hosts/', { params });
+}
+export function readHostRoleVariables(hostId, params) {
+  return LocationsAPI.http.get(`/api/v2/hosts/${hostId}/role_variables/`, {
+    params,
+  });
+}
+export function patchHostRoleVariable(hostId, varId, value) {
+  return LocationsAPI.http.patch(
+    `/api/v2/hosts/${hostId}/role_variables/${varId}/`,
+    { value }
+  );
+}
+export function resetHostRoleVariable(hostId, varId) {
+  return LocationsAPI.http.delete(
+    `/api/v2/hosts/${hostId}/role_variables/${varId}/`
+  );
+}
+export function assignHostRoles(hostId, roles, projectId) {
+  return LocationsAPI.http.post(`/api/v2/hosts/${hostId}/assign_roles/`, {
+    roles,
+    project_id: projectId,
+  });
+}
+export function readAggregatedVariables(hostId) {
+  return LocationsAPI.http.get(`/api/v2/hosts/${hostId}/aggregated_variables/`);
+}
+
+// Projekte + deren Rollen (für die Rollen-Auswahl)
+export function readProjects(params) {
+  return LocationsAPI.http.get('/api/v2/projects/', { params });
+}
+export function readProjectRoleVariables(projectId, params) {
+  return LocationsAPI.http.get(
+    `/api/v2/projects/${projectId}/role_variables/`,
+    { params }
+  );
+}

@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom';
 import './setupCSP';
 import '@patternfly/react-core/dist/styles/base.css';
 import './border.css';
+import './customvars.css'; // awx-ng: UI-Tweaks (größeres Variablenfeld)
 import App from './App';
 
 ReactDOM.render(
