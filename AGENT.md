@@ -67,6 +67,16 @@ docker compose up -d --no-deps awx_web awx_task
 Enzyme-Pakete React 16 als Peer fordern — sonst ERESOLVE-Abbruch. Das ist ein
 bekanntes Alt-AWX-UI-Problem, kein Fehler in unserem Code.
 
+**KRITISCH — i18n-Kataloge:** `build-ui.sh` führt VOR dem Build
+`npm run compile-strings` (= `lingui compile`) aus. Ohne das werden die
+`.po`-Kataloge nicht zu `locales/*/messages.js` kompiliert; der dynamische
+Import in `i18nLoader.js` findet dann nicht einmal Englisch
+(`Cannot find module './en/messages'`) → **weißer Screen nach dem Login**.
+Das AWX-Makefile macht compile-strings ebenfalls vor dem Build. Niemals
+`react-scripts build` ohne vorheriges compile-strings ausführen.
+(Deutsche Browser-Sprache ist KEIN Problem: App.js fällt über den
+`locales`-Guard auf 'en' zurück — nur muss 'en' eben kompiliert vorliegen.)
+
 ## Versionssprung-Checkliste (z.B. 24.6.1 → nächster Stable-Tag)
 
 1. **Upstream mergen** im Dev-Repo: `git fetch upstream && git rebase upstream/<tag> custom`

@@ -15,6 +15,13 @@ if [[ "${1:-}" == "--clean" || ! -d "$UI/node_modules" ]]; then
     NODE_OPTIONS=--max-old-space-size=6144 npm --prefix "$UI" --loglevel warn --force ci
 fi
 
+echo "[build-ui] compile-strings (lingui compile → locales/*/messages.js)…"
+# WICHTIG: ohne diesen Schritt fehlen die kompilierten i18n-Kataloge
+# (locales/en/messages.js). Der dynamische Import in i18nLoader.js findet dann
+# nicht einmal Englisch ('Cannot find module ./en/messages') → weißer Screen.
+# Das AWX-Makefile macht das ebenfalls VOR dem Build.
+( cd "$UI" && npm run --silent compile-strings )
+
 echo "[build-ui] react-scripts build…"
 # DISABLE_ESLINT_PLUGIN: ESLint-Warnungen sollen den Build nicht abbrechen
 # (CI=true behandelt sonst jede Warnung als Fehler). Babel/Webpack fangen
