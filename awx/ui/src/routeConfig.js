@@ -30,6 +30,7 @@ import HostMetrics from 'screens/HostMetrics';
 import {
   Locations as NgLocations,
   RunnerSites as NgRunnerSites,
+  Roles as NgRoles,
 } from 'screens/CustomVars';
 
 function getRouteConfig(userProfile = {}) {
@@ -108,6 +109,12 @@ function getRouteConfig(userProfile = {}) {
           title: <Trans>Locations</Trans>,
           path: '/locations',
           screen: NgLocations,
+        },
+        {
+          // awx-ng: Rollen-Verwaltung (Import, Übersicht, Variablen)
+          title: <Trans>Roles</Trans>,
+          path: '/roles',
+          screen: NgRoles,
         },
       ],
     },

@@ -217,6 +217,69 @@ class ProjectRoleTagListView(generics.ListAPIView):
         return qs
 
 
+class ProjectRolesListView(APIView):
+    """
+    GET /api/v2/projects/{project_id}/roles/
+
+    Listet alle Rollen eines Projekts:
+    - Rollen auf Disk (roles/-Unterverzeichnisse)
+    - Rollen in der DB (mit Variablen)
+    - Variablen-Anzahl je Rolle
+    - Letzter Scan-Status
+    """
+
+    def get(self, request, project_id, **kwargs):
+        import pathlib
+        from django.db.models import Count as _Count
+
+        project = get_object_or_404(Project, pk=project_id)
+
+        # DB-Rollen mit Variablen-Anzahl
+        db_counts = dict(
+            RoleVariable.objects.filter(project_id=project_id)
+            .values('role_name')
+            .annotate(c=_Count('id'))
+            .values_list('role_name', 'c')
+        )
+
+        # Rollen auf Disk
+        disk_roles: set = set()
+        try:
+            project_path = project.get_project_path(check_if_exists=False)
+            roles_dir = pathlib.Path(project_path) / 'roles'
+            if roles_dir.exists():
+                disk_roles = {d.name for d in roles_dir.iterdir() if d.is_dir()}
+        except Exception:
+            pass
+
+        # Letzter Scan
+        last_scan = RoleScan.objects.filter(project_id=project_id).order_by('-id').first()
+
+        all_names = sorted(disk_roles | set(db_counts.keys()))
+        results = [
+            {
+                'role_name': r,
+                'var_count': db_counts.get(r, 0),
+                'on_disk': r in disk_roles,
+                'has_vars': r in db_counts,
+            }
+            for r in all_names
+        ]
+
+        return Response({
+            'count': len(results),
+            'results': results,
+            'last_scan': {
+                'revision': last_scan.revision,
+                'roles_found': last_scan.roles_found,
+                'vars_extracted': last_scan.vars_extracted,
+                'tags_extracted': last_scan.tags_extracted,
+                'handlers_extracted': last_scan.handlers_extracted,
+                'errors': last_scan.errors,
+            } if last_scan else None,
+        })
+
+
 class LocationListView(generics.ListCreateAPIView):
     """GET/POST /api/v2/locations/"""
     serializer_class = LocationSerializer
@@ -295,13 +358,13 @@ def _role_var_to_survey_item(rv: RoleVariable) -> dict:
         item['default'] = ''
 
     elif rv.value_type in ('dict', 'list'):
-        # YAML statt JSON — konsistent mit host.variables/group_vars (alles YAML).
+        # JSON für dict/list: Ansible-Rollen verwenden to_nice_json / from_json.
+        # host.variables bleibt YAML (dort schreiben wir yaml.dump).
+        # Survey-Werte werden als extra_vars (String) übergeben → Ansible
+        # braucht gültiges JSON wenn die Rolle combine()/from_json nutzt.
         if val is not None:
             try:
-                import yaml as _yaml
-                item['default'] = _yaml.dump(
-                    val, default_flow_style=False, allow_unicode=True, sort_keys=False
-                ).rstrip('\n')
+                item['default'] = json.dumps(val, ensure_ascii=False, indent=2)
             except (TypeError, ValueError):
                 item['default'] = str(val)
         else:
@@ -807,6 +870,47 @@ class HostRoleVariableDetailView(APIView):
             del hvars[var_name]
             self._save(host, hvars)
         return Response({'var_name': var_name, 'is_overridden': False, 'removed': existed})
+
+
+class HostRunView(APIView):
+    """
+    GET  /api/v2/hosts/{pk}/run/  — Job-Templates die dieses Host-Inventory nutzen
+    POST /api/v2/hosts/{pk}/run/  — Template mit limit=hostname starten
+         Body: {"job_template_id": N}
+    """
+
+    def get(self, request, pk, **kwargs):
+        host = get_object_or_404(Host, pk=pk)
+        inventory = host.inventory
+        jts = JobTemplate.objects.filter(inventory=inventory).order_by('name')
+        results = [
+            {
+                'id': jt.id,
+                'name': jt.name,
+                'playbook': jt.playbook,
+                'project': jt.project_id,
+            }
+            for jt in jts
+        ]
+        return Response({'count': len(results), 'results': results})
+
+    def post(self, request, pk, **kwargs):
+        host = get_object_or_404(Host, pk=pk)
+        jt_id = request.data.get('job_template_id')
+        if not jt_id:
+            return Response({'error': 'job_template_id required'}, status=status.HTTP_400_BAD_REQUEST)
+        jt = get_object_or_404(JobTemplate, pk=jt_id)
+
+        try:
+            job = jt.create_unified_job(limit=host.name, _eager_fields={'launched_by': request.user})
+            job.signal_start()
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {'job_id': job.id, 'job_url': f'/api/v2/jobs/{job.id}/'},
+            status=status.HTTP_201_CREATED,
+        )
 
 
 # ── Runner ↔ Site-Zuordnung (Execution Node Locations) ───────────────────────

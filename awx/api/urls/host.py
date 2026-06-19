@@ -11,6 +11,7 @@ from awx.customvars.api import (
     HostRoleVariableListView,
     HostRoleVariableDetailView,
     HostCloneView,
+    HostRunView,
 )
 
 from awx.api.views import (
@@ -49,6 +50,8 @@ urls = [
     re_path(r'^(?P<pk>[0-9]+)/role_variables/$', HostRoleVariableListView.as_view(), name='host_role_variables'),
     re_path(r'^(?P<pk>[0-9]+)/role_variables/(?P<var_name>[^/]+)/$', HostRoleVariableDetailView.as_view(), name='host_role_variable_detail'),
     re_path(r'^(?P<pk>[0-9]+)/clone/$', HostCloneView.as_view(), name='host_clone'),
+    # awx-ng: Host wie Template ausführen (limit=hostname)
+    re_path(r'^(?P<pk>[0-9]+)/run/$', HostRunView.as_view(), name='host_run'),
 ]
 
 __all__ = ['urls']

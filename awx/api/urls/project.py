@@ -10,6 +10,7 @@ from awx.customvars.api import (
     ProjectRoleHandlerListView,
     ProjectRoleScanView,
     ProjectRoleScanTriggerView,
+    ProjectRolesListView,
 )
 
 from awx.api.views import (
@@ -65,6 +66,8 @@ urls = [
     re_path(r'^(?P<project_id>[0-9]+)/role_variables/scan/trigger/$', ProjectRoleScanTriggerView.as_view(), name='project_role_scan_trigger'),
     re_path(r'^(?P<project_id>[0-9]+)/role_tags/$', ProjectRoleTagListView.as_view(), name='project_role_tags'),
     re_path(r'^(?P<project_id>[0-9]+)/role_handlers/$', ProjectRoleHandlerListView.as_view(), name='project_role_handlers'),
+    # awx-ng: alle Rollen eines Projekts (Disk + DB) für die Rollen-Verwaltung
+    re_path(r'^(?P<project_id>[0-9]+)/roles/$', ProjectRolesListView.as_view(), name='project_roles'),
 ]
 
 __all__ = ['urls']

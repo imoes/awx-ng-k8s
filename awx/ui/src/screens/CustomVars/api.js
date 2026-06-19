@@ -75,7 +75,7 @@ export function upsertExecNodeLocation(existing, payload) {
   return ExecNodeLocationsAPI.create(payload);
 }
 
-// Projekte + deren Rollen (für die Rollen-Auswahl)
+// Projekte + deren Rollen (für die Rollen-Auswahl und Rollen-Verwaltung)
 export function readProjects(params) {
   return LocationsAPI.http.get('/api/v2/projects/', { params });
 }
@@ -84,4 +84,25 @@ export function readProjectRoleVariables(projectId, params) {
     `/api/v2/projects/${projectId}/role_variables/`,
     { params }
   );
+}
+// Alle Rollen eines Projekts (Disk + DB, für Rollen-Verwaltungs-Screen)
+export function readProjectRoles(projectId) {
+  return LocationsAPI.http.get(`/api/v2/projects/${projectId}/roles/`);
+}
+// Scan eines Projekts manuell auslösen
+export function triggerProjectRoleScan(projectId) {
+  return LocationsAPI.http.post(
+    `/api/v2/projects/${projectId}/role_variables/scan/trigger/`,
+    {}
+  );
+}
+// Job-Templates eines Hosts (gleiche Inventory)
+export function readHostJobTemplates(hostId) {
+  return LocationsAPI.http.get(`/api/v2/hosts/${hostId}/run/`);
+}
+// Host ausführen (limit=hostname)
+export function runHost(hostId, jobTemplateId) {
+  return LocationsAPI.http.post(`/api/v2/hosts/${hostId}/run/`, {
+    job_template_id: jobTemplateId,
+  });
 }
