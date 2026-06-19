@@ -7,6 +7,7 @@ from django.urls import re_path
 from awx.customvars.api import (
     ProjectRoleVariableListView,
     ProjectRoleTagListView,
+    ProjectRoleHandlerListView,
     ProjectRoleScanView,
     ProjectRoleScanTriggerView,
 )
@@ -63,6 +64,7 @@ urls = [
     re_path(r'^(?P<project_id>[0-9]+)/role_variables/scan/$', ProjectRoleScanView.as_view(), name='project_role_scan'),
     re_path(r'^(?P<project_id>[0-9]+)/role_variables/scan/trigger/$', ProjectRoleScanTriggerView.as_view(), name='project_role_scan_trigger'),
     re_path(r'^(?P<project_id>[0-9]+)/role_tags/$', ProjectRoleTagListView.as_view(), name='project_role_tags'),
+    re_path(r'^(?P<project_id>[0-9]+)/role_handlers/$', ProjectRoleHandlerListView.as_view(), name='project_role_handlers'),
 ]
 
 __all__ = ['urls']

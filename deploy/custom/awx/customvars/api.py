@@ -35,7 +35,7 @@ from django.shortcuts import get_object_or_404
 from awx.api.permissions import IsSystemAdminOrAuditor
 from awx.main.models import Project, JobTemplate, Host
 
-from .models import RoleVariable, RoleTag, RoleScan, Location, Subnet
+from .models import RoleVariable, RoleTag, RoleHandler, RoleScan, Location, Subnet
 
 
 # ── Serializers ───────────────────────────────────────────────────────────────
@@ -60,12 +60,21 @@ class RoleTagSerializer(drf_serializers.ModelSerializer):
         ]
 
 
+class RoleHandlerSerializer(drf_serializers.ModelSerializer):
+    class Meta:
+        model = RoleHandler
+        fields = [
+            'id', 'project_id', 'role_name', 'handler_name',
+            'module', 'listen_targets', 'scanned_revision', 'updated_at',
+        ]
+
+
 class RoleScanSerializer(drf_serializers.ModelSerializer):
     class Meta:
         model = RoleScan
         fields = [
-            'id', 'project_id', 'scanned_at',
-            'revision', 'roles_found', 'vars_extracted', 'tags_extracted', 'errors',
+            'id', 'project_id', 'scanned_at', 'revision',
+            'roles_found', 'vars_extracted', 'tags_extracted', 'handlers_extracted', 'errors',
         ]
 
 
@@ -146,6 +155,27 @@ class ProjectRoleScanTriggerView(APIView):
         from awx.customvars.extract import scan_project_roles
         result = scan_project_roles(project.pk, project_path, revision)
         return Response(result, status=status.HTTP_200_OK)
+
+
+class ProjectRoleHandlerListView(generics.ListAPIView):
+    """
+    GET /api/v2/projects/{project_id}/role_handlers/
+
+    Alle Handlers aus handlers/main.yml der Rollen eines Projekts.
+    Filter: ?role_name=img_docker
+    """
+    serializer_class = RoleHandlerSerializer
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['role_name', 'handler_name', 'module']
+
+    def get_queryset(self):
+        project_id = self.kwargs['project_id']
+        get_object_or_404(Project, pk=project_id)
+        qs = RoleHandler.objects.filter(project_id=project_id)
+        role_name = self.request.query_params.get('role_name')
+        if role_name:
+            qs = qs.filter(role_name=role_name)
+        return qs
 
 
 class ProjectRoleTagListView(generics.ListAPIView):

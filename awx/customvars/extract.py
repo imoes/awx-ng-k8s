@@ -259,6 +259,63 @@ def extract_role_tags(role_dir: pathlib.Path) -> dict[str, int]:
     return tag_counts
 
 
+# ── Handler-Extraktion ───────────────────────────────────────────────────────
+
+# Module die typischerweise in Handlers verwendet werden — alle anderen bleiben
+# als Freitext in `module` gespeichert.
+_KNOWN_HANDLER_KEYS = {
+    "service", "systemd", "ansible.builtin.service", "ansible.builtin.systemd",
+    "command", "shell", "ansible.builtin.command", "ansible.builtin.shell",
+    "file", "template", "copy", "meta",
+}
+
+
+def _detect_module(item: dict) -> str:
+    """Ermittelt das verwendete Modul aus einem Handler-Dict."""
+    for key in item:
+        if key in _KNOWN_HANDLER_KEYS:
+            return key
+        if "." in key and key not in ("ansible.builtin.debug",):
+            return key
+    return ""
+
+
+def extract_role_handlers(role_dir: pathlib.Path) -> list[dict]:
+    """
+    Liest handlers/main.yml und gibt eine Liste von Handler-Dicts zurück:
+      [{handler_name, module, listen_targets}, ...]
+    """
+    handler_file = role_dir / "handlers" / "main.yml"
+    if not handler_file.is_file():
+        return []
+
+    try:
+        content = handler_file.read_text(encoding="utf-8", errors="replace")
+        data = yaml.load(content, Loader=_AnsibleSafeLoader)
+    except Exception:
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    results = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name", "").strip()
+        if not name:
+            continue
+        listen = item.get("listen", [])
+        if isinstance(listen, str):
+            listen = [listen]
+        results.append({
+            "handler_name": name,
+            "module": _detect_module(item),
+            "listen_targets": list(listen),
+        })
+    return results
+
+
 # ── Haupt-Scan-Funktion (wird vom post_run_hook aufgerufen) ─────────────────
 
 def scan_project_roles(project_id: int, project_path: str, revision: str) -> dict:
@@ -269,14 +326,15 @@ def scan_project_roles(project_id: int, project_path: str, revision: str) -> dic
 
     Gibt ein Summary-Dict zurück: {roles_found, vars_extracted, errors}
     """
-    from awx.customvars.models import RoleVariable, RoleTag, RoleScan
+    from awx.customvars.models import RoleVariable, RoleTag, RoleHandler, RoleScan
 
     repo = pathlib.Path(project_path)
     roles_dir = repo / "roles"
 
     errors = []
     all_vars = []
-    all_tags: dict[str, dict[str, int]] = {}  # {role_name: {tag: count}}
+    all_tags: dict[str, dict[str, int]] = {}       # {role_name: {tag: count}}
+    all_handlers: dict[str, list[dict]] = {}        # {role_name: [{handler_name, module, listen_targets}]}
     role_names_found = []
 
     if not roles_dir.is_dir():
@@ -298,10 +356,13 @@ def scan_project_roles(project_id: int, project_path: str, revision: str) -> dic
         try:
             extracted = extract_role(role_dir, project_id, revision)
             tags = extract_role_tags(role_dir)
+            handlers = extract_role_handlers(role_dir)
             role_names_found.append(role_name)
             all_vars.extend(extracted)
             all_tags[role_name] = tags
-            log.debug("extract: %s → %d Variablen, %d Tags", role_name, len(extracted), len(tags))
+            all_handlers[role_name] = handlers
+            log.debug("extract: %s → %d Vars, %d Tags, %d Handlers",
+                      role_name, len(extracted), len(tags), len(handlers))
         except Exception as exc:
             msg = f"{role_name}: {exc}"
             errors.append(msg)
@@ -352,6 +413,27 @@ def scan_project_roles(project_id: int, project_path: str, revision: str) -> dic
             errors.append(msg)
             log.error("scan_project_roles tags Fehler: %s", exc)
 
+    # ── Handlers: DELETE + RE-INSERT ─────────────────────────────────────
+    total_handlers = 0
+    for role_name, handler_list in all_handlers.items():
+        try:
+            RoleHandler.objects.filter(project_id=project_id, role_name=role_name).delete()
+            objs = [
+                RoleHandler(
+                    project_id=project_id,
+                    role_name=role_name,
+                    scanned_revision=revision,
+                    **h,
+                )
+                for h in handler_list
+            ]
+            RoleHandler.objects.bulk_create(objs, ignore_conflicts=False)
+            total_handlers += len(objs)
+        except Exception as exc:
+            msg = f"{role_name} handlers bulk_create: {exc}"
+            errors.append(msg)
+            log.error("scan_project_roles handlers Fehler: %s", exc)
+
     # ── Audit-Eintrag ─────────────────────────────────────────────────────
     scan = RoleScan.objects.create(
         project_id=project_id,
@@ -359,20 +441,23 @@ def scan_project_roles(project_id: int, project_path: str, revision: str) -> dic
         roles_found=len(role_names_found),
         vars_extracted=total_inserted,
         tags_extracted=total_tags,
+        handlers_extracted=total_handlers,
         errors=errors,
     )
     log.info(
-        "scan_project_roles project=%d rev=%s: %d Rollen, %d Variablen, %d Tags, %d Fehler",
+        "scan_project_roles project=%d rev=%s: %d Rollen, %d Vars, %d Tags, %d Handlers, %d Fehler",
         project_id,
         revision[:8] if revision else "?",
         len(role_names_found),
         total_inserted,
         total_tags,
+        total_handlers,
         len(errors),
     )
     return {
         "roles_found": len(role_names_found),
         "vars_extracted": total_inserted,
         "tags_extracted": total_tags,
+        "handlers_extracted": total_handlers,
         "errors": errors,
     }

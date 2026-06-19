@@ -22,6 +22,7 @@ class RoleScan(models.Model):
     roles_found = models.IntegerField(default=0)
     vars_extracted = models.IntegerField(default=0)
     tags_extracted = models.IntegerField(default=0)
+    handlers_extracted = models.IntegerField(default=0)
     errors = models.JSONField(default=list)
 
     class Meta:
@@ -67,6 +68,31 @@ class RoleVariable(models.Model):
 
     def __str__(self):
         return f"{self.role_name}.{self.var_name} ({self.source})"
+
+
+class RoleHandler(models.Model):
+    """
+    Ein Handler aus handlers/main.yml einer Rolle.
+    name = der in notify: referenzierte Name.
+    listen_targets = optionale aliases (listen: [...]).
+    module = verwendetes Ansible-Modul (z.B. ansible.builtin.systemd).
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project_id = models.IntegerField(db_index=True)
+    role_name = models.CharField(max_length=255, db_index=True)
+    handler_name = models.CharField(max_length=255)
+    module = models.CharField(max_length=255, blank=True)
+    listen_targets = models.JSONField(default=list)
+    scanned_revision = models.CharField(max_length=40, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [("project_id", "role_name", "handler_name")]
+        ordering = ["role_name", "handler_name"]
+        verbose_name = "Role Handler"
+
+    def __str__(self):
+        return f"{self.role_name} → {self.handler_name}"
 
 
 class RoleTag(models.Model):
