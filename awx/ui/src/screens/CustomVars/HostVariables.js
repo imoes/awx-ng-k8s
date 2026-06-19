@@ -13,7 +13,9 @@ import {
   FormGroup,
   FormSelect,
   FormSelectOption,
+  TextInput,
   TextArea,
+  Checkbox,
   Alert,
   Spinner,
   Split,
@@ -41,6 +43,7 @@ import {
   patchHostRoleVariable,
   resetHostRoleVariable,
   assignHostRoles,
+  cloneHost,
 } from './api';
 
 function HostVariables() {
@@ -57,6 +60,9 @@ function HostVariables() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [err, setErr] = useState(null);
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [cloneName, setCloneName] = useState('');
+  const [cloneGroups, setCloneGroups] = useState(true);
 
   // Hosts + Projekte laden
   const {
@@ -167,6 +173,26 @@ function HostVariables() {
     loadHostVars(hostId);
   };
 
+  const doClone = async () => {
+    setBusy(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const { data } = await cloneHost(hostId, cloneName, cloneGroups);
+      setCloneOpen(false);
+      setCloneName('');
+      await fetchBase(); // Host-Liste neu laden, damit der Klon auftaucht
+      setHostId(String(data.id)); // auf den Klon umschalten
+      setMsg(
+        `Host '${data.name}' geklont (${data.role_variables_copied} Variablen, ${data.groups_copied} Gruppen).`
+      );
+    } catch (e) {
+      setErr(e?.response?.data || e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const assignedRoles = Array.from(new Set(hostVars.map((v) => v.role_name)));
 
   return (
@@ -194,6 +220,22 @@ function HostVariables() {
                   </FormSelect>
                 </FormGroup>
               </SplitItem>
+              {hostId && (
+                <SplitItem>
+                  <div style={{ marginTop: 32 }}>
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        const cur = hosts.find((h) => String(h.id) === hostId);
+                        setCloneName(cur ? `${cur.name}-clone` : '');
+                        setCloneOpen(true);
+                      }}
+                    >
+                      Host klonen
+                    </Button>
+                  </div>
+                </SplitItem>
+              )}
             </Split>
 
             {msg && (
@@ -336,6 +378,50 @@ function HostVariables() {
           </CardBody>
         </Card>
       </PageSection>
+
+      {cloneOpen && (
+        <Modal
+          title="Host klonen"
+          isOpen
+          variant="small"
+          onClose={() => setCloneOpen(false)}
+          actions={[
+            <Button
+              key="clone"
+              variant="primary"
+              onClick={doClone}
+              isDisabled={!cloneName || busy}
+            >
+              Klonen
+            </Button>,
+            <Button key="cancel" variant="link" onClick={() => setCloneOpen(false)}>
+              Abbrechen
+            </Button>,
+          ]}
+        >
+          <Form>
+            <FormGroup label="Name des neuen Hosts" isRequired fieldId="clone-name">
+              <TextInput
+                id="clone-name"
+                value={cloneName}
+                onChange={(v) => setCloneName(v)}
+              />
+            </FormGroup>
+            <FormGroup fieldId="clone-groups">
+              <Checkbox
+                id="clone-groups"
+                label="Gruppen-Mitgliedschaften mitkopieren"
+                isChecked={cloneGroups}
+                onChange={(checked) => setCloneGroups(checked)}
+              />
+            </FormGroup>
+            <p style={{ color: '#6a6e73' }}>
+              Kopiert host_vars, alle Rollen-Variablen-Overrides und (optional) die
+              Gruppen. Danach kannst du die Variablen des Klons anpassen.
+            </p>
+          </Form>
+        </Modal>
+      )}
 
       {editingVar && (
         <Modal

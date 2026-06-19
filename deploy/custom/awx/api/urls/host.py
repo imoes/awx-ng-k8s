@@ -10,6 +10,7 @@ from awx.customvars.api import (
     HostAssignRolesView,
     HostRoleVariableListView,
     HostRoleVariableDetailView,
+    HostCloneView,
 )
 
 from awx.api.views import (
@@ -47,6 +48,7 @@ urls = [
     re_path(r'^(?P<pk>[0-9]+)/assign_roles/$', HostAssignRolesView.as_view(), name='host_assign_roles'),
     re_path(r'^(?P<pk>[0-9]+)/role_variables/$', HostRoleVariableListView.as_view(), name='host_role_variables'),
     re_path(r'^(?P<pk>[0-9]+)/role_variables/(?P<var_id>[0-9a-f-]+)/$', HostRoleVariableDetailView.as_view(), name='host_role_variable_detail'),
+    re_path(r'^(?P<pk>[0-9]+)/clone/$', HostCloneView.as_view(), name='host_clone'),
 ]
 
 __all__ = ['urls']

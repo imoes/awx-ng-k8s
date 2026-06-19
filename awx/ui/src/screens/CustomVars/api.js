@@ -57,6 +57,12 @@ export function assignHostRoles(hostId, roles, projectId) {
 export function readAggregatedVariables(hostId) {
   return LocationsAPI.http.get(`/api/v2/hosts/${hostId}/aggregated_variables/`);
 }
+export function cloneHost(hostId, name, copyGroups = true) {
+  return LocationsAPI.http.post(`/api/v2/hosts/${hostId}/clone/`, {
+    name,
+    copy_groups: copyGroups,
+  });
+}
 
 // Projekte + deren Rollen (für die Rollen-Auswahl)
 export function readProjects(params) {

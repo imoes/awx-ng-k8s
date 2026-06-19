@@ -603,6 +603,85 @@ class HostSetRootPasswordView(APIView):
         return Response({'var_name': var_name, 'status': 'set', 'hash_prefix': hashed[:10] + '...'})
 
 
+class HostCloneView(APIView):
+    """
+    POST /api/v2/hosts/{pk}/clone/
+
+    Klont einen Host innerhalb desselben Inventars — ideal für standardisierte
+    Hosts (z.B. Docker-Host mit /data1). Kopiert:
+      - Host.variables (inkl. host_roles)
+      - alle HostRoleVariable-Overrides (Werte + Override-Status)
+      - optional die Gruppen-Mitgliedschaften (copy_groups, Default true)
+
+    Body: {"name": "neuer-host", "copy_groups": true}
+    """
+
+    def post(self, request, pk, **kwargs):
+        from awx.main.models import Inventory  # lokal, vermeidet Zirkularimport
+
+        source = get_object_or_404(Host, pk=pk)
+        new_name = (request.data.get('name') or '').strip()
+        if not new_name:
+            return Response({'error': "'name' ist Pflichtfeld."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Berechtigung: Host im Ziel-Inventar anlegen dürfen
+        if not request.user.can_access(
+            Host, 'add', {'inventory': source.inventory_id, 'name': new_name}
+        ):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied()
+
+        if Host.objects.filter(inventory_id=source.inventory_id, name=new_name).exists():
+            return Response(
+                {'error': f"Host '{new_name}' existiert bereits in diesem Inventar."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        copy_groups = request.data.get('copy_groups', True)
+
+        # 1. Host anlegen (Variablen + Stammdaten übernehmen)
+        clone = Host.objects.create(
+            name=new_name,
+            inventory=source.inventory,
+            description=source.description,
+            enabled=source.enabled,
+            variables=source.variables,
+            created_by=request.user,
+            modified_by=request.user,
+        )
+
+        # 2. Gruppen-Mitgliedschaften übernehmen
+        if copy_groups:
+            clone.groups.add(*source.groups.all())
+
+        # 3. HostRoleVariable-Overrides kopieren
+        cloned_vars = []
+        for hrv in HostRoleVariable.objects.filter(host_id=source.pk):
+            cloned_vars.append(HostRoleVariable(
+                host_id=clone.pk,
+                project_id=hrv.project_id,
+                role_name=hrv.role_name,
+                var_name=hrv.var_name,
+                source=hrv.source,
+                value=hrv.value,
+                default_value=hrv.default_value,
+                value_type=hrv.value_type,
+                is_overridden=hrv.is_overridden,
+                has_jinja=hrv.has_jinja,
+            ))
+        if cloned_vars:
+            HostRoleVariable.objects.bulk_create(cloned_vars)
+
+        return Response({
+            'id': clone.pk,
+            'name': clone.name,
+            'inventory': clone.inventory_id,
+            'cloned_from': source.pk,
+            'role_variables_copied': len(cloned_vars),
+            'groups_copied': clone.groups.count() if copy_groups else 0,
+        }, status=status.HTTP_201_CREATED)
+
+
 def _infer_project_id_for_roles(host, roles):
     """
     Ermittelt das Herkunfts-Projekt der Rollen für einen Host.
