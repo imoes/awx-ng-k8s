@@ -1,0 +1,55 @@
+# docker-compose.override.yml.example
+#
+# Lokale Anpassungen, die NICHT ins Git-Repo sollen.
+# Vorlage umbenennen → docker-compose.override.yml (gitignored).
+#
+# Docker Compose lädt docker-compose.override.yml automatisch und mergt es
+# mit docker-compose.yml — kein extra Flag nötig.
+#
+# Typische Anwendungsfälle:
+#   - Unternehmens-Proxy (Build-Args + Runtime-Umgebung)
+#   - Lokale Port-Bindings
+#   - Debug-Volumes oder extra Umgebungsvariablen
+#
+# WICHTIG: Für Build-Proxy-Args funktionieren die Predefined-ARGs von BuildKit
+# (HTTP_PROXY, HTTPS_PROXY, NO_PROXY) ohne ARG-Deklaration im Dockerfile.
+# Für Runtime-Proxy (ansible-galaxy in Jobs) → environment: in awx_task/awx_ee.
+#
+# ── Unternehmens-Proxy ────────────────────────────────────────────────────────
+services:
+  awx_init:
+    build:
+      args:
+        HTTP_PROXY: "http://proxy.example.com:80"
+        HTTPS_PROXY: "http://proxy.example.com:80"
+        NO_PROXY: "localhost,127.0.0.1,postgres,redis"
+
+  awx_web:
+    build:
+      args:
+        HTTP_PROXY: "http://proxy.example.com:80"
+        HTTPS_PROXY: "http://proxy.example.com:80"
+        NO_PROXY: "localhost,127.0.0.1,postgres,redis"
+
+  awx_task:
+    build:
+      args:
+        HTTP_PROXY: "http://proxy.example.com:80"
+        HTTPS_PROXY: "http://proxy.example.com:80"
+        NO_PROXY: "localhost,127.0.0.1,postgres,redis"
+    environment:
+      # Proxy für ansible-galaxy bei Job-Ausführungen
+      http_proxy: "http://proxy.example.com:80"
+      https_proxy: "http://proxy.example.com:80"
+      no_proxy: "localhost,127.0.0.1,postgres,redis"
+
+  awx_ee:
+    build:
+      args:
+        HTTP_PROXY: "http://proxy.example.com:80"
+        HTTPS_PROXY: "http://proxy.example.com:80"
+        NO_PROXY: "localhost,127.0.0.1,postgres,redis"
+    environment:
+      http_proxy: "http://proxy.example.com:80"
+      https_proxy: "http://proxy.example.com:80"
+      no_proxy: "localhost,127.0.0.1,postgres,redis"

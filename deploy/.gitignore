@@ -1,5 +1,7 @@
-# Secrets — niemals einchecken
+# Secrets + lokale Overrides — niemals einchecken
 .env
+# Lokale docker-compose-Overrides (Proxy, lokale Ports, Debug-Volumes …)
+docker-compose.override.yml
 secrets/pg_password
 secrets/secret_key
 

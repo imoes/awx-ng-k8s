@@ -10,15 +10,6 @@ FROM ghcr.io/ansible/awx:24.6.1
 
 USER root
 
-# Proxy-Unterstützung: Werte kommen aus Build-Args (gesetzt via docker-compose.yml + .env).
-# .env ist gitignored — keine Zugangsdaten im Repo.
-ARG HTTP_PROXY
-ARG HTTPS_PROXY
-ARG NO_PROXY
-ENV http_proxy=${HTTP_PROXY} \
-    https_proxy=${HTTPS_PROXY} \
-    no_proxy=${NO_PROXY}
-
 ENV AWX_PKG=/var/lib/awx/venv/awx/lib/python3.11/site-packages/awx
 
 # ── nginx + Init-Skripte ──────────────────────────────────────────────────────

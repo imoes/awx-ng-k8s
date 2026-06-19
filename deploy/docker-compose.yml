@@ -49,10 +49,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        HTTP_PROXY: ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,postgres,redis}
     restart: "no"
     entrypoint: ["bash", "/usr/local/bin/init_awx.sh"]
     depends_on:
@@ -85,10 +81,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        HTTP_PROXY: ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,postgres,redis}
     restart: unless-stopped
     entrypoint: ["dumb-init", "--", "/usr/bin/launch_awx_web.sh"]
     hostname: awx-ng-control
@@ -141,10 +133,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        HTTP_PROXY: ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,postgres,redis}
     restart: unless-stopped
     entrypoint: ["dumb-init", "--", "/usr/bin/launch_awx_task_ng.sh"]
     hostname: awx-ng-control
@@ -185,20 +173,12 @@ services:
       OIDC_SECRET: ${OIDC_SECRET:-}
       OIDC_ENDPOINT: ${OIDC_ENDPOINT:-}
       OIDC_VERIFY_SSL: ${OIDC_VERIFY_SSL:-true}
-      # Proxy für ansible-galaxy-Aufrufe in Jobs (leer = kein Proxy)
-      http_proxy: ${HTTP_PROXY:-}
-      https_proxy: ${HTTPS_PROXY:-}
-      no_proxy: ${NO_PROXY:-localhost,127.0.0.1,postgres,redis}
 
   # ── Lokaler Execution Node (Receptor + ansible-runner + docker CLI) ─────────
   awx_ee:
     build:
       context: .
       dockerfile: Dockerfile.ee
-      args:
-        HTTP_PROXY: ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,postgres,redis}
     restart: unless-stopped
     entrypoint: ["sh", "-c", "rm -f /var/run/receptor/receptor.sock* && exec receptor --config /etc/receptor/receptor.conf"]
     hostname: awx-ng-local-ee
@@ -214,9 +194,6 @@ services:
       - ${ANSIBLE_REPO_PATH:-/home/mutkluge/Dev/ansible/ansible03}:/var/lib/awx/ansible03:rw
     environment:
       AWX_NG_CONTROL: "true"
-      http_proxy: ${HTTP_PROXY:-}
-      https_proxy: ${HTTPS_PROXY:-}
-      no_proxy: ${NO_PROXY:-localhost,127.0.0.1,postgres,redis}
     healthcheck:
       test: ["CMD-SHELL", "test -S /var/run/receptor/receptor.sock"]
       interval: 5s
