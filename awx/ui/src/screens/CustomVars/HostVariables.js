@@ -1,8 +1,9 @@
 /* eslint-disable i18next/no-literal-string */
-// awx-ng: Host-Variablen-Verwaltung.
-// Rollen zuweisen → Variablen werden materialisiert → pro Host editierbar
-// (großes Editierfeld). Plus aggregierte Sicht mit Herkunft.
+// awx-ng: per-host role variable management.
+// Assign roles → variables get materialized → editable per host (large field).
+// Plus host cloning for standardized hosts.
 import React, { useCallback, useEffect, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
 import {
   Button,
   Card,
@@ -17,14 +18,12 @@ import {
   TextArea,
   Checkbox,
   Alert,
-  Spinner,
-  Split,
-  SplitItem,
   Label,
   Title,
   Chip,
   ChipGroup,
 } from '@patternfly/react-core';
+import { CaretLeftIcon } from '@patternfly/react-icons';
 import {
   TableComposable,
   Thead,
@@ -36,7 +35,7 @@ import {
 import ScreenHeader from 'components/ScreenHeader/ScreenHeader';
 import useRequest from 'hooks/useRequest';
 import {
-  readHosts,
+  LocationsAPI,
   readProjects,
   readProjectRoleVariables,
   readHostRoleVariables,
@@ -47,11 +46,10 @@ import {
 } from './api';
 
 function HostVariables() {
-  const [breadcrumbConfig] = useState({
-    '/awx_ng/host_variables': 'Host-Variablen',
-  });
-  const [hostId, setHostId] = useState('');
+  const { id: hostId } = useParams();
+  const [hostName, setHostName] = useState('');
   const [projectId, setProjectId] = useState('');
+  const [projects, setProjects] = useState([]);
   const [availableRoles, setAvailableRoles] = useState([]);
   const [selectedRoles, setSelectedRoles] = useState([]);
   const [hostVars, setHostVars] = useState([]);
@@ -64,39 +62,31 @@ function HostVariables() {
   const [cloneName, setCloneName] = useState('');
   const [cloneGroups, setCloneGroups] = useState(true);
 
-  // Hosts + Projekte laden
-  const {
-    result: { hosts, projects },
-    request: fetchBase,
-  } = useRequest(
+  const { request: fetchBase } = useRequest(
     useCallback(async () => {
-      const [h, p] = await Promise.all([
-        readHosts({ page_size: 200, order_by: 'name' }),
+      const [host, projs] = await Promise.all([
+        LocationsAPI.http.get(`/api/v2/hosts/${hostId}/`),
         readProjects({ page_size: 200, order_by: 'name' }),
       ]);
-      return { hosts: h.data.results, projects: p.data.results };
-    }, []),
-    { hosts: [], projects: [] }
+      setHostName(host.data.name);
+      setProjects(projs.data.results);
+      return null;
+    }, [hostId]),
+    null
   );
   useEffect(() => {
     fetchBase();
   }, [fetchBase]);
 
-  const loadHostVars = useCallback(async (hid) => {
-    if (!hid) {
-      setHostVars([]);
-      return;
-    }
-    const { data } = await readHostRoleVariables(hid, { page_size: 500 });
+  const loadHostVars = useCallback(async () => {
+    const { data } = await readHostRoleVariables(hostId, { page_size: 500 });
     setHostVars(data.results);
-  }, []);
+  }, [hostId]);
 
   useEffect(() => {
-    loadHostVars(hostId);
-    setSelectedRoles([]);
-  }, [hostId, loadHostVars]);
+    loadHostVars();
+  }, [loadHostVars]);
 
-  // Verfügbare Rollen des gewählten Projekts ermitteln
   useEffect(() => {
     if (!projectId) {
       setAvailableRoles([]);
@@ -124,15 +114,14 @@ function HostVariables() {
     setErr(null);
     setMsg(null);
     try {
-      // bereits zugewiesene Rollen + neu ausgewählte vereinigen
       const current = Array.from(new Set(hostVars.map((v) => v.role_name)));
       const roles = Array.from(new Set([...current, ...selectedRoles]));
       const { data } = await assignHostRoles(hostId, roles, Number(projectId));
       setMsg(
-        `${data.variables_materialized} Variablen materialisiert für Rollen: ${roles.join(', ')}`
+        `${data.variables_materialized} variables materialized for roles: ${roles.join(', ')}`
       );
       setSelectedRoles([]);
-      loadHostVars(hostId);
+      loadHostVars();
     } catch (e) {
       setErr(e?.response?.data || e.message);
     } finally {
@@ -156,11 +145,11 @@ function HostVariables() {
       try {
         parsed = JSON.parse(editText);
       } catch {
-        parsed = editText; // Roh-String erlauben
+        parsed = editText;
       }
       await patchHostRoleVariable(hostId, editingVar.id, parsed);
       setEditingVar(null);
-      loadHostVars(hostId);
+      loadHostVars();
     } catch (e) {
       setErr(e?.response?.data || e.message);
     } finally {
@@ -170,7 +159,7 @@ function HostVariables() {
 
   const resetVar = async (v) => {
     await resetHostRoleVariable(hostId, v.id);
-    loadHostVars(hostId);
+    loadHostVars();
   };
 
   const doClone = async () => {
@@ -181,10 +170,8 @@ function HostVariables() {
       const { data } = await cloneHost(hostId, cloneName, cloneGroups);
       setCloneOpen(false);
       setCloneName('');
-      await fetchBase(); // Host-Liste neu laden, damit der Klon auftaucht
-      setHostId(String(data.id)); // auf den Klon umschalten
       setMsg(
-        `Host '${data.name}' geklont (${data.role_variables_copied} Variablen, ${data.groups_copied} Gruppen).`
+        `Host '${data.name}' cloned (${data.role_variables_copied} variables, ${data.groups_copied} groups). Open it from the host list.`
       );
     } catch (e) {
       setErr(e?.response?.data || e.message);
@@ -197,191 +184,168 @@ function HostVariables() {
 
   return (
     <>
-      <ScreenHeader streamType="none" breadcrumbConfig={breadcrumbConfig} />
+      <ScreenHeader
+        streamType="none"
+        breadcrumbConfig={{
+          '/host_variables': 'Host Variables',
+          [`/host_variables/${hostId}`]: hostName || hostId,
+        }}
+      />
       <PageSection>
         <Card>
           <CardBody>
-            <Split hasGutter>
-              <SplitItem isFilled>
-                <FormGroup label="Host" fieldId="hv-host">
-                  <FormSelect
-                    id="hv-host"
-                    value={hostId}
-                    onChange={(v) => setHostId(v)}
-                  >
-                    <FormSelectOption value="" label="— Host wählen —" />
-                    {hosts.map((h) => (
-                      <FormSelectOption
-                        key={h.id}
-                        value={String(h.id)}
-                        label={h.name}
-                      />
-                    ))}
-                  </FormSelect>
-                </FormGroup>
-              </SplitItem>
-              {hostId && (
-                <SplitItem>
-                  <div style={{ marginTop: 32 }}>
-                    <Button
-                      variant="secondary"
-                      onClick={() => {
-                        const cur = hosts.find((h) => String(h.id) === hostId);
-                        setCloneName(cur ? `${cur.name}-clone` : '');
-                        setCloneOpen(true);
-                      }}
-                    >
-                      Host klonen
-                    </Button>
-                  </div>
-                </SplitItem>
-              )}
-            </Split>
+            <div style={{ marginBottom: 16 }}>
+              <Link to="/host_variables">
+                <CaretLeftIcon /> Back to hosts
+              </Link>
+            </div>
+            <Title headingLevel="h2" size="lg">
+              {hostName}
+              <Button
+                variant="secondary"
+                style={{ marginLeft: 16 }}
+                onClick={() => {
+                  setCloneName(hostName ? `${hostName}-clone` : '');
+                  setCloneOpen(true);
+                }}
+              >
+                Clone host
+              </Button>
+            </Title>
 
             {msg && (
               <Alert variant="success" title={msg} isInline style={{ marginTop: 12 }} />
             )}
             {err && (
-              <Alert variant="danger" title="Fehler" isInline style={{ marginTop: 12 }}>
+              <Alert variant="danger" title="Error" isInline style={{ marginTop: 12 }}>
                 <pre>{JSON.stringify(err, null, 2)}</pre>
               </Alert>
             )}
 
-            {hostId && (
-              <>
-                <Title headingLevel="h3" size="md" style={{ marginTop: 24 }}>
-                  Zugewiesene Rollen
-                </Title>
-                {assignedRoles.length ? (
-                  <ChipGroup>
-                    {assignedRoles.map((r) => (
-                      <Chip key={r} isReadOnly>
-                        {r}
-                      </Chip>
-                    ))}
-                  </ChipGroup>
-                ) : (
-                  <p>Noch keine Rollen zugewiesen.</p>
-                )}
+            <Title headingLevel="h3" size="md" style={{ marginTop: 24 }}>
+              Assigned roles
+            </Title>
+            {assignedRoles.length ? (
+              <ChipGroup>
+                {assignedRoles.map((r) => (
+                  <Chip key={r} isReadOnly>
+                    {r}
+                  </Chip>
+                ))}
+              </ChipGroup>
+            ) : (
+              <p>No roles assigned yet.</p>
+            )}
 
-                <Title headingLevel="h3" size="md" style={{ marginTop: 24 }}>
-                  Rollen zuweisen
-                </Title>
-                <Split hasGutter>
-                  <SplitItem>
-                    <FormGroup label="Projekt" fieldId="hv-proj">
-                      <FormSelect
-                        id="hv-proj"
-                        value={projectId}
-                        onChange={(v) => setProjectId(v)}
-                      >
-                        <FormSelectOption value="" label="— Projekt —" />
-                        {projects.map((p) => (
-                          <FormSelectOption
-                            key={p.id}
-                            value={String(p.id)}
-                            label={p.name}
-                          />
-                        ))}
-                      </FormSelect>
-                    </FormGroup>
-                  </SplitItem>
-                </Split>
-                {availableRoles.length > 0 && (
-                  <div style={{ marginTop: 8 }}>
-                    {availableRoles.map((r) => (
-                      <Label
-                        key={r}
-                        color={selectedRoles.includes(r) ? 'blue' : 'grey'}
-                        onClick={() => toggleRole(r)}
-                        style={{ cursor: 'pointer', margin: 2 }}
-                      >
-                        {r}
-                      </Label>
-                    ))}
-                    <div style={{ marginTop: 12 }}>
-                      <Button
-                        variant="primary"
-                        onClick={doAssign}
-                        isDisabled={busy || selectedRoles.length === 0}
-                      >
-                        {selectedRoles.length} Rolle(n) zuweisen
+            <Title headingLevel="h3" size="md" style={{ marginTop: 24 }}>
+              Assign roles
+            </Title>
+            <FormGroup label="Project" fieldId="hv-proj">
+              <FormSelect
+                id="hv-proj"
+                value={projectId}
+                onChange={(v) => setProjectId(v)}
+                style={{ maxWidth: 400 }}
+              >
+                <FormSelectOption value="" label="— select project —" />
+                {projects.map((p) => (
+                  <FormSelectOption
+                    key={p.id}
+                    value={String(p.id)}
+                    label={p.name}
+                  />
+                ))}
+              </FormSelect>
+            </FormGroup>
+            {availableRoles.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                {availableRoles.map((r) => (
+                  <Label
+                    key={r}
+                    color={selectedRoles.includes(r) ? 'blue' : 'grey'}
+                    onClick={() => toggleRole(r)}
+                    style={{ cursor: 'pointer', margin: 2 }}
+                  >
+                    {r}
+                  </Label>
+                ))}
+                <div style={{ marginTop: 12 }}>
+                  <Button
+                    variant="primary"
+                    onClick={doAssign}
+                    isDisabled={busy || selectedRoles.length === 0}
+                  >
+                    Assign {selectedRoles.length} role(s)
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            <Title headingLevel="h3" size="md" style={{ marginTop: 24 }}>
+              Role variables for this host
+            </Title>
+            <TableComposable variant="compact" aria-label="Host variables">
+              <Thead>
+                <Tr>
+                  <Th>Role</Th>
+                  <Th>Variable</Th>
+                  <Th>Value</Th>
+                  <Th>Status</Th>
+                  <Th>Action</Th>
+                </Tr>
+              </Thead>
+              <Tbody>
+                {hostVars.map((v) => (
+                  <Tr key={v.id}>
+                    <Td dataLabel="Role">{v.role_name}</Td>
+                    <Td dataLabel="Variable">{v.var_name}</Td>
+                    <Td dataLabel="Value">
+                      <code>
+                        {(typeof v.value === 'string'
+                          ? v.value
+                          : JSON.stringify(v.value)
+                        ).slice(0, 60)}
+                      </code>
+                    </Td>
+                    <Td dataLabel="Status">
+                      {v.is_overridden ? (
+                        <Label color="orange" isCompact>
+                          overridden
+                        </Label>
+                      ) : (
+                        <Label color="grey" isCompact>
+                          default
+                        </Label>
+                      )}
+                    </Td>
+                    <Td dataLabel="Action">
+                      <Button variant="link" isInline onClick={() => openEdit(v)}>
+                        edit
                       </Button>
-                    </div>
-                  </div>
-                )}
-
-                <Title headingLevel="h3" size="md" style={{ marginTop: 24 }}>
-                  Rollen-Variablen dieses Hosts
-                </Title>
-                <TableComposable variant="compact" aria-label="Host-Variablen">
-                  <Thead>
-                    <Tr>
-                      <Th>Rolle</Th>
-                      <Th>Variable</Th>
-                      <Th>Wert</Th>
-                      <Th>Status</Th>
-                      <Th>Aktion</Th>
-                    </Tr>
-                  </Thead>
-                  <Tbody>
-                    {hostVars.map((v) => (
-                      <Tr key={v.id}>
-                        <Td dataLabel="Rolle">{v.role_name}</Td>
-                        <Td dataLabel="Variable">{v.var_name}</Td>
-                        <Td dataLabel="Wert">
-                          <code>
-                            {(typeof v.value === 'string'
-                              ? v.value
-                              : JSON.stringify(v.value)
-                            ).slice(0, 60)}
-                          </code>
-                        </Td>
-                        <Td dataLabel="Status">
-                          {v.is_overridden ? (
-                            <Label color="orange" isCompact>
-                              überschrieben
-                            </Label>
-                          ) : (
-                            <Label color="grey" isCompact>
-                              Default
-                            </Label>
-                          )}
-                        </Td>
-                        <Td dataLabel="Aktion">
+                      {v.is_overridden && (
+                        <>
+                          {' '}
                           <Button
                             variant="link"
                             isInline
-                            onClick={() => openEdit(v)}
+                            onClick={() => resetVar(v)}
                           >
-                            bearbeiten
+                            reset
                           </Button>
-                          {v.is_overridden && (
-                            <>
-                              {' '}
-                              <Button
-                                variant="link"
-                                isInline
-                                onClick={() => resetVar(v)}
-                              >
-                                zurücksetzen
-                              </Button>
-                            </>
-                          )}
-                        </Td>
-                      </Tr>
-                    ))}
-                  </Tbody>
-                </TableComposable>
-              </>
-            )}
+                        </>
+                      )}
+                    </Td>
+                  </Tr>
+                ))}
+              </Tbody>
+            </TableComposable>
           </CardBody>
         </Card>
       </PageSection>
 
       {cloneOpen && (
         <Modal
-          title="Host klonen"
+          title="Clone host"
           isOpen
           variant="small"
           onClose={() => setCloneOpen(false)}
@@ -392,15 +356,15 @@ function HostVariables() {
               onClick={doClone}
               isDisabled={!cloneName || busy}
             >
-              Klonen
+              Clone
             </Button>,
             <Button key="cancel" variant="link" onClick={() => setCloneOpen(false)}>
-              Abbrechen
+              Cancel
             </Button>,
           ]}
         >
           <Form>
-            <FormGroup label="Name des neuen Hosts" isRequired fieldId="clone-name">
+            <FormGroup label="Name of the new host" isRequired fieldId="clone-name">
               <TextInput
                 id="clone-name"
                 value={cloneName}
@@ -410,14 +374,14 @@ function HostVariables() {
             <FormGroup fieldId="clone-groups">
               <Checkbox
                 id="clone-groups"
-                label="Gruppen-Mitgliedschaften mitkopieren"
+                label="Copy group memberships"
                 isChecked={cloneGroups}
                 onChange={(checked) => setCloneGroups(checked)}
               />
             </FormGroup>
             <p style={{ color: '#6a6e73' }}>
-              Kopiert host_vars, alle Rollen-Variablen-Overrides und (optional) die
-              Gruppen. Danach kannst du die Variablen des Klons anpassen.
+              Copies host_vars, all role variable overrides and (optionally) the
+              groups. You can then adjust the clone&apos;s variables.
             </p>
           </Form>
         </Modal>
@@ -431,15 +395,15 @@ function HostVariables() {
           onClose={() => setEditingVar(null)}
           actions={[
             <Button key="save" variant="primary" onClick={saveEdit} isDisabled={busy}>
-              Speichern
+              Save
             </Button>,
             <Button key="cancel" variant="link" onClick={() => setEditingVar(null)}>
-              Abbrechen
+              Cancel
             </Button>,
           ]}
         >
           <p style={{ marginBottom: 8 }}>
-            Rollen-Default:{' '}
+            Role default:{' '}
             <code>
               {typeof editingVar.default_value === 'string'
                 ? editingVar.default_value
@@ -447,7 +411,7 @@ function HostVariables() {
             </code>
           </p>
           <TextArea
-            aria-label="Variablenwert"
+            aria-label="Variable value"
             value={editText}
             onChange={(v) => setEditText(v)}
             rows={20}
@@ -455,7 +419,7 @@ function HostVariables() {
             style={{ fontFamily: 'monospace' }}
           />
           <p style={{ marginTop: 8, color: '#6a6e73' }}>
-            JSON wird geparst; ungültiges JSON wird als roher String gespeichert.
+            JSON is parsed; invalid JSON is stored as a raw string.
           </p>
         </Modal>
       )}

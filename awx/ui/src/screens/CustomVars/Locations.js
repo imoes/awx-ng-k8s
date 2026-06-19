@@ -1,6 +1,6 @@
 /* eslint-disable i18next/no-literal-string */
-// awx-ng: Standorte (Sites) + Subnetze verwalten, mit NetBox-Reconcile.
-import React, { useCallback, useEffect, useState } from 'react';
+// awx-ng: Locations (sites) + subnets, searchable list, with NetBox reconcile.
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Button,
   Card,
@@ -15,6 +15,7 @@ import {
   Toolbar,
   ToolbarContent,
   ToolbarItem,
+  SearchInput,
   Label,
 } from '@patternfly/react-core';
 import {
@@ -35,14 +36,14 @@ import {
 } from './api';
 
 function Locations() {
-  const [breadcrumbConfig] = useState({ '/awx_ng/locations': 'Standorte' });
   const [isCreateOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
-  const [subnetFor, setSubnetFor] = useState(null); // location object
+  const [subnetFor, setSubnetFor] = useState(null);
   const [reconcileResult, setReconcileResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState(null);
+  const [search, setSearch] = useState('');
 
   const {
     result: locations,
@@ -51,7 +52,7 @@ function Locations() {
     request: fetchLocations,
   } = useRequest(
     useCallback(async () => {
-      const { data } = await LocationsAPI.read({ page_size: 200 });
+      const { data } = await LocationsAPI.read({ page_size: 1000 });
       return data.results;
     }, []),
     []
@@ -60,6 +61,17 @@ function Locations() {
   useEffect(() => {
     fetchLocations();
   }, [fetchLocations]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return locations;
+    return locations.filter(
+      (l) =>
+        l.name?.toLowerCase().includes(q) ||
+        l.description?.toLowerCase().includes(q) ||
+        l.netbox_site_slug?.toLowerCase().includes(q)
+    );
+  }, [locations, search]);
 
   const handleCreate = async () => {
     setBusy(true);
@@ -93,15 +105,29 @@ function Locations() {
 
   return (
     <>
-      <ScreenHeader streamType="none" breadcrumbConfig={breadcrumbConfig} />
+      <ScreenHeader
+        streamType="none"
+        breadcrumbConfig={{ '/locations': 'Locations' }}
+      />
       <PageSection>
         <Card>
           <CardBody>
             <Toolbar>
               <ToolbarContent>
                 <ToolbarItem>
+                  <SearchInput
+                    placeholder="Search by name, slug or description"
+                    value={search}
+                    onChange={(_e, v) =>
+                      setSearch(typeof v === 'string' ? v : _e?.target?.value ?? '')
+                    }
+                    onClear={() => setSearch('')}
+                    style={{ minWidth: 320 }}
+                  />
+                </ToolbarItem>
+                <ToolbarItem>
                   <Button variant="primary" onClick={() => setCreateOpen(true)}>
-                    Standort anlegen
+                    Add location
                   </Button>
                 </ToolbarItem>
                 <ToolbarItem>
@@ -110,68 +136,65 @@ function Locations() {
                     onClick={handleReconcile}
                     isDisabled={busy}
                   >
-                    Mit NetBox abgleichen
+                    Reconcile with NetBox
                   </Button>
                 </ToolbarItem>
               </ToolbarContent>
             </Toolbar>
 
             {actionError && (
-              <Alert variant="danger" title="Fehler" isInline>
+              <Alert variant="danger" title="Error" isInline>
                 <pre>{JSON.stringify(actionError, null, 2)}</pre>
               </Alert>
             )}
             {reconcileResult && (
               <Alert
                 variant="info"
-                title="NetBox-Reconcile abgeschlossen"
+                title="NetBox reconcile finished"
                 isInline
                 actionClose={
-                  <Button
-                    variant="plain"
-                    onClick={() => setReconcileResult(null)}
-                  >
+                  <Button variant="plain" onClick={() => setReconcileResult(null)}>
                     ×
                   </Button>
                 }
               >
-                Neue Standorte: {reconcileResult.created_locations?.length ?? 0},
-                neue Subnetze: {reconcileResult.created_subnets?.length ?? 0},
-                Drift: {reconcileResult.drift?.length ?? 0}
+                New locations: {reconcileResult.created_locations?.length ?? 0},
+                new subnets: {reconcileResult.created_subnets?.length ?? 0}, drift:{' '}
+                {reconcileResult.drift?.length ?? 0}
               </Alert>
             )}
 
             {isLoading ? (
               <Spinner />
             ) : error ? (
-              <Alert variant="danger" title="Laden fehlgeschlagen" isInline />
+              <Alert variant="danger" title="Failed to load" isInline />
             ) : (
-              <TableComposable aria-label="Standorte" variant="compact">
+              <TableComposable aria-label="Locations" variant="compact">
                 <Thead>
                   <Tr>
                     <Th>Name</Th>
-                    <Th>Beschreibung</Th>
-                    <Th>Quelle</Th>
-                    <Th>NetBox-Slug</Th>
-                    <Th>Subnetze</Th>
+                    <Th>Description</Th>
+                    <Th>Source</Th>
+                    <Th>NetBox slug</Th>
+                    <Th>Subnets</Th>
                   </Tr>
                 </Thead>
                 <Tbody>
-                  {locations.map((loc) => (
+                  {filtered.map((loc) => (
                     <Tr key={loc.id}>
                       <Td dataLabel="Name">{loc.name}</Td>
-                      <Td dataLabel="Beschreibung">{loc.description}</Td>
-                      <Td dataLabel="Quelle">
+                      <Td dataLabel="Description">{loc.description}</Td>
+                      <Td dataLabel="Source">
                         <Label isCompact>{loc.source}</Label>
                       </Td>
-                      <Td dataLabel="NetBox-Slug">{loc.netbox_site_slug}</Td>
-                      <Td dataLabel="Subnetze">
+                      <Td dataLabel="NetBox slug">{loc.netbox_site_slug}</Td>
+                      <Td dataLabel="Subnets">
                         <Button
                           variant="link"
                           isInline
                           onClick={() => setSubnetFor(loc)}
                         >
-                          verwalten
+                          manage
                         </Button>
                       </Td>
                     </Tr>
@@ -184,7 +207,7 @@ function Locations() {
       </PageSection>
 
       <Modal
-        title="Standort anlegen"
+        title="Add location"
         isOpen={isCreateOpen}
         variant="small"
         onClose={() => setCreateOpen(false)}
@@ -195,14 +218,10 @@ function Locations() {
             onClick={handleCreate}
             isDisabled={!newName || busy}
           >
-            Anlegen
+            Add
           </Button>,
-          <Button
-            key="cancel"
-            variant="link"
-            onClick={() => setCreateOpen(false)}
-          >
-            Abbrechen
+          <Button key="cancel" variant="link" onClick={() => setCreateOpen(false)}>
+            Cancel
           </Button>,
         ]}
       >
@@ -214,7 +233,7 @@ function Locations() {
               onChange={(v) => setNewName(v)}
             />
           </FormGroup>
-          <FormGroup label="Beschreibung" fieldId="loc-desc">
+          <FormGroup label="Description" fieldId="loc-desc">
             <TextInput
               id="loc-desc"
               value={newDesc}
@@ -225,10 +244,7 @@ function Locations() {
       </Modal>
 
       {subnetFor && (
-        <SubnetModal
-          location={subnetFor}
-          onClose={() => setSubnetFor(null)}
-        />
+        <SubnetModal location={subnetFor} onClose={() => setSubnetFor(null)} />
       )}
     </>
   );
@@ -277,31 +293,31 @@ function SubnetModal({ location, onClose }) {
 
   return (
     <Modal
-      title={`Subnetze — ${location.name}`}
+      title={`Subnets — ${location.name}`}
       isOpen
       variant="medium"
       onClose={onClose}
       actions={[
         <Button key="close" variant="primary" onClick={onClose}>
-          Schließen
+          Close
         </Button>,
       ]}
     >
       {err && (
-        <Alert variant="danger" title="Fehler" isInline>
+        <Alert variant="danger" title="Error" isInline>
           <pre>{JSON.stringify(err, null, 2)}</pre>
         </Alert>
       )}
       {loading ? (
         <Spinner />
       ) : (
-        <TableComposable variant="compact" aria-label="Subnetze">
+        <TableComposable variant="compact" aria-label="Subnets">
           <Thead>
             <Tr>
               <Th>CIDR</Th>
               <Th>VLAN</Th>
               <Th>Gateway</Th>
-              <Th>Quelle</Th>
+              <Th>Source</Th>
             </Tr>
           </Thead>
           <Tbody>
@@ -310,7 +326,7 @@ function SubnetModal({ location, onClose }) {
                 <Td dataLabel="CIDR">{s.cidr}</Td>
                 <Td dataLabel="VLAN">{s.vlan}</Td>
                 <Td dataLabel="Gateway">{s.gateway}</Td>
-                <Td dataLabel="Quelle">{s.source}</Td>
+                <Td dataLabel="Source">{s.source}</Td>
               </Tr>
             ))}
           </Tbody>
@@ -326,11 +342,7 @@ function SubnetModal({ location, onClose }) {
           />
         </FormGroup>
         <FormGroup label="VLAN" fieldId="sub-vlan">
-          <TextInput
-            id="sub-vlan"
-            value={vlan}
-            onChange={(v) => setVlan(v)}
-          />
+          <TextInput id="sub-vlan" value={vlan} onChange={(v) => setVlan(v)} />
         </FormGroup>
         <FormGroup label="Gateway" fieldId="sub-gw">
           <TextInput
@@ -340,7 +352,7 @@ function SubnetModal({ location, onClose }) {
           />
         </FormGroup>
         <Button variant="secondary" onClick={add} isDisabled={!cidr}>
-          Subnetz hinzufügen
+          Add subnet
         </Button>
       </Form>
     </Modal>

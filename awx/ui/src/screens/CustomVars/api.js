@@ -64,6 +64,18 @@ export function cloneHost(hostId, name, copyGroups = true) {
   });
 }
 
+// AWX-Instanzen (= Runner / Execution Nodes) — Quelle für die Site-Zuordnung
+export function readInstances(params) {
+  return LocationsAPI.http.get('/api/v2/instances/', { params });
+}
+// Zuordnung per Instanz-Hostname anlegen oder aktualisieren (Upsert)
+export function upsertExecNodeLocation(existing, payload) {
+  if (existing && existing.id) {
+    return ExecNodeLocationsAPI.update(existing.id, payload);
+  }
+  return ExecNodeLocationsAPI.create(payload);
+}
+
 // Projekte + deren Rollen (für die Rollen-Auswahl)
 export function readProjects(params) {
   return LocationsAPI.http.get('/api/v2/projects/', { params });

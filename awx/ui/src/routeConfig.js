@@ -25,11 +25,11 @@ import Users from 'screens/User';
 import WorkflowApprovals from 'screens/WorkflowApproval';
 import { Jobs } from 'screens/Job';
 import HostMetrics from 'screens/HostMetrics';
-// awx-ng: eigene Screens (Standorte, Runner-Site, Host-Variablen)
+// awx-ng: custom screens integrated into the existing menu structure
 import {
+  HostVariablesRouter as NgHostVariables,
   Locations as NgLocations,
-  Runners as NgRunners,
-  HostVariables as NgHostVariables,
+  RunnerSites as NgRunnerSites,
 } from 'screens/CustomVars';
 
 function getRouteConfig(userProfile = {}) {
@@ -104,6 +104,16 @@ function getRouteConfig(userProfile = {}) {
           path: '/hosts',
           screen: Hosts,
         },
+        {
+          title: <Trans>Host Variables</Trans>,
+          path: '/host_variables',
+          screen: NgHostVariables,
+        },
+        {
+          title: <Trans>Locations</Trans>,
+          path: '/locations',
+          screen: NgLocations,
+        },
       ],
     },
     {
@@ -171,6 +181,11 @@ function getRouteConfig(userProfile = {}) {
           path: '/topology_view',
           screen: TopologyView,
         },
+        {
+          title: <Trans>Runner Sites</Trans>,
+          path: '/runner_sites',
+          screen: NgRunnerSites,
+        },
       ],
     },
     {
@@ -181,28 +196,6 @@ function getRouteConfig(userProfile = {}) {
           title: <Trans>Settings</Trans>,
           path: '/settings',
           screen: Settings,
-        },
-      ],
-    },
-    // awx-ng: eigene Navigationsgruppe
-    {
-      groupTitle: <Trans>awx-ng</Trans>,
-      groupId: 'awx_ng_group',
-      routes: [
-        {
-          title: <Trans>Host-Variablen</Trans>,
-          path: '/awx_ng/host_variables',
-          screen: NgHostVariables,
-        },
-        {
-          title: <Trans>Standorte</Trans>,
-          path: '/awx_ng/locations',
-          screen: NgLocations,
-        },
-        {
-          title: <Trans>Runner ↔ Site</Trans>,
-          path: '/awx_ng/runners',
-          screen: NgRunners,
         },
       ],
     },
