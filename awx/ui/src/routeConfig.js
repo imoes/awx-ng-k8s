@@ -119,7 +119,7 @@ function getRouteConfig(userProfile = {}) {
           screen: NgRoles,
         },
         {
-          // awx-ng: Playbook-Verwaltung (Übersicht der Plays je Playbook)
+          // awx-ng: Playbook management (overview of plays per playbook)
           title: <Trans>Playbooks</Trans>,
           path: '/playbooks',
           screen: NgPlaybooks,

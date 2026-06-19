@@ -290,7 +290,7 @@ export default function ProjectEditor() {
   useEffect(() => {
     readProjects({ page_size: 200, order_by: 'name' }).then(({ data }) => {
       setProjects(data.results || []);
-      // Deep-Link (?project=&path=) hat Vorrang, sonst erstes Projekt
+      // Deep link (?project=&path=) takes precedence, otherwise the first project
       const params = new URLSearchParams(location.search);
       const qProject = params.get('project');
       if (qProject) setProjectId(String(qProject));
@@ -299,7 +299,7 @@ export default function ProjectEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Deep-Link: Datei aus ?path= direkt öffnen
+  // Deep link: open the file from ?path= directly
   useEffect(() => {
     if (deeplinkDone.current) return;
     const params = new URLSearchParams(location.search);

@@ -60,7 +60,7 @@ export function cloneHost(hostId, name, copyGroups = true) {
   });
 }
 
-// Gruppen-Variablen (analog zu Host — single source of truth = group.variables)
+// Group variables (mirrors Host — single source of truth = group.variables)
 export function readGroupRoleVariables(groupId, params) {
   return LocationsAPI.http.get(`/api/v2/groups/${groupId}/role_variables/`, {
     params,
@@ -116,7 +116,7 @@ export function triggerProjectRoleScan(projectId) {
     {}
   );
 }
-// Playbooks eines Projekts (native AWX-Liste) + Play-Metadaten (awx-ng-Scan)
+// A project's playbooks (native AWX list) + play metadata (awx-ng scan)
 export function readProjectPlaybooks(projectId) {
   return LocationsAPI.http.get(`/api/v2/projects/${projectId}/playbooks/`);
 }

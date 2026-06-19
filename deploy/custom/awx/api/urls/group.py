@@ -3,7 +3,7 @@
 
 from django.urls import re_path
 
-# awx-ng: strukturierte Group-Variablen (group_vars), analog Host
+# awx-ng: structured group variables (group_vars), mirrors Host
 from awx.customvars.api import (
     GroupAssignRolesView,
     GroupRoleVariableListView,
@@ -39,7 +39,7 @@ urls = [
     re_path(r'^(?P<pk>[0-9]+)/activity_stream/$', GroupActivityStreamList.as_view(), name='group_activity_stream_list'),
     re_path(r'^(?P<pk>[0-9]+)/inventory_sources/$', GroupInventorySourcesList.as_view(), name='group_inventory_sources_list'),
     re_path(r'^(?P<pk>[0-9]+)/ad_hoc_commands/$', GroupAdHocCommandsList.as_view(), name='group_ad_hoc_commands_list'),
-    # awx-ng: strukturierte Group-Variablen (Rollen-Defaults + Overrides in group.variables)
+    # awx-ng: structured group variables (role defaults + overrides in group.variables)
     re_path(r'^(?P<pk>[0-9]+)/assign_roles/$', GroupAssignRolesView.as_view(), name='group_assign_roles'),
     re_path(r'^(?P<pk>[0-9]+)/role_variables/$', GroupRoleVariableListView.as_view(), name='group_role_variables'),
     re_path(r'^(?P<pk>[0-9]+)/role_variables/(?P<var_name>[^/]+)/$', GroupRoleVariableDetailView.as_view(), name='group_role_variable_detail'),

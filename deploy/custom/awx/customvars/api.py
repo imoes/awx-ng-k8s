@@ -872,12 +872,12 @@ class HostRoleVariableDetailView(APIView):
         return Response({'var_name': var_name, 'is_overridden': False, 'removed': existed})
 
 
-# ─── Group-Variablen (analog Host; single source of truth = group.variables) ───
+# ─── Group variables (mirrors Host; single source of truth = group.variables) ───
 
 class GroupAssignRolesView(APIView):
     """
     POST /api/v2/groups/{pk}/assign_roles/  — Body: {"roles": [...]}
-    Setzt host_roles in den nativen Group.variables (Baseline für Gruppen-Mitglieder).
+    Sets host_roles in the native Group.variables (baseline for the group's members).
     """
     def post(self, request, pk, **kwargs):
         from awx.main.models import Group
@@ -899,8 +899,8 @@ class GroupAssignRolesView(APIView):
 class GroupRoleVariableListView(APIView):
     """
     GET /api/v2/groups/{pk}/role_variables/
-    Rollen-Variablen einer Gruppe — aus host_roles (group.variables) + RoleVariable-Defaults.
-    Effektiver Wert / Override kommt aus den nativen group.variables (group_vars).
+    A group's role variables — from host_roles (group.variables) + RoleVariable defaults.
+    The effective value / override comes from the native group.variables (group_vars).
     """
     def get(self, request, pk, **kwargs):
         from awx.main.models import Group
@@ -951,8 +951,8 @@ class GroupRoleVariableListView(APIView):
 
 class GroupRoleVariableDetailView(APIView):
     """
-    PATCH  /api/v2/groups/{pk}/role_variables/{var_name}/  — Wert in group.variables setzen
-    DELETE /api/v2/groups/{pk}/role_variables/{var_name}/  — Variable entfernen
+    PATCH  /api/v2/groups/{pk}/role_variables/{var_name}/  — set a value in group.variables
+    DELETE /api/v2/groups/{pk}/role_variables/{var_name}/  — remove the variable
     """
     def _get_group(self, request, pk):
         from awx.main.models import Group
@@ -1439,39 +1439,61 @@ def _extract_plays(content):
     return plays
 
 
+def _list_project_playbooks(pk, project_path):
+    """List a project's playbooks (recursively).
+
+    Primarily AWX's own sync-time playbook detection (project.playbooks) — the same
+    list the Job Template playbook dropdown uses. Fallback: live-scan the project
+    root + playbooks/ from disk (in case no sync has run yet).
+    """
+    rels = []
+    try:
+        from awx.main.models import Project
+        proj = Project.objects.get(pk=pk)
+        rels = list(proj.playbooks or [])
+    except Exception:
+        rels = []
+    if not rels:
+        cand = [
+            p for p in project_path.iterdir()
+            if p.is_file() and p.suffix in ('.yml', '.yaml') and not p.name.startswith('.')
+        ]
+        pb_dir = project_path / 'playbooks'
+        if pb_dir.is_dir():
+            cand += [p for p in pb_dir.rglob('*.yml') if p.is_file()]
+            cand += [p for p in pb_dir.rglob('*.yaml') if p.is_file()]
+        rels = [str(p.relative_to(project_path)) for p in cand]
+    return sorted(set(rels))
+
+
 class ProjectPlaysView(APIView):
     """
-    GET /api/v2/projects/{pk}/plays/[?playbook=site.yml]
-    Liefert Play-Metadaten (hosts, roles, tags) je Playbook. Ohne ?playbook werden
-    alle Top-Level-*.yml/*.yaml des Projekts geparst. On-demand, kein DB-Cache.
+    GET /api/v2/projects/{pk}/plays/                — list of playbooks (fast, no parsing)
+    GET /api/v2/projects/{pk}/plays/?playbook=<rel> — play metadata (hosts/roles/tags) of ONE playbook
+
+    The list comes from AWX's playbook detection (recursive, incl. subfolders like
+    playbooks/ and bootstrap/). Plays are parsed only when a row is expanded
+    (with ?playbook=) — important for projects with hundreds of playbooks.
     """
     def get(self, request, pk, **kwargs):
         project_path = _get_project_path(pk)
         wanted = request.query_params.get('playbook')
 
+        # Single playbook: parse plays (lazy, on expand)
         if wanted:
-            candidates = [_safe_resolve(project_path, wanted)]
-        else:
-            candidates = sorted(
-                p for p in project_path.iterdir()
-                if p.is_file() and p.suffix in ('.yml', '.yaml') and not p.name.startswith('.')
-            )
+            path = _safe_resolve(project_path, wanted)
+            plays = []
+            if path.is_file() and path.suffix in ('.yml', '.yaml'):
+                try:
+                    if path.stat().st_size <= _MAX_FILE_BYTES:
+                        plays = _extract_plays(path.read_text(encoding='utf-8'))
+                except (OSError, UnicodeDecodeError):
+                    plays = []
+            return Response({'playbook': wanted, 'plays': plays})
 
-        results = []
-        for path in candidates:
-            if not path.is_file() or path.suffix not in ('.yml', '.yaml'):
-                continue
-            try:
-                if path.stat().st_size > _MAX_FILE_BYTES:
-                    continue
-                content = path.read_text(encoding='utf-8')
-            except (OSError, UnicodeDecodeError):
-                continue
-            plays = _extract_plays(content)
-            if not plays:
-                continue  # not a playbook (e.g. vars file)
-            results.append({
-                'playbook': str(path.relative_to(project_path)),
-                'plays': plays,
-            })
-        return Response({'count': len(results), 'results': results})
+        # List: paths only, no parsing
+        rels = _list_project_playbooks(pk, project_path)
+        return Response({
+            'count': len(rels),
+            'results': [{'playbook': r} for r in rels],
+        })

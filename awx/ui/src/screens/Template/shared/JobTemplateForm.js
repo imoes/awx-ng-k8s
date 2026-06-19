@@ -46,7 +46,7 @@ import { VerbositySelectField } from 'components/VerbositySelectField';
 import PlaybookSelect from './PlaybookSelect';
 import WebhookSubForm from './WebhookSubForm';
 import getHelpText from './JobTemplate.helptext';
-// awx-ng: Host-/Gruppen-Picker, der das limit-Feld füllt
+// awx-ng: host/group picker that fills the limit field
 import LimitPicker from './LimitPicker';
 
 const { origin } = document.location;

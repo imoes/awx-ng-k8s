@@ -1,7 +1,7 @@
 /* eslint-disable i18next/no-literal-string */
-// awx-ng: Playbook management screen — lists a project's playbooks and their plays
-// (target pattern, roles, tags), with quick links to the editor and to creating a
-// Job Template. Complements the Roles screen.
+// awx-ng: Playbook management screen — lists a project's playbooks (recursively, from
+// AWX's playbook detection) and lazily shows each playbook's plays (target pattern,
+// roles, tags), with quick links to the editor and to creating a Job Template.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useHistory } from 'react-router-dom';
 import {
@@ -37,6 +37,7 @@ function Playbooks() {
   const [projectId, setProjectId] = useState('');
   const [playbooks, setPlaybooks] = useState([]);
   const [expanded, setExpanded] = useState({});
+  const [plays, setPlays] = useState({}); // path -> plays[] | 'loading'
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
@@ -52,6 +53,8 @@ function Playbooks() {
     if (!projectId) return;
     setLoading(true);
     setErr(null);
+    setExpanded({});
+    setPlays({});
     try {
       const { data } = await readProjectPlays(projectId);
       setPlaybooks(data.results || []);
@@ -64,7 +67,6 @@ function Playbooks() {
 
   useEffect(() => {
     load();
-    setExpanded({});
     setSearch('');
   }, [projectId, load]);
 
@@ -74,10 +76,22 @@ function Playbooks() {
     return playbooks.filter((p) => p.playbook.toLowerCase().includes(q));
   }, [playbooks, search]);
 
+  const toggleExpand = async (playbook) => {
+    const next = !expanded[playbook];
+    setExpanded((prev) => ({ ...prev, [playbook]: next }));
+    if (next && plays[playbook] === undefined) {
+      setPlays((prev) => ({ ...prev, [playbook]: 'loading' }));
+      try {
+        const { data } = await readProjectPlays(projectId, { playbook });
+        setPlays((prev) => ({ ...prev, [playbook]: data.plays || [] }));
+      } catch {
+        setPlays((prev) => ({ ...prev, [playbook]: [] }));
+      }
+    }
+  };
+
   const openInEditor = (playbook) =>
-    history.push(
-      `/editor?project=${projectId}&path=${encodeURIComponent(playbook)}`
-    );
+    history.push(`/editor?project=${projectId}&path=${encodeURIComponent(playbook)}`);
 
   const createTemplate = () => history.push('/templates/job_template/add');
 
@@ -114,6 +128,20 @@ function Playbooks() {
                     style={{ minWidth: 260 }}
                   />
                 </ToolbarItem>
+                <ToolbarItem>
+                  <Button
+                    variant="primary"
+                    onClick={load}
+                    isDisabled={!projectId || loading}
+                  >
+                    {loading ? 'Loading…' : 'Refresh'}
+                  </Button>
+                </ToolbarItem>
+                <ToolbarItem alignment={{ default: 'alignRight' }}>
+                  <span style={{ color: '#6a6e73', fontSize: 13 }}>
+                    {playbooks.length} playbooks
+                  </span>
+                </ToolbarItem>
               </ToolbarContent>
             </Toolbar>
 
@@ -123,6 +151,11 @@ function Playbooks() {
               </Alert>
             )}
 
+            <p style={{ color: '#6a6e73', fontSize: 13, margin: '4px 0 8px' }}>
+              Detected from the project (incl. subfolders like <code>playbooks/</code>).
+              New files appear after a project sync. Click a playbook to inspect its plays.
+            </p>
+
             {loading ? (
               <Spinner />
             ) : (
@@ -130,7 +163,6 @@ function Playbooks() {
                 <Thead>
                   <Tr>
                     <Th>Playbook</Th>
-                    <Th>Plays</Th>
                     <Th>Actions</Th>
                   </Tr>
                 </Thead>
@@ -142,18 +174,10 @@ function Playbooks() {
                           <Button
                             variant="link"
                             isInline
-                            onClick={() =>
-                              setExpanded((prev) => ({
-                                ...prev,
-                                [pb.playbook]: !prev[pb.playbook],
-                              }))
-                            }
+                            onClick={() => toggleExpand(pb.playbook)}
                           >
                             <code>{pb.playbook}</code>
                           </Button>
-                        </Td>
-                        <Td dataLabel="Plays">
-                          <Label color="blue" isCompact>{pb.plays.length} plays</Label>
                         </Td>
                         <Td dataLabel="Actions">
                           <Button variant="link" isInline onClick={() => openInEditor(pb.playbook)}>
@@ -166,46 +190,54 @@ function Playbooks() {
                       </Tr>
                       {expanded[pb.playbook] && (
                         <Tr>
-                          <Td colSpan={3} style={{ paddingLeft: 32, background: '#f5f5f5' }}>
-                            <TableComposable variant="compact" aria-label={`Plays in ${pb.playbook}`}>
-                              <Thead>
-                                <Tr>
-                                  <Th>Name</Th>
-                                  <Th>Target (hosts)</Th>
-                                  <Th>Roles</Th>
-                                  <Th>Tags</Th>
-                                </Tr>
-                              </Thead>
-                              <Tbody>
-                                {pb.plays.map((play, i) => (
-                                  // eslint-disable-next-line react/no-array-index-key
-                                  <Tr key={`${pb.playbook}-${i}`}>
-                                    <Td dataLabel="Name">
-                                      {play.kind === 'import_playbook' ? (
-                                        <em>import_playbook: <code>{play.name}</code></em>
-                                      ) : (
-                                        play.name || <span style={{ color: '#6a6e73' }}>—</span>
-                                      )}
-                                    </Td>
-                                    <Td dataLabel="Target">
-                                      {play.hosts ? <code>{play.hosts}</code> : '—'}
-                                    </Td>
-                                    <Td dataLabel="Roles">
-                                      {play.roles?.length
-                                        ? play.roles.map((r) => (
-                                            <Label key={r} isCompact color="purple" style={{ marginRight: 4 }}>
-                                              {r}
-                                            </Label>
-                                          ))
-                                        : '—'}
-                                    </Td>
-                                    <Td dataLabel="Tags">
-                                      {play.tags?.length ? play.tags.join(', ') : '—'}
-                                    </Td>
+                          <Td colSpan={2} style={{ paddingLeft: 32, background: '#f5f5f5' }}>
+                            {plays[pb.playbook] === 'loading' || plays[pb.playbook] === undefined ? (
+                              <Spinner size="sm" />
+                            ) : plays[pb.playbook].length === 0 ? (
+                              <span style={{ color: '#6a6e73' }}>
+                                No plays parsed (not a standard playbook or empty).
+                              </span>
+                            ) : (
+                              <TableComposable variant="compact" aria-label={`Plays in ${pb.playbook}`}>
+                                <Thead>
+                                  <Tr>
+                                    <Th>Name</Th>
+                                    <Th>Target (hosts)</Th>
+                                    <Th>Roles</Th>
+                                    <Th>Tags</Th>
                                   </Tr>
-                                ))}
-                              </Tbody>
-                            </TableComposable>
+                                </Thead>
+                                <Tbody>
+                                  {plays[pb.playbook].map((play, i) => (
+                                    // eslint-disable-next-line react/no-array-index-key
+                                    <Tr key={`${pb.playbook}-${i}`}>
+                                      <Td dataLabel="Name">
+                                        {play.kind === 'import_playbook' ? (
+                                          <em>import_playbook: <code>{play.name}</code></em>
+                                        ) : (
+                                          play.name || <span style={{ color: '#6a6e73' }}>—</span>
+                                        )}
+                                      </Td>
+                                      <Td dataLabel="Target">
+                                        {play.hosts ? <code>{play.hosts}</code> : '—'}
+                                      </Td>
+                                      <Td dataLabel="Roles">
+                                        {play.roles?.length
+                                          ? play.roles.map((r) => (
+                                              <Label key={r} isCompact color="purple" style={{ marginRight: 4 }}>
+                                                {r}
+                                              </Label>
+                                            ))
+                                          : '—'}
+                                      </Td>
+                                      <Td dataLabel="Tags">
+                                        {play.tags?.length ? play.tags.join(', ') : '—'}
+                                      </Td>
+                                    </Tr>
+                                  ))}
+                                </Tbody>
+                              </TableComposable>
+                            )}
                           </Td>
                         </Tr>
                       )}
@@ -213,8 +245,10 @@ function Playbooks() {
                   ))}
                   {filtered.length === 0 && (
                     <Tr>
-                      <Td colSpan={3} style={{ color: '#6a6e73' }}>
-                        No playbooks found in this project.
+                      <Td colSpan={2} style={{ color: '#6a6e73' }}>
+                        {playbooks.length === 0
+                          ? 'No playbooks detected. Run a project sync, then Refresh.'
+                          : `No playbooks matching "${search}".`}
                       </Td>
                     </Tr>
                   )}

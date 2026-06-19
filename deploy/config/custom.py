@@ -63,13 +63,12 @@ AWX_NG_ANSIBLE03_PATH = '/var/lib/awx/ansible03'
 
 
 # ── Facts (ansible_facts) ─────────────────────────────────────────────────────
-# AWX speichert Host-Facts NICHT global, sondern pro Job-Template: das Template
-# muss "Enable Fact Storage" (use_fact_cache=True) gesetzt haben UND das Playbook
-# muss Facts sammeln (gather_facts: true bzw. setup-Modul). Erst dann füllt sich
-# der Facts-Tab eines Hosts. Es ist hier kein globales Setting nötig — die
-# Fact-Cache-Artefakte landen unter artifacts/<job_id>/fact_cache/ und werden in
-# die Host-ansible_facts übernommen. Siehe AGENT.md → "Facts füllen".
-# (Kein Override hier — Standard-AWX-Verhalten ist korrekt.)
+# AWX does NOT store host facts globally, but per Job Template: the template must
+# have "Enable Fact Storage" (use_fact_cache=True) AND the playbook must gather
+# facts (gather_facts: true / setup module). Only then does a host's Facts tab
+# fill up. No global setting is needed here — the fact-cache artifacts land under
+# artifacts/<job_id>/fact_cache/ and are imported into Host.ansible_facts.
+# See AGENT.md → "Facts füllen". (No override here — default AWX behaviour is fine.)
 
 # ── Custom app registration ───────────────────────────────────────────────────
 # awx.customvars: Rollen-Variablen, Locations/Subnets, Proxy-Site-Zuordnung
