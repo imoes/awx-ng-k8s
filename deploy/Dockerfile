@@ -25,6 +25,7 @@ COPY custom/awx/customvars/ ${AWX_PKG}/customvars/
 COPY custom/awx/api/urls/project.py      ${AWX_PKG}/api/urls/project.py
 COPY custom/awx/api/urls/job_template.py ${AWX_PKG}/api/urls/job_template.py
 COPY custom/awx/api/urls/host.py         ${AWX_PKG}/api/urls/host.py
+COPY custom/awx/api/urls/group.py        ${AWX_PKG}/api/urls/group.py
 COPY custom/awx/api/urls/urls.py         ${AWX_PKG}/api/urls/urls.py
 
 # ── Gepatchtes jobs.py + receptor.py einspielen ──────────────────────────────

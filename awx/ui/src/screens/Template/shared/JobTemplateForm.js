@@ -46,6 +46,8 @@ import { VerbositySelectField } from 'components/VerbositySelectField';
 import PlaybookSelect from './PlaybookSelect';
 import WebhookSubForm from './WebhookSubForm';
 import getHelpText from './JobTemplate.helptext';
+// awx-ng: Host-/Gruppen-Picker, der das limit-Feld füllt
+import LimitPicker from './LimitPicker';
 
 const { origin } = document.location;
 
@@ -440,6 +442,11 @@ function JobTemplateForm({
                 onChange={(value) => {
                   limitHelpers.setValue(value);
                 }}
+              />
+              <LimitPicker
+                inventoryId={inventoryField.value?.id}
+                value={limitField.value}
+                onChange={(value) => limitHelpers.setValue(value)}
               />
             </FieldWithPrompt>
             <VerbositySelectField

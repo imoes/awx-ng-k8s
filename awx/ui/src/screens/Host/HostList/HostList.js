@@ -180,6 +180,7 @@ function HostList() {
               isAllExpanded={isAllExpanded}
               onExpandAll={expandAll}
               qsConfig={QS_CONFIG}
+              liveSearch
               additionalControls={[
                 ...(canAdd
                   ? [<ToolbarAddButton key="add" linkTo={`${match.url}/add`} />]

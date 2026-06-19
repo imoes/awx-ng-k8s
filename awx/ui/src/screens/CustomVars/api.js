@@ -29,9 +29,6 @@ export function reconcileLocations() {
 }
 
 // Hosts (für die Variablen-Verwaltung)
-export function readHosts(params) {
-  return LocationsAPI.http.get('/api/v2/hosts/', { params });
-}
 export function readHostRoleVariables(hostId, params) {
   return LocationsAPI.http.get(`/api/v2/hosts/${hostId}/role_variables/`, {
     params,
@@ -60,6 +57,29 @@ export function cloneHost(hostId, name, copyGroups = true) {
   return LocationsAPI.http.post(`/api/v2/hosts/${hostId}/clone/`, {
     name,
     copy_groups: copyGroups,
+  });
+}
+
+// Gruppen-Variablen (analog zu Host — single source of truth = group.variables)
+export function readGroupRoleVariables(groupId, params) {
+  return LocationsAPI.http.get(`/api/v2/groups/${groupId}/role_variables/`, {
+    params,
+  });
+}
+export function patchGroupRoleVariable(groupId, varName, value) {
+  return LocationsAPI.http.patch(
+    `/api/v2/groups/${groupId}/role_variables/${encodeURIComponent(varName)}/`,
+    { value }
+  );
+}
+export function resetGroupRoleVariable(groupId, varName) {
+  return LocationsAPI.http.delete(
+    `/api/v2/groups/${groupId}/role_variables/${encodeURIComponent(varName)}/`
+  );
+}
+export function assignGroupRoles(groupId, roles) {
+  return LocationsAPI.http.post(`/api/v2/groups/${groupId}/assign_roles/`, {
+    roles,
   });
 }
 
@@ -95,6 +115,15 @@ export function triggerProjectRoleScan(projectId) {
     `/api/v2/projects/${projectId}/role_variables/scan/trigger/`,
     {}
   );
+}
+// Playbooks eines Projekts (native AWX-Liste) + Play-Metadaten (awx-ng-Scan)
+export function readProjectPlaybooks(projectId) {
+  return LocationsAPI.http.get(`/api/v2/projects/${projectId}/playbooks/`);
+}
+export function readProjectPlays(projectId, params) {
+  return LocationsAPI.http.get(`/api/v2/projects/${projectId}/plays/`, {
+    params,
+  });
 }
 // Job-Templates eines Hosts (gleiche Inventory)
 export function readHostJobTemplates(hostId) {

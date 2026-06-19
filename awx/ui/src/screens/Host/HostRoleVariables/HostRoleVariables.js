@@ -1,8 +1,12 @@
 /* eslint-disable i18next/no-literal-string */
-// awx-ng: "Role Variables" tab on the host page.
-// Single source of truth = native host.variables. Role defaults come from the
-// project scan; a variable counts as "overridden" when it is set in host_vars.
+// awx-ng: "Role Variables" tab on the host page — the PRIMARY place to manage a
+// host's variables. Single source of truth = native host.variables.
+//   • Role defaults come from the project scan (roles/<name>/defaults/main.yml).
+//   • A variable counts as "overridden" when it is set in host_vars.
+//   • Free host_vars (criticality, docker.*, …) are edited here too; the raw YAML
+//     view on the Details/Edit page stays available as an advanced escape hatch.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Alert,
   Button,
@@ -28,7 +32,9 @@ import {
   Thead,
   Tr,
 } from '@patternfly/react-table';
+import yaml from 'js-yaml';
 import { object } from 'prop-types';
+import { HostsAPI } from 'api';
 import {
   assignHostRoles,
   cloneHost,
@@ -41,6 +47,9 @@ import {
   runHost,
 } from 'screens/CustomVars/api';
 
+// Control keys that are not "real" variables and must not show up as free host_vars.
+const CONTROL_KEYS = new Set(['host_roles']);
+
 function HostRoleVariables({ host }) {
   const hostId = host.id;
 
@@ -50,12 +59,14 @@ function HostRoleVariables({ host }) {
   const [availableRoles, setAvailableRoles] = useState([]);
   const [roleSearch, setRoleSearch] = useState('');
 
-  // Assigned roles + variable overrides
+  // Assigned roles + variable overrides + raw host.variables
   const [hostRoles, setHostRoles] = useState([]);
   const [hostVars, setHostVars] = useState([]);
+  const [rawVars, setRawVars] = useState('');
 
-  // Edit / reset variable
+  // Edit / reset variable. editingVar = { var_name, value, role_name?, default_value?, isFree?, isNew? }
   const [editingVar, setEditingVar] = useState(null);
+  const [editName, setEditName] = useState('');
   const [editText, setEditText] = useState('');
 
   // Clone
@@ -75,9 +86,13 @@ function HostRoleVariables({ host }) {
 
   // ── Load ──────────────────────────────────────────────────────────────────
   const loadVars = useCallback(async () => {
-    const { data } = await readHostRoleVariables(hostId);
+    const [{ data }, detail] = await Promise.all([
+      readHostRoleVariables(hostId),
+      HostsAPI.readDetail(hostId),
+    ]);
     setHostVars(data.results);
     setHostRoles(data.host_roles || []);
+    setRawVars(detail?.data?.variables || '');
     if (data.project_id && !projectId) setProjectId(String(data.project_id));
   }, [hostId, projectId]);
 
@@ -104,6 +119,18 @@ function HostRoleVariables({ host }) {
     if (q.length < 2) return notAssigned;
     return notAssigned.filter((r) => r.toLowerCase().includes(q));
   }, [availableRoles, hostRoles, roleSearch]);
+
+  // ── Free host_vars: top-level host.variables keys that are not role vars ───
+  const freeVars = useMemo(() => {
+    let parsed = {};
+    try { parsed = yaml.load(rawVars) || {}; } catch { parsed = {}; }
+    if (typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+    const roleVarNames = new Set(hostVars.map((v) => v.var_name));
+    return Object.keys(parsed)
+      .filter((k) => !CONTROL_KEYS.has(k) && !roleVarNames.has(k))
+      .sort()
+      .map((k) => ({ var_name: k, value: parsed[k] }));
+  }, [rawVars, hostVars]);
 
   // ── Assign a single role immediately ──────────────────────────────────────
   const addRole = async (role) => {
@@ -134,11 +161,20 @@ function HostRoleVariables({ host }) {
   };
 
   // ── Edit / reset variable ─────────────────────────────────────────────────
+  const stringify = (val) =>
+    typeof val === 'string' ? val : JSON.stringify(val, null, 2);
+
   const openEdit = (v) => {
     setEditingVar(v);
-    setEditText(
-      typeof v.value === 'string' ? v.value : JSON.stringify(v.value, null, 2)
-    );
+    setEditName(v.var_name);
+    setEditText(stringify(v.value));
+    setErr(null);
+  };
+
+  const openAddFreeVar = () => {
+    setEditingVar({ var_name: '', value: '', isFree: true, isNew: true });
+    setEditName('');
+    setEditText('');
     setErr(null);
   };
 
@@ -146,9 +182,11 @@ function HostRoleVariables({ host }) {
     setBusy(true);
     setErr(null);
     try {
+      const name = editingVar.isNew ? editName.trim() : editingVar.var_name;
+      if (!name) throw new Error('Variable name required.');
       let parsed;
       try { parsed = JSON.parse(editText); } catch { parsed = editText; }
-      await patchHostRoleVariable(hostId, editingVar.var_name, parsed);
+      await patchHostRoleVariable(hostId, name, parsed);
       setEditingVar(null);
       loadVars();
     } catch (e) {
@@ -218,6 +256,20 @@ function HostRoleVariables({ host }) {
             Clone host
           </Button>
         </div>
+
+        <Alert
+          variant="info"
+          isInline
+          title="How variables work here"
+          style={{ marginBottom: 12 }}
+        >
+          This tab is the main editor for this host&apos;s variables. Assigned roles
+          contribute their <code>defaults/main.yml</code> values (scanned on project
+          sync) as a baseline; editing a value writes an override into the host&apos;s
+          native <code>host_vars</code>, and reset removes it again. Everything saved
+          here lives in the same place Ansible reads.{' '}
+          <Link to={`/hosts/${hostId}/edit`}>Edit raw YAML (advanced) →</Link>
+        </Alert>
 
         {msg && <Alert variant="success" title={msg} isInline style={{ marginBottom: 8 }} />}
         {err && (
@@ -329,8 +381,8 @@ function HostRoleVariables({ host }) {
           Role variables
         </Title>
         <p style={{ color: '#6a6e73', marginBottom: 8 }}>
-          Values are stored in this host&apos;s variables (host_vars). Editing overrides the
-          role default; reset removes it again.
+          Defaults from the assigned roles. Editing overrides the default (stored in
+          host_vars); reset reverts to the role default.
         </p>
         {(() => {
           const rolesWithoutVars = hostRoles.filter(
@@ -387,6 +439,74 @@ function HostRoleVariables({ host }) {
                 </Td>
               </Tr>
             ))}
+            {hostVars.length === 0 && (
+              <Tr>
+                <Td colSpan={5} style={{ color: '#6a6e73' }}>
+                  No role variables — assign a role above.
+                </Td>
+              </Tr>
+            )}
+          </Tbody>
+        </TableComposable>
+
+        {/* ── Other host variables (free host_vars) ── */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginTop: 24,
+          }}
+        >
+          <Title headingLevel="h3" size="md">
+            Other host variables (host_vars)
+          </Title>
+          <Button variant="secondary" isSmall onClick={openAddFreeVar}>
+            Add variable
+          </Button>
+        </div>
+        <p style={{ color: '#6a6e73', margin: '4px 0 8px' }}>
+          Variables stored directly on this host that are not tied to a role (e.g.
+          <code> criticality</code>, <code>docker</code>). For deeply nested structures,
+          use <Link to={`/hosts/${hostId}/edit`}>raw YAML</Link>.
+        </p>
+        <TableComposable variant="compact" aria-label="Other host variables">
+          <Thead>
+            <Tr>
+              <Th>Variable</Th>
+              <Th>Value</Th>
+              <Th>Action</Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {freeVars.map((v) => (
+              <Tr key={v.var_name}>
+                <Td dataLabel="Variable"><code>{v.var_name}</code></Td>
+                <Td dataLabel="Value">
+                  <code>
+                    {(typeof v.value === 'string'
+                      ? v.value
+                      : JSON.stringify(v.value)
+                    ).slice(0, 80)}
+                  </code>
+                </Td>
+                <Td dataLabel="Action">
+                  <Button variant="link" isInline onClick={() => openEdit({ ...v, isFree: true })}>
+                    edit
+                  </Button>{' '}
+                  <Button variant="link" isInline onClick={() => resetVar(v)}>
+                    remove
+                  </Button>
+                </Td>
+              </Tr>
+            ))}
+            {freeVars.length === 0 && (
+              <Tr>
+                <Td colSpan={3} style={{ color: '#6a6e73' }}>
+                  No extra host variables.
+                </Td>
+              </Tr>
+            )}
           </Tbody>
         </TableComposable>
       </CardBody>
@@ -481,7 +601,11 @@ function HostRoleVariables({ host }) {
       {/* ── Edit variable modal ── */}
       {editingVar && (
         <Modal
-          title={`${editingVar.role_name} › ${editingVar.var_name}`}
+          title={
+            editingVar.isNew
+              ? 'Add host variable'
+              : `${editingVar.role_name ? `${editingVar.role_name} › ` : ''}${editingVar.var_name}`
+          }
           isOpen
           variant="large"
           onClose={() => setEditingVar(null)}
@@ -494,14 +618,26 @@ function HostRoleVariables({ host }) {
             </Button>,
           ]}
         >
-          <p style={{ marginBottom: 8 }}>
-            Role default:{' '}
-            <code>
-              {typeof editingVar.default_value === 'string'
-                ? editingVar.default_value
-                : JSON.stringify(editingVar.default_value)}
-            </code>
-          </p>
+          {editingVar.isNew && (
+            <FormGroup label="Variable name" isRequired fieldId="newvar-name" style={{ marginBottom: 8 }}>
+              <TextInput
+                id="newvar-name"
+                value={editName}
+                onChange={(v) => setEditName(typeof v === 'string' ? v : v?.target?.value ?? '')}
+                placeholder="e.g. criticality"
+              />
+            </FormGroup>
+          )}
+          {editingVar.default_value !== undefined && (
+            <p style={{ marginBottom: 8 }}>
+              Role default:{' '}
+              <code>
+                {typeof editingVar.default_value === 'string'
+                  ? editingVar.default_value
+                  : JSON.stringify(editingVar.default_value)}
+              </code>
+            </p>
+          )}
           <TextArea
             aria-label="Variable value"
             value={editText}

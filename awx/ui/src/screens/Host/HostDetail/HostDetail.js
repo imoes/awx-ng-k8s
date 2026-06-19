@@ -90,7 +90,8 @@ function HostDetail({ host }) {
           user={modified_by}
         />
         <VariablesDetail
-          label={t`Variables`}
+          label={t`Variables (Raw / Advanced)`}
+          helpText={t`Raw host_vars as Ansible reads them. For a structured editor (roles, defaults, overrides) use the Role Variables tab.`}
           rows={4}
           value={variables}
           name="variables"

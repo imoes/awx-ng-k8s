@@ -18,6 +18,8 @@ import InventoryGroupEdit from '../InventoryGroupEdit/InventoryGroupEdit';
 import InventoryGroupDetail from '../InventoryGroupDetail/InventoryGroupDetail';
 import InventoryGroupHosts from '../InventoryGroupHosts';
 import InventoryRelatedGroups from '../InventoryRelatedGroups';
+// awx-ng: structured group_vars editor
+import InventoryGroupVariables from './InventoryGroupVariables';
 
 function InventoryGroup({ setBreadcrumb, inventory }) {
   const [inventoryGroup, setInventoryGroup] = useState(null);
@@ -67,6 +69,11 @@ function InventoryGroup({ setBreadcrumb, inventory }) {
       name: t`Hosts`,
       link: `/inventories/${inventoryType}/${inventoryId}/groups/${inventoryGroup?.id}/nested_hosts`,
       id: 2,
+    },
+    {
+      name: t`Variables`,
+      link: `/inventories/${inventoryType}/${inventoryId}/groups/${inventoryGroup?.id}/variables`,
+      id: 3,
     },
   ];
 
@@ -133,6 +140,12 @@ function InventoryGroup({ setBreadcrumb, inventory }) {
             path="/inventories/:inventoryType/:id/groups/:groupId/nested_groups"
           >
             <InventoryRelatedGroups />
+          </Route>,
+          <Route
+            key="variables"
+            path="/inventories/:inventoryType/:id/groups/:groupId/variables"
+          >
+            <InventoryGroupVariables inventoryGroup={inventoryGroup} />
           </Route>,
         ]}
         <Route key="not-found" path="*">

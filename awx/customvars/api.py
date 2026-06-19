@@ -872,6 +872,120 @@ class HostRoleVariableDetailView(APIView):
         return Response({'var_name': var_name, 'is_overridden': False, 'removed': existed})
 
 
+# ─── Group-Variablen (analog Host; single source of truth = group.variables) ───
+
+class GroupAssignRolesView(APIView):
+    """
+    POST /api/v2/groups/{pk}/assign_roles/  — Body: {"roles": [...]}
+    Setzt host_roles in den nativen Group.variables (Baseline für Gruppen-Mitglieder).
+    """
+    def post(self, request, pk, **kwargs):
+        from awx.main.models import Group
+        group = get_object_or_404(Group, pk=pk)
+        if not request.user.can_access(Group, 'change', group, None):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied()
+        roles = request.data.get('roles', [])
+        if not isinstance(roles, list):
+            return Response({'error': "'roles' muss eine Liste sein."}, status=status.HTTP_400_BAD_REQUEST)
+        import yaml as _yaml
+        gvars = group.variables_dict or {}
+        gvars['host_roles'] = roles
+        group.variables = _yaml.dump(gvars, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        group.save(update_fields=['variables'])
+        return Response({'group_id': group.pk, 'group_name': group.name, 'host_roles': roles})
+
+
+class GroupRoleVariableListView(APIView):
+    """
+    GET /api/v2/groups/{pk}/role_variables/
+    Rollen-Variablen einer Gruppe — aus host_roles (group.variables) + RoleVariable-Defaults.
+    Effektiver Wert / Override kommt aus den nativen group.variables (group_vars).
+    """
+    def get(self, request, pk, **kwargs):
+        from awx.main.models import Group
+        group = get_object_or_404(Group, pk=pk)
+        gvars = group.variables_dict or {}
+        host_roles = gvars.get('host_roles', [])
+        if isinstance(host_roles, str):
+            host_roles = [r.strip() for r in host_roles.split(',') if r.strip()]
+
+        project_id = request.query_params.get('project_id') or _infer_project_id_for_roles(group, host_roles)
+        role_filter = request.query_params.get('role_name')
+        only_overridden = request.query_params.get('overridden')
+
+        results = []
+        if project_id and host_roles:
+            roles = [role_filter] if role_filter else host_roles
+            rv_qs = (
+                RoleVariable.objects
+                .filter(project_id=project_id, role_name__in=roles)
+                .order_by('role_name', 'var_name')
+            )
+            for rv in rv_qs:
+                is_overridden = rv.var_name in gvars
+                value = gvars[rv.var_name] if is_overridden else rv.default_value
+                if only_overridden is not None:
+                    want = only_overridden.lower() in ('1', 'true', 'yes')
+                    if is_overridden != want:
+                        continue
+                results.append({
+                    'group_id': group.pk,
+                    'project_id': project_id,
+                    'role_name': rv.role_name,
+                    'var_name': rv.var_name,
+                    'source': rv.source,
+                    'value': value,
+                    'default_value': rv.default_value,
+                    'value_type': rv.value_type,
+                    'is_overridden': is_overridden,
+                    'has_jinja': rv.has_jinja,
+                })
+        return Response({
+            'count': len(results),
+            'results': results,
+            'host_roles': host_roles,
+            'project_id': project_id,
+        })
+
+
+class GroupRoleVariableDetailView(APIView):
+    """
+    PATCH  /api/v2/groups/{pk}/role_variables/{var_name}/  — Wert in group.variables setzen
+    DELETE /api/v2/groups/{pk}/role_variables/{var_name}/  — Variable entfernen
+    """
+    def _get_group(self, request, pk):
+        from awx.main.models import Group
+        group = get_object_or_404(Group, pk=pk)
+        if not request.user.can_access(Group, 'change', group, None):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied()
+        return group
+
+    def _save(self, group, gvars):
+        import yaml as _yaml
+        group.variables = _yaml.dump(gvars, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        group.save(update_fields=['variables'])
+
+    def patch(self, request, pk, var_name, **kwargs):
+        group = self._get_group(request, pk)
+        if 'value' not in request.data:
+            return Response({'error': "Feld 'value' fehlt."}, status=status.HTTP_400_BAD_REQUEST)
+        gvars = group.variables_dict or {}
+        gvars[var_name] = request.data['value']
+        self._save(group, gvars)
+        return Response({'var_name': var_name, 'value': gvars[var_name], 'is_overridden': True})
+
+    def delete(self, request, pk, var_name, **kwargs):
+        group = self._get_group(request, pk)
+        gvars = group.variables_dict or {}
+        existed = var_name in gvars
+        if existed:
+            del gvars[var_name]
+            self._save(group, gvars)
+        return Response({'var_name': var_name, 'is_overridden': False, 'removed': existed})
+
+
 class HostRunView(APIView):
     """
     GET  /api/v2/hosts/{pk}/run/  — Job-Templates die dieses Host-Inventory nutzen
@@ -1078,3 +1192,286 @@ class LocationReconcileView(APIView):
             'drift': drift,
             'errors': errors,
         })
+
+
+# ─── Project File Editor ──────────────────────────────────────────────────────
+
+import pathlib
+import subprocess
+
+_ALLOWED_SUFFIXES = {'.yml', '.yaml', '.j2', '.jinja2', '.conf', '.ini', '.md', '.txt', '.cfg'}
+_MAX_FILE_BYTES = 512 * 1024  # 512 KB
+
+
+def _get_project_path(pk):
+    """Return the on-disk path for a project, or raise Http404.
+
+    A project that has never synced (no local_path / nothing on disk) must yield a
+    clean 404, not a 500 — so any error from get_project_path() is caught here.
+    """
+    from awx.main.models import Project
+    from django.http import Http404
+    try:
+        project = Project.objects.get(pk=pk)
+    except Project.DoesNotExist:
+        raise Http404
+    try:
+        raw = project.get_project_path(check_if_exists=False)
+    except Exception:
+        raw = None
+    if not raw:
+        raise Http404('Project has no on-disk path (never synced?).')
+    path = pathlib.Path(raw)
+    if not path.exists():
+        raise Http404('Project directory not found on disk (run a project sync first).')
+    return path
+
+
+def _safe_resolve(project_path: pathlib.Path, rel: str) -> pathlib.Path:
+    """Resolve rel against project_path and raise PermissionDenied on traversal."""
+    from rest_framework.exceptions import PermissionDenied
+    # Normalise separators, strip leading slashes
+    clean = rel.replace('\\', '/').lstrip('/')
+    resolved = (project_path / clean).resolve()
+    try:
+        resolved.relative_to(project_path.resolve())
+    except ValueError:
+        raise PermissionDenied('Path traversal detected.')
+    return resolved
+
+
+class ProjectFilesListView(APIView):
+    """
+    GET /api/v2/projects/{pk}/files/?path=roles/img_docker
+    Returns a directory listing (one level).
+    """
+    def get(self, request, pk, **kwargs):
+        project_path = _get_project_path(pk)
+        rel = request.query_params.get('path', '')
+        target = _safe_resolve(project_path, rel) if rel else project_path.resolve()
+
+        if not target.is_dir():
+            return Response({'detail': 'Not a directory.'}, status=400)
+
+        entries = []
+        for item in sorted(target.iterdir(), key=lambda p: (p.is_file(), p.name)):
+            if item.name.startswith('.'):
+                continue
+            entries.append({
+                'name': item.name,
+                'type': 'file' if item.is_file() else 'dir',
+                'path': str(item.relative_to(project_path)),
+                'size': item.stat().st_size if item.is_file() else None,
+                'suffix': item.suffix if item.is_file() else None,
+            })
+        return Response({'path': rel or '', 'entries': entries})
+
+
+class ProjectFileContentView(APIView):
+    """
+    GET /api/v2/projects/{pk}/files/content/?path=roles/img_docker/tasks/main.yml
+    PUT /api/v2/projects/{pk}/files/content/?path=...
+        Body: {"content": "---\n..."}
+    """
+    def get(self, request, pk, **kwargs):
+        project_path = _get_project_path(pk)
+        rel = request.query_params.get('path', '')
+        if not rel:
+            return Response({'detail': 'path parameter required.'}, status=400)
+
+        target = _safe_resolve(project_path, rel)
+        if not target.is_file():
+            return Response({'detail': 'File not found.'}, status=404)
+        if target.suffix not in _ALLOWED_SUFFIXES:
+            return Response({'detail': 'File type not allowed.'}, status=403)
+        if target.stat().st_size > _MAX_FILE_BYTES:
+            return Response({'detail': 'File too large (max 512 KB).'}, status=413)
+
+        try:
+            content = target.read_text(encoding='utf-8')
+        except UnicodeDecodeError:
+            return Response({'detail': 'File is not valid UTF-8.'}, status=400)
+
+        return Response({
+            'path': rel,
+            'content': content,
+            'size': target.stat().st_size,
+            'suffix': target.suffix,
+        })
+
+    def put(self, request, pk, **kwargs):
+        if not request.user.is_superuser:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Only superusers may write project files.')
+
+        project_path = _get_project_path(pk)
+        rel = request.query_params.get('path', '')
+        if not rel:
+            return Response({'detail': 'path parameter required.'}, status=400)
+
+        content = request.data.get('content')
+        if content is None:
+            return Response({'detail': '"content" field required.'}, status=400)
+        if len(content.encode('utf-8')) > _MAX_FILE_BYTES:
+            return Response({'detail': 'Content too large (max 512 KB).'}, status=413)
+
+        target = _safe_resolve(project_path, rel)
+        if target.suffix not in _ALLOWED_SUFFIXES:
+            return Response({'detail': 'File type not allowed.'}, status=403)
+
+        # Create parent dirs if needed (within project only)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding='utf-8')
+
+        # Optional: git add + commit (silently skip if not a git repo)
+        try:
+            repo = project_path.resolve()
+            subprocess.run(
+                ['git', 'add', str(target)],
+                cwd=str(repo), capture_output=True, timeout=10
+            )
+            subprocess.run(
+                ['git', 'commit', '-m', f'awx-ng editor: update {rel}',
+                 '--author', f'{request.user.username} <awx-ng@localhost>'],
+                cwd=str(repo), capture_output=True, timeout=10
+            )
+        except Exception:
+            pass  # git not available or not a repo — write succeeded anyway
+
+        return Response({'path': rel, 'saved': True})
+
+
+class ProjectFileLintView(APIView):
+    """
+    POST /api/v2/projects/{pk}/files/lint/
+    Body: {"content": "---\n...", "path": "roles/img_docker/tasks/main.yml"}
+    Returns: {"valid": bool, "errors": [{"line", "col", "message", "severity"}]}
+    """
+    def post(self, request, pk, **kwargs):
+        # Just verify the project exists
+        _get_project_path(pk)
+
+        content = request.data.get('content', '')
+        errors = []
+
+        # ── Stufe 1: PyYAML Syntax-Check ─────────────────────────────────────
+        import yaml as _yaml
+        try:
+            list(_yaml.safe_load_all(content))
+        except _yaml.YAMLError as exc:
+            mark = getattr(exc, 'problem_mark', None)
+            errors.append({
+                'line': (mark.line + 1) if mark else 1,
+                'col': (mark.column + 1) if mark else 1,
+                'message': str(exc.problem) if hasattr(exc, 'problem') else str(exc),
+                'severity': 'error',
+                'source': 'yaml',
+            })
+            return Response({'valid': False, 'errors': errors})
+
+        # ── Stufe 2: ansible-lint (graceful fallback) ─────────────────────────
+        try:
+            result = subprocess.run(
+                ['ansible-lint', '--format', 'json', '--nocolor', '-'],
+                input=content.encode('utf-8'),
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode not in (0, 2):
+                raise RuntimeError('ansible-lint not available')
+
+            lint_output = result.stdout.decode('utf-8', errors='replace').strip()
+            if lint_output:
+                for item in json.loads(lint_output):
+                    errors.append({
+                        'line': item.get('line', 1),
+                        'col': item.get('col', 1),
+                        'message': item.get('message', str(item)),
+                        'severity': 'warning' if item.get('severity') != 'error' else 'error',
+                        'source': 'ansible-lint',
+                        'rule': item.get('rule', {}).get('id', ''),
+                    })
+        except (FileNotFoundError, RuntimeError, json.JSONDecodeError, subprocess.TimeoutExpired):
+            pass  # ansible-lint not installed — YAML syntax check already done
+
+        return Response({'valid': True, 'errors': errors})
+
+
+def _extract_plays(content):
+    """Parse a playbook's YAML and return per-play metadata (hosts/roles/tags)."""
+    import yaml as _yaml
+    plays = []
+    try:
+        doc = _yaml.safe_load(content)
+    except _yaml.YAMLError:
+        return plays
+    if not isinstance(doc, list):
+        return plays
+    for entry in doc:
+        if not isinstance(entry, dict):
+            continue
+        if 'import_playbook' in entry or 'ansible.builtin.import_playbook' in entry:
+            plays.append({
+                'name': entry.get('import_playbook') or entry.get('ansible.builtin.import_playbook'),
+                'kind': 'import_playbook',
+                'hosts': None,
+                'roles': [],
+                'tags': [],
+            })
+            continue
+        roles = []
+        for r in entry.get('roles', []) or []:
+            if isinstance(r, str):
+                roles.append(r)
+            elif isinstance(r, dict):
+                roles.append(r.get('role') or r.get('name') or '')
+        tags = entry.get('tags', [])
+        if isinstance(tags, str):
+            tags = [tags]
+        hosts = entry.get('hosts')
+        plays.append({
+            'name': entry.get('name', ''),
+            'kind': 'play',
+            'hosts': hosts if isinstance(hosts, str) else (str(hosts) if hosts is not None else None),
+            'roles': [r for r in roles if r],
+            'tags': tags or [],
+        })
+    return plays
+
+
+class ProjectPlaysView(APIView):
+    """
+    GET /api/v2/projects/{pk}/plays/[?playbook=site.yml]
+    Liefert Play-Metadaten (hosts, roles, tags) je Playbook. Ohne ?playbook werden
+    alle Top-Level-*.yml/*.yaml des Projekts geparst. On-demand, kein DB-Cache.
+    """
+    def get(self, request, pk, **kwargs):
+        project_path = _get_project_path(pk)
+        wanted = request.query_params.get('playbook')
+
+        if wanted:
+            candidates = [_safe_resolve(project_path, wanted)]
+        else:
+            candidates = sorted(
+                p for p in project_path.iterdir()
+                if p.is_file() and p.suffix in ('.yml', '.yaml') and not p.name.startswith('.')
+            )
+
+        results = []
+        for path in candidates:
+            if not path.is_file() or path.suffix not in ('.yml', '.yaml'):
+                continue
+            try:
+                if path.stat().st_size > _MAX_FILE_BYTES:
+                    continue
+                content = path.read_text(encoding='utf-8')
+            except (OSError, UnicodeDecodeError):
+                continue
+            plays = _extract_plays(content)
+            if not plays:
+                continue  # not a playbook (e.g. vars file)
+            results.append({
+                'playbook': str(path.relative_to(project_path)),
+                'plays': plays,
+            })
+        return Response({'count': len(results), 'results': results})

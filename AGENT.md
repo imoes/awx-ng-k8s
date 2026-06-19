@@ -26,10 +26,14 @@ Handvoll Upstream-Dateien wird angefasst — die müssen beim Versionssprung gep
 |---|---|
 | `awx/main/tasks/jobs.py` | In `RunProjectUpdate.post_run_hook` Aufruf von `scan_project_roles` (nach git-Sync). Suche Marker `awx-ng:`. |
 | `awx/main/tasks/receptor.py` | Container-Isolation-Bypass bei `AWX_DISABLE_CONTAINER_ISOLATION`. Suche Marker `_disable_isolation`. |
-| `awx/api/urls/project.py` | Routen: `role_variables/`, `role_tags/`, `role_handlers/`, `scan/…` |
-| `awx/api/urls/host.py` | Routen: `aggregated_variables/`, `set_root_password/`, `assign_roles/`, `role_variables/…` |
+| `awx/api/urls/project.py` | Routen: `role_variables/`, `role_tags/`, `role_handlers/`, `scan/…`, `files/…` (Editor), `plays/` (Playbook-Verwaltung) |
+| `awx/api/urls/host.py` | Routen: `aggregated_variables/`, `set_root_password/`, `assign_roles/`, `role_variables/…`, `clone/`, `run/` |
+| `awx/api/urls/group.py` | Routen: `assign_roles/`, `role_variables/…` (strukturierte group_vars) |
 | `awx/api/urls/job_template.py` | Route: `generate_survey/` |
 | `awx/api/urls/urls.py` | Routen: `locations/…`, `execution_node_locations/…`, `tools/hash_password/` |
+
+> Hinweis: `group.py` wird zusätzlich in `deploy/Dockerfile` per `COPY` ins Image gebracht
+> (wie host.py/project.py). Bei neuen gepatchten urls-Dateien immer auch den Dockerfile-COPY ergänzen.
 
 Alle Eingriffe sind **additiv** und mit `# awx-ng:` markiert. Beim Rebase:
 `git log --oneline` der custom-Commits durchgehen, Marker `awx-ng` in den obigen
@@ -43,9 +47,18 @@ Dateien suchen, additive Zeilen erneut einfügen.
 ### UI — gepatchte Upstream-Dateien (beim Versionssprung PRÜFEN)
 | Datei | Änderung |
 |---|---|
-| `awx/ui/src/routeConfig.js` | Import der CustomVars-Screens (Locations, RunnerSites) + Routen in den Gruppen Resources/Administration. Marker `awx-ng:`. |
+| `awx/ui/src/routeConfig.js` | Import der CustomVars-Screens (Locations, RunnerSites, Roles, Playbooks, ProjectEditor) + Routen in Resources/Administration. Marker `awx-ng:`. |
 | `awx/ui/src/index.js` | Import von `customvars.css`. Marker `awx-ng:`. |
 | `awx/ui/src/screens/Host/Host.js` | Tab „Role Variables" + Route → `screens/Host/HostRoleVariables/`. Marker `awx-ng:`. |
+| `awx/ui/src/screens/Host/HostDetail/HostDetail.js` | Variables-Block als „Raw / Advanced" gelabelt + Hinweis auf Role-Variables-Tab. |
+| `awx/ui/src/screens/Inventory/InventoryGroup/InventoryGroup.js` | Tab „Variables" + Route → `InventoryGroupVariables.js` (strukturierte group_vars). |
+| `awx/ui/src/screens/Template/shared/JobTemplateForm.js` | `LimitPicker` unter dem Limit-Feld (Host-/Gruppen-Auswahl → limit). |
+| `awx/ui/src/components/Search/Search.js` + `components/DataListToolbar/DataListToolbar.js` | opt-in Prop `liveSearch` (debounced Filtern); aktiviert in `screens/Host/HostList/HostList.js`. |
+
+> Variablen-Modell-UX: Der „Role Variables"-Tab ist der **Haupteditor** für Host-Variablen
+> (Rollen-Defaults + Overrides + freie host_vars); der rohe YAML-Block im Details/Edit ist
+> die „Advanced"-Eskalation. Gruppen haben denselben strukturierten Editor (group_vars).
+> Präzedenz: role defaults < group_vars < host_vars (wie Ansible/Geerling).
 
 ## UI bauen & ins Image bringen
 
@@ -108,3 +121,18 @@ Dann in beiden Repos committen.
   `data/`, `receptor/*.conf`
 - **Im Image, Rebuild nötig:** alles unter `deploy/custom/` (Backend-Patches + UI)
   → `docker compose build … && docker compose up -d --no-deps …` (NICHT `restart`)
+
+## Facts füllen (Facts-Tab ist leer)
+
+AWX sammelt/zeigt Host-Facts **nicht automatisch**. Damit der Facts-Tab eines Hosts
+sich füllt:
+
+1. Im **Job-Template** „Enable Fact Storage" aktivieren (API: `use_fact_cache=true`).
+2. Das **Playbook** muss Facts sammeln — `gather_facts: true` (Default bei den meisten
+   Plays) bzw. ein `ansible.builtin.setup`-Task.
+3. Das Template **einmal laufen lassen** (ggf. mit `limit` auf den Host). Danach stehen
+   `ansible_facts` unter Hosts → Tab **Facts** und sind per `ansible_facts__…`-Suche
+   filterbar (Smart Inventories).
+
+Die Fact-Cache-Artefakte landen unter `artifacts/<job_id>/fact_cache/`; AWX übernimmt
+sie in `Host.ansible_facts`. Kein globales Setting nötig (siehe `config/custom.py`).

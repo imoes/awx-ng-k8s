@@ -58,6 +58,7 @@ function DataListToolbar({
   handleIsAnsibleFactsSelected,
   isFilterCleared,
   advancedSearchDisabled,
+  liveSearch,
 }) {
   const showExpandCollapse = onCompact && onExpand;
   const [isKebabOpen, setIsKebabOpen] = useState(false);
@@ -150,6 +151,7 @@ function DataListToolbar({
               enableRelatedFuzzyFiltering={enableRelatedFuzzyFiltering}
               handleIsAnsibleFactsSelected={handleIsAnsibleFactsSelected}
               isFilterCleared={isFilterCleared}
+              liveSearch={liveSearch}
             />
           </ToolbarItem>
           {sortColumns && (
@@ -227,6 +229,7 @@ DataListToolbar.propTypes = {
   enableNegativeFiltering: PropTypes.bool,
   enableRelatedFuzzyFiltering: PropTypes.bool,
   advancedSearchDisabled: PropTypes.bool,
+  liveSearch: PropTypes.bool,
 };
 
 DataListToolbar.defaultProps = {
@@ -247,6 +250,7 @@ DataListToolbar.defaultProps = {
   enableNegativeFiltering: true,
   enableRelatedFuzzyFiltering: true,
   advancedSearchDisabled: false,
+  liveSearch: false,
 };
 
 export default DataListToolbar;

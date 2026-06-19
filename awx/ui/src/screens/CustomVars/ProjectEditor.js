@@ -33,6 +33,7 @@ import {
   FolderOpenIcon,
   SaveAltIcon,
 } from '@patternfly/react-icons';
+import { useLocation } from 'react-router-dom';
 import ScreenHeader from 'components/ScreenHeader/ScreenHeader';
 import {
   listProjectFiles,
@@ -280,16 +281,40 @@ export default function ProjectEditor() {
   const [err, setErr] = useState(null);
   const [msg, setMsg] = useState(null);
 
+  const location = useLocation();
   const lintTimer = useRef(null);
+  const deeplinkDone = useRef(false);
   const dirty = content !== savedContent;
 
   // Projekte laden
   useEffect(() => {
     readProjects({ page_size: 200, order_by: 'name' }).then(({ data }) => {
       setProjects(data.results || []);
-      if (data.results?.length > 0) setProjectId(String(data.results[0].id));
+      // Deep-Link (?project=&path=) hat Vorrang, sonst erstes Projekt
+      const params = new URLSearchParams(location.search);
+      const qProject = params.get('project');
+      if (qProject) setProjectId(String(qProject));
+      else if (data.results?.length > 0) setProjectId(String(data.results[0].id));
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Deep-Link: Datei aus ?path= direkt öffnen
+  useEffect(() => {
+    if (deeplinkDone.current) return;
+    const params = new URLSearchParams(location.search);
+    const qProject = params.get('project');
+    const qPath = params.get('path');
+    if (!qProject || !qPath) return;
+    deeplinkDone.current = true;
+    readProjectFile(qProject, qPath)
+      .then(({ data }) => {
+        setSelectedFile({ path: qPath, name: qPath.split('/').pop() });
+        setContent(data.content);
+        setSavedContent(data.content);
+      })
+      .catch(() => {});
+  }, [location.search]);
 
   // Datei öffnen
   const openFile = useCallback(

@@ -1,5 +1,5 @@
 import 'styled-components/macro';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import PropTypes from 'prop-types';
 
 import { t } from '@lingui/macro';
@@ -46,6 +46,7 @@ function Search({
   enableRelatedFuzzyFiltering,
   handleIsAnsibleFactsSelected,
   isFilterCleared,
+  liveSearch,
 }) {
   const location = useLocation();
   const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
@@ -84,6 +85,30 @@ function Search({
     });
     setChipsByKey({ ...chipsByKey, ...searchChips });
   }, [location.search]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // awx-ng: opt-in live search — debounced filtering while typing in a text column.
+  const lastLive = useRef('');
+  const activeColumn = columns.find((c) => c.key === searchKey);
+  const isTextColumn =
+    activeColumn &&
+    !activeColumn.options &&
+    !activeColumn.isBoolean &&
+    searchKey !== 'advanced';
+
+  useEffect(() => {
+    if (!liveSearch || !isTextColumn) return undefined;
+    const handle = setTimeout(() => {
+      const v = searchValue.trim();
+      if (v && onReplaceSearch) {
+        onReplaceSearch(searchKey, v);
+        lastLive.current = v;
+      } else if (!v && lastLive.current && onRemove) {
+        onRemove(searchKey, lastLive.current);
+        lastLive.current = '';
+      }
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [searchValue, liveSearch, isTextColumn, searchKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDropdownSelect = ({ target }) => {
     const { key: actualSearchKey } = columns.find(
@@ -304,6 +329,7 @@ Search.propTypes = {
   enableNegativeFiltering: PropTypes.bool,
   enableRelatedFuzzyFiltering: PropTypes.bool,
   searchableKeys: SearchableKeys,
+  liveSearch: PropTypes.bool,
 };
 
 Search.defaultProps = {
@@ -314,6 +340,7 @@ Search.defaultProps = {
   enableNegativeFiltering: true,
   enableRelatedFuzzyFiltering: true,
   searchableKeys: [],
+  liveSearch: false,
 };
 
 export default Search;

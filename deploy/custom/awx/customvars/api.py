@@ -872,6 +872,120 @@ class HostRoleVariableDetailView(APIView):
         return Response({'var_name': var_name, 'is_overridden': False, 'removed': existed})
 
 
+# ─── Group-Variablen (analog Host; single source of truth = group.variables) ───
+
+class GroupAssignRolesView(APIView):
+    """
+    POST /api/v2/groups/{pk}/assign_roles/  — Body: {"roles": [...]}
+    Setzt host_roles in den nativen Group.variables (Baseline für Gruppen-Mitglieder).
+    """
+    def post(self, request, pk, **kwargs):
+        from awx.main.models import Group
+        group = get_object_or_404(Group, pk=pk)
+        if not request.user.can_access(Group, 'change', group, None):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied()
+        roles = request.data.get('roles', [])
+        if not isinstance(roles, list):
+            return Response({'error': "'roles' muss eine Liste sein."}, status=status.HTTP_400_BAD_REQUEST)
+        import yaml as _yaml
+        gvars = group.variables_dict or {}
+        gvars['host_roles'] = roles
+        group.variables = _yaml.dump(gvars, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        group.save(update_fields=['variables'])
+        return Response({'group_id': group.pk, 'group_name': group.name, 'host_roles': roles})
+
+
+class GroupRoleVariableListView(APIView):
+    """
+    GET /api/v2/groups/{pk}/role_variables/
+    Rollen-Variablen einer Gruppe — aus host_roles (group.variables) + RoleVariable-Defaults.
+    Effektiver Wert / Override kommt aus den nativen group.variables (group_vars).
+    """
+    def get(self, request, pk, **kwargs):
+        from awx.main.models import Group
+        group = get_object_or_404(Group, pk=pk)
+        gvars = group.variables_dict or {}
+        host_roles = gvars.get('host_roles', [])
+        if isinstance(host_roles, str):
+            host_roles = [r.strip() for r in host_roles.split(',') if r.strip()]
+
+        project_id = request.query_params.get('project_id') or _infer_project_id_for_roles(group, host_roles)
+        role_filter = request.query_params.get('role_name')
+        only_overridden = request.query_params.get('overridden')
+
+        results = []
+        if project_id and host_roles:
+            roles = [role_filter] if role_filter else host_roles
+            rv_qs = (
+                RoleVariable.objects
+                .filter(project_id=project_id, role_name__in=roles)
+                .order_by('role_name', 'var_name')
+            )
+            for rv in rv_qs:
+                is_overridden = rv.var_name in gvars
+                value = gvars[rv.var_name] if is_overridden else rv.default_value
+                if only_overridden is not None:
+                    want = only_overridden.lower() in ('1', 'true', 'yes')
+                    if is_overridden != want:
+                        continue
+                results.append({
+                    'group_id': group.pk,
+                    'project_id': project_id,
+                    'role_name': rv.role_name,
+                    'var_name': rv.var_name,
+                    'source': rv.source,
+                    'value': value,
+                    'default_value': rv.default_value,
+                    'value_type': rv.value_type,
+                    'is_overridden': is_overridden,
+                    'has_jinja': rv.has_jinja,
+                })
+        return Response({
+            'count': len(results),
+            'results': results,
+            'host_roles': host_roles,
+            'project_id': project_id,
+        })
+
+
+class GroupRoleVariableDetailView(APIView):
+    """
+    PATCH  /api/v2/groups/{pk}/role_variables/{var_name}/  — Wert in group.variables setzen
+    DELETE /api/v2/groups/{pk}/role_variables/{var_name}/  — Variable entfernen
+    """
+    def _get_group(self, request, pk):
+        from awx.main.models import Group
+        group = get_object_or_404(Group, pk=pk)
+        if not request.user.can_access(Group, 'change', group, None):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied()
+        return group
+
+    def _save(self, group, gvars):
+        import yaml as _yaml
+        group.variables = _yaml.dump(gvars, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        group.save(update_fields=['variables'])
+
+    def patch(self, request, pk, var_name, **kwargs):
+        group = self._get_group(request, pk)
+        if 'value' not in request.data:
+            return Response({'error': "Feld 'value' fehlt."}, status=status.HTTP_400_BAD_REQUEST)
+        gvars = group.variables_dict or {}
+        gvars[var_name] = request.data['value']
+        self._save(group, gvars)
+        return Response({'var_name': var_name, 'value': gvars[var_name], 'is_overridden': True})
+
+    def delete(self, request, pk, var_name, **kwargs):
+        group = self._get_group(request, pk)
+        gvars = group.variables_dict or {}
+        existed = var_name in gvars
+        if existed:
+            del gvars[var_name]
+            self._save(group, gvars)
+        return Response({'var_name': var_name, 'is_overridden': False, 'removed': existed})
+
+
 class HostRunView(APIView):
     """
     GET  /api/v2/hosts/{pk}/run/  — Job-Templates die dieses Host-Inventory nutzen
@@ -1090,16 +1204,26 @@ _MAX_FILE_BYTES = 512 * 1024  # 512 KB
 
 
 def _get_project_path(pk):
-    """Return the on-disk path for a project, or raise Http404."""
+    """Return the on-disk path for a project, or raise Http404.
+
+    A project that has never synced (no local_path / nothing on disk) must yield a
+    clean 404, not a 500 — so any error from get_project_path() is caught here.
+    """
     from awx.main.models import Project
     from django.http import Http404
     try:
         project = Project.objects.get(pk=pk)
     except Project.DoesNotExist:
         raise Http404
-    path = pathlib.Path(project.get_project_path(check_if_exists=False))
+    try:
+        raw = project.get_project_path(check_if_exists=False)
+    except Exception:
+        raw = None
+    if not raw:
+        raise Http404('Project has no on-disk path (never synced?).')
+    path = pathlib.Path(raw)
     if not path.exists():
-        raise Http404
+        raise Http404('Project directory not found on disk (run a project sync first).')
     return path
 
 
@@ -1271,3 +1395,83 @@ class ProjectFileLintView(APIView):
             pass  # ansible-lint not installed — YAML syntax check already done
 
         return Response({'valid': True, 'errors': errors})
+
+
+def _extract_plays(content):
+    """Parse a playbook's YAML and return per-play metadata (hosts/roles/tags)."""
+    import yaml as _yaml
+    plays = []
+    try:
+        doc = _yaml.safe_load(content)
+    except _yaml.YAMLError:
+        return plays
+    if not isinstance(doc, list):
+        return plays
+    for entry in doc:
+        if not isinstance(entry, dict):
+            continue
+        if 'import_playbook' in entry or 'ansible.builtin.import_playbook' in entry:
+            plays.append({
+                'name': entry.get('import_playbook') or entry.get('ansible.builtin.import_playbook'),
+                'kind': 'import_playbook',
+                'hosts': None,
+                'roles': [],
+                'tags': [],
+            })
+            continue
+        roles = []
+        for r in entry.get('roles', []) or []:
+            if isinstance(r, str):
+                roles.append(r)
+            elif isinstance(r, dict):
+                roles.append(r.get('role') or r.get('name') or '')
+        tags = entry.get('tags', [])
+        if isinstance(tags, str):
+            tags = [tags]
+        hosts = entry.get('hosts')
+        plays.append({
+            'name': entry.get('name', ''),
+            'kind': 'play',
+            'hosts': hosts if isinstance(hosts, str) else (str(hosts) if hosts is not None else None),
+            'roles': [r for r in roles if r],
+            'tags': tags or [],
+        })
+    return plays
+
+
+class ProjectPlaysView(APIView):
+    """
+    GET /api/v2/projects/{pk}/plays/[?playbook=site.yml]
+    Liefert Play-Metadaten (hosts, roles, tags) je Playbook. Ohne ?playbook werden
+    alle Top-Level-*.yml/*.yaml des Projekts geparst. On-demand, kein DB-Cache.
+    """
+    def get(self, request, pk, **kwargs):
+        project_path = _get_project_path(pk)
+        wanted = request.query_params.get('playbook')
+
+        if wanted:
+            candidates = [_safe_resolve(project_path, wanted)]
+        else:
+            candidates = sorted(
+                p for p in project_path.iterdir()
+                if p.is_file() and p.suffix in ('.yml', '.yaml') and not p.name.startswith('.')
+            )
+
+        results = []
+        for path in candidates:
+            if not path.is_file() or path.suffix not in ('.yml', '.yaml'):
+                continue
+            try:
+                if path.stat().st_size > _MAX_FILE_BYTES:
+                    continue
+                content = path.read_text(encoding='utf-8')
+            except (OSError, UnicodeDecodeError):
+                continue
+            plays = _extract_plays(content)
+            if not plays:
+                continue  # not a playbook (e.g. vars file)
+            results.append({
+                'playbook': str(path.relative_to(project_path)),
+                'plays': plays,
+            })
+        return Response({'count': len(results), 'results': results})
