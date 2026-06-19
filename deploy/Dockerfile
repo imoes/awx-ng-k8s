@@ -31,6 +31,18 @@ COPY custom/awx/api/urls/urls.py         ${AWX_PKG}/api/urls/urls.py
 COPY custom/awx/main/tasks/jobs.py     ${AWX_PKG}/main/tasks/jobs.py
 COPY custom/awx/main/tasks/receptor.py ${AWX_PKG}/main/tasks/receptor.py
 
+# ── Angepasste UI (gebaut aus dem geforkten awx/ui — siehe AGENT.md) ──────────
+# Die UI wird auf dem Host gebaut (npm run build) und als custom/ui-build/
+# eingecheckt. Sie muss an ZWEI Orten landen:
+#   1. index.html-Template (Django TemplateView rendert es)
+#   2. die statischen Assets unter /var/lib/awx/public/static/ (nginx serviert sie)
+COPY custom/ui-build/index.html          ${AWX_PKG}/ui/build/index.html
+COPY custom/ui-build/asset-manifest.json ${AWX_PKG}/ui/build/asset-manifest.json
+COPY custom/ui-build/static/             ${AWX_PKG}/ui/build/static/
+COPY custom/ui-build/static/js/          /var/lib/awx/public/static/js/
+COPY custom/ui-build/static/css/         /var/lib/awx/public/static/css/
+COPY custom/ui-build/static/media/       /var/lib/awx/public/static/media/
+
 # ── .pyc-Cache invalidieren ──────────────────────────────────────────────────
 RUN find ${AWX_PKG} -name "*.pyc" -delete && \
     find ${AWX_PKG} -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
