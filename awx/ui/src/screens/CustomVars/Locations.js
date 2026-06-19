@@ -64,7 +64,8 @@ function Locations() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return locations;
+    // only start filtering from the 2nd character onwards
+    if (q.length < 2) return locations;
     return locations.filter(
       (l) =>
         l.name?.toLowerCase().includes(q) ||

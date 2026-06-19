@@ -47,7 +47,7 @@ urls = [
     re_path(r'^(?P<pk>[0-9]+)/set_root_password/$', HostSetRootPasswordView.as_view(), name='host_set_root_password'),
     re_path(r'^(?P<pk>[0-9]+)/assign_roles/$', HostAssignRolesView.as_view(), name='host_assign_roles'),
     re_path(r'^(?P<pk>[0-9]+)/role_variables/$', HostRoleVariableListView.as_view(), name='host_role_variables'),
-    re_path(r'^(?P<pk>[0-9]+)/role_variables/(?P<var_id>[0-9a-f-]+)/$', HostRoleVariableDetailView.as_view(), name='host_role_variable_detail'),
+    re_path(r'^(?P<pk>[0-9]+)/role_variables/(?P<var_name>[^/]+)/$', HostRoleVariableDetailView.as_view(), name='host_role_variable_detail'),
     re_path(r'^(?P<pk>[0-9]+)/clone/$', HostCloneView.as_view(), name='host_clone'),
 ]
 

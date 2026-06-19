@@ -37,21 +37,20 @@ export function readHostRoleVariables(hostId, params) {
     params,
   });
 }
-export function patchHostRoleVariable(hostId, varId, value) {
+export function patchHostRoleVariable(hostId, varName, value) {
   return LocationsAPI.http.patch(
-    `/api/v2/hosts/${hostId}/role_variables/${varId}/`,
+    `/api/v2/hosts/${hostId}/role_variables/${encodeURIComponent(varName)}/`,
     { value }
   );
 }
-export function resetHostRoleVariable(hostId, varId) {
+export function resetHostRoleVariable(hostId, varName) {
   return LocationsAPI.http.delete(
-    `/api/v2/hosts/${hostId}/role_variables/${varId}/`
+    `/api/v2/hosts/${hostId}/role_variables/${encodeURIComponent(varName)}/`
   );
 }
-export function assignHostRoles(hostId, roles, projectId) {
+export function assignHostRoles(hostId, roles) {
   return LocationsAPI.http.post(`/api/v2/hosts/${hostId}/assign_roles/`, {
     roles,
-    project_id: projectId,
   });
 }
 export function readAggregatedVariables(hostId) {

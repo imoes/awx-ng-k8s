@@ -21,6 +21,8 @@ import HostFacts from './HostFacts';
 import HostDetail from './HostDetail';
 import HostEdit from './HostEdit';
 import HostGroups from './HostGroups';
+// awx-ng: role variables tab (single source of truth = host.variables)
+import HostRoleVariables from './HostRoleVariables';
 
 function Host({ setBreadcrumb }) {
   const location = useLocation();
@@ -70,9 +72,14 @@ function Host({ setBreadcrumb }) {
       id: 2,
     },
     {
+      name: t`Role Variables`,
+      link: `${match.url}/role_variables`,
+      id: 3,
+    },
+    {
       name: t`Jobs`,
       link: `${match.url}/jobs`,
-      id: 3,
+      id: 4,
     },
   ];
 
@@ -127,6 +134,9 @@ function Host({ setBreadcrumb }) {
             </Route>,
             <Route path="/hosts/:id/groups" key="groups">
               <HostGroups host={host} />
+            </Route>,
+            <Route path="/hosts/:id/role_variables" key="role_variables">
+              <HostRoleVariables host={host} />
             </Route>,
             <Route path="/hosts/:id/jobs" key="jobs">
               <JobList defaultParams={{ job__hosts: host.id }} />

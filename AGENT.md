@@ -43,8 +43,9 @@ Dateien suchen, additive Zeilen erneut einfügen.
 ### UI — gepatchte Upstream-Dateien (beim Versionssprung PRÜFEN)
 | Datei | Änderung |
 |---|---|
-| `awx/ui/src/routeConfig.js` | Import der CustomVars-Screens + neue Navigationsgruppe „awx-ng". Marker `awx-ng:`. |
+| `awx/ui/src/routeConfig.js` | Import der CustomVars-Screens (Locations, RunnerSites) + Routen in den Gruppen Resources/Administration. Marker `awx-ng:`. |
 | `awx/ui/src/index.js` | Import von `customvars.css`. Marker `awx-ng:`. |
+| `awx/ui/src/screens/Host/Host.js` | Tab „Role Variables" + Route → `screens/Host/HostRoleVariables/`. Marker `awx-ng:`. |
 
 ## UI bauen & ins Image bringen
 

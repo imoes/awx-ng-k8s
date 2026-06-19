@@ -26,8 +26,8 @@ import WorkflowApprovals from 'screens/WorkflowApproval';
 import { Jobs } from 'screens/Job';
 import HostMetrics from 'screens/HostMetrics';
 // awx-ng: custom screens integrated into the existing menu structure
+// (host role variables live as a tab on the host page, not as a menu item)
 import {
-  HostVariablesRouter as NgHostVariables,
   Locations as NgLocations,
   RunnerSites as NgRunnerSites,
 } from 'screens/CustomVars';
@@ -103,11 +103,6 @@ function getRouteConfig(userProfile = {}) {
           title: <Trans>Hosts</Trans>,
           path: '/hosts',
           screen: Hosts,
-        },
-        {
-          title: <Trans>Host Variables</Trans>,
-          path: '/host_variables',
-          screen: NgHostVariables,
         },
         {
           title: <Trans>Locations</Trans>,

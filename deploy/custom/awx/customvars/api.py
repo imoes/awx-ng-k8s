@@ -37,7 +37,7 @@ from awx.main.models import Project, JobTemplate, Host
 
 from .models import (
     RoleVariable, RoleTag, RoleHandler, RoleScan,
-    HostRoleVariable, Location, Subnet, ExecutionNodeLocation,
+    Location, Subnet, ExecutionNodeLocation,
 )
 
 
@@ -60,20 +60,6 @@ class RoleTagSerializer(drf_serializers.ModelSerializer):
         fields = [
             'id', 'project_id', 'role_name', 'tag_name',
             'task_count', 'scanned_revision', 'updated_at',
-        ]
-
-
-class HostRoleVariableSerializer(drf_serializers.ModelSerializer):
-    class Meta:
-        model = HostRoleVariable
-        fields = [
-            'id', 'host_id', 'project_id', 'role_name', 'var_name', 'source',
-            'value', 'default_value', 'value_type', 'is_overridden',
-            'has_jinja', 'created_at', 'updated_at',
-        ]
-        read_only_fields = [
-            'id', 'host_id', 'project_id', 'role_name', 'var_name', 'source',
-            'default_value', 'value_type', 'has_jinja', 'created_at', 'updated_at',
         ]
 
 
@@ -309,9 +295,13 @@ def _role_var_to_survey_item(rv: RoleVariable) -> dict:
         item['default'] = ''
 
     elif rv.value_type in ('dict', 'list'):
+        # YAML statt JSON — konsistent mit host.variables/group_vars (alles YAML).
         if val is not None:
             try:
-                item['default'] = json.dumps(val, ensure_ascii=False, indent=2)
+                import yaml as _yaml
+                item['default'] = _yaml.dump(
+                    val, default_flow_style=False, allow_unicode=True, sort_keys=False
+                ).rstrip('\n')
             except (TypeError, ValueError):
                 item['default'] = str(val)
         else:
@@ -453,10 +443,9 @@ class HostAggregatedVariablesView(APIView):
 
     Berechnet die effektiven Ansible-Variablen für einen Host nach
     Präzedenz-Reihenfolge (niedrig → hoch):
-      1.  role_defaults        (aus RoleVariable, roles listed in host_roles)
-      1b. host_role_override   (HostRoleVariable mit is_overridden=True)
-      2.  group_vars           (alle Gruppen des Hosts, flach gemerged)
-      3.  host_vars            (Host.variables_dict)
+      1.  role_defaults  (aus RoleVariable, roles listed in host_roles)
+      2.  group_vars     (alle Gruppen des Hosts, flach gemerged)
+      3.  host_vars      (Host.variables_dict — enthält die Rollen-Overrides)
 
     Survey-Defaults werden separat als 'survey_defaults' ausgewiesen
     (sie werden als -e übergeben und überschreiben alles — nur zur Info).
@@ -512,14 +501,6 @@ class HostAggregatedVariablesView(APIView):
                     role_defaults[rv.var_name] = (rv.default_value, rv.role_name)
             for var_name, (val, role_name) in role_defaults.items():
                 _apply({var_name: val}, {'source': 'role_default', 'role': role_name})
-
-        # 1b. Host-Rollen-Overrides (Foreman-Stil) — überschreiben Rollen-Defaults.
-        #     Nur tatsächlich überschriebene Variablen werden als eigene Schicht
-        #     ausgewiesen; nicht-überschriebene sind mit role_default identisch.
-        host_overrides = HostRoleVariable.objects.filter(host_id=host.pk, is_overridden=True)
-        for hrv in host_overrides:
-            _apply({hrv.var_name: hrv.value},
-                   {'source': 'host_role_override', 'role': hrv.role_name})
 
         # 2. Group vars (Elterngruppen zuerst, dann direkte Gruppen)
         all_groups = list(host.all_groups.order_by('name'))
@@ -609,8 +590,7 @@ class HostCloneView(APIView):
 
     Klont einen Host innerhalb desselben Inventars — ideal für standardisierte
     Hosts (z.B. Docker-Host mit /data1). Kopiert:
-      - Host.variables (inkl. host_roles)
-      - alle HostRoleVariable-Overrides (Werte + Override-Status)
+      - Host.variables (inkl. host_roles und aller Rollen-Variablen-Overrides)
       - optional die Gruppen-Mitgliedschaften (copy_groups, Default true)
 
     Body: {"name": "neuer-host", "copy_groups": true}
@@ -654,30 +634,13 @@ class HostCloneView(APIView):
         if copy_groups:
             clone.groups.add(*source.groups.all())
 
-        # 3. HostRoleVariable-Overrides kopieren
-        cloned_vars = []
-        for hrv in HostRoleVariable.objects.filter(host_id=source.pk):
-            cloned_vars.append(HostRoleVariable(
-                host_id=clone.pk,
-                project_id=hrv.project_id,
-                role_name=hrv.role_name,
-                var_name=hrv.var_name,
-                source=hrv.source,
-                value=hrv.value,
-                default_value=hrv.default_value,
-                value_type=hrv.value_type,
-                is_overridden=hrv.is_overridden,
-                has_jinja=hrv.has_jinja,
-            ))
-        if cloned_vars:
-            HostRoleVariable.objects.bulk_create(cloned_vars)
-
+        # Rollen-Variablen leben in host.variables (oben mitkopiert) — kein
+        # separater Schritt nötig.
         return Response({
             'id': clone.pk,
             'name': clone.name,
             'inventory': clone.inventory_id,
             'cloned_from': source.pk,
-            'role_variables_copied': len(cloned_vars),
             'groups_copied': clone.groups.count() if copy_groups else 0,
         }, status=status.HTTP_201_CREATED)
 
@@ -717,15 +680,12 @@ class HostAssignRolesView(APIView):
     """
     POST /api/v2/hosts/{pk}/assign_roles/
 
-    Body: {"roles": ["img_docker", "img_system"], "project_id": 8}
+    Body: {"roles": ["img_docker", "img_system"]}
 
-    1. Schreibt host_roles in Host.variables (site.yml liest das).
-    2. Materialisiert die Rollen-Variablen als HostRoleVariable-Overrides
-       (Foreman-Stil): jede Variable wird mit dem Rollen-Default vorbelegt und
-       ist danach pro Host editierbar. Bereits überschriebene Werte bleiben bei
-       erneutem Zuweisen erhalten. Variablen entfernter Rollen werden gelöscht.
-
-    project_id optional — wird sonst aus Inventory-Source / RoleVariable abgeleitet.
+    Schreibt host_roles in die nativen Host.variables (site.yml liest das, und
+    der Rollen-Variablen-Tab zeigt die Variablen dieser Rollen). Es werden KEINE
+    Variablen vorab materialisiert — die Defaults kommen aus den Rollen, nur vom
+    Nutzer geänderte Werte landen als host_vars in host.variables (Foreman-Stil).
     """
 
     def post(self, request, pk, **kwargs):
@@ -738,113 +698,115 @@ class HostAssignRolesView(APIView):
         if not isinstance(roles, list):
             return Response({'error': "'roles' muss eine Liste sein."}, status=status.HTTP_400_BAD_REQUEST)
 
-        project_id = request.data.get('project_id') or _infer_project_id_for_roles(host, roles)
-        if roles and not project_id:
-            return Response(
-                {'error': "project_id konnte nicht ermittelt werden — bitte explizit angeben."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # ── 1. host_roles in Host.variables schreiben ──────────────────────
         import yaml as _yaml
         hvars = host.variables_dict or {}
         hvars['host_roles'] = roles
-        host.variables = _yaml.dump(hvars, default_flow_style=False, allow_unicode=True)
+        host.variables = _yaml.dump(hvars, default_flow_style=False, allow_unicode=True, sort_keys=False)
         host.save(update_fields=['variables'])
-
-        # ── 2. HostRoleVariable-Overrides materialisieren ──────────────────
-        # Variablen von nicht mehr zugewiesenen Rollen entfernen
-        HostRoleVariable.objects.filter(host_id=host.pk).exclude(role_name__in=roles).delete()
-
-        materialized = 0
-        for role_name in roles:
-            role_vars = RoleVariable.objects.filter(project_id=project_id, role_name=role_name)
-            for rv in role_vars:
-                existing = HostRoleVariable.objects.filter(
-                    host_id=host.pk, role_name=role_name, var_name=rv.var_name
-                ).first()
-                # Bestehenden Override bewahren, nur Default/Metadaten auffrischen
-                if existing and existing.is_overridden:
-                    existing.default_value = rv.default_value
-                    existing.value_type = rv.value_type
-                    existing.has_jinja = rv.has_jinja
-                    existing.source = rv.source
-                    existing.project_id = project_id
-                    existing.save()
-                else:
-                    HostRoleVariable.objects.update_or_create(
-                        host_id=host.pk, role_name=role_name, var_name=rv.var_name,
-                        defaults={
-                            'project_id': project_id,
-                            'source': rv.source,
-                            'value': rv.default_value,
-                            'default_value': rv.default_value,
-                            'value_type': rv.value_type,
-                            'has_jinja': rv.has_jinja,
-                            'is_overridden': False,
-                        },
-                    )
-                materialized += 1
 
         return Response({
             'host_id': host.pk,
             'host_name': host.name,
             'host_roles': roles,
-            'project_id': project_id,
-            'variables_materialized': materialized,
         })
 
 
-class HostRoleVariableListView(generics.ListAPIView):
+class HostRoleVariableListView(APIView):
     """
     GET /api/v2/hosts/{pk}/role_variables/
 
-    Alle materialisierten Rollen-Variablen-Overrides eines Hosts.
-    Filter: ?role_name=img_docker  ?overridden=true
-    """
-    serializer_class = HostRoleVariableSerializer
+    Rollen-Variablen eines Hosts — berechnet aus den ZUGEWIESENEN Rollen
+    (host_roles in host.variables) und den Rollen-Defaults (RoleVariable).
+    Der EFFEKTIVE Wert kommt aus den nativen host.variables; ist die Variable
+    dort gesetzt, gilt sie als 'überschrieben'. Einzige Quelle der Wahrheit ist
+    damit host.variables — konsistent mit der Variables-Ansicht und Ansible.
 
-    def get_queryset(self):
-        host = get_object_or_404(Host, pk=self.kwargs['pk'])
-        qs = HostRoleVariable.objects.filter(host_id=host.pk)
-        role_name = self.request.query_params.get('role_name')
-        if role_name:
-            qs = qs.filter(role_name=role_name)
-        overridden = self.request.query_params.get('overridden')
-        if overridden is not None:
-            qs = qs.filter(is_overridden=(overridden.lower() in ('1', 'true', 'yes')))
-        return qs
+    Query: ?project_id=8 (sonst aus Inventory-Source/Rollen abgeleitet)
+           ?role_name=img_docker  ?overridden=true
+    """
+    def get(self, request, pk, **kwargs):
+        host = get_object_or_404(Host, pk=pk)
+        hvars = host.variables_dict or {}
+        host_roles = hvars.get('host_roles', [])
+        if isinstance(host_roles, str):
+            host_roles = [r.strip() for r in host_roles.split(',') if r.strip()]
+
+        project_id = request.query_params.get('project_id') or _infer_project_id_for_roles(host, host_roles)
+
+        role_filter = request.query_params.get('role_name')
+        only_overridden = request.query_params.get('overridden')
+
+        results = []
+        if project_id and host_roles:
+            roles = [role_filter] if role_filter else host_roles
+            rv_qs = (
+                RoleVariable.objects
+                .filter(project_id=project_id, role_name__in=roles)
+                .order_by('role_name', 'var_name')
+            )
+            for rv in rv_qs:
+                is_overridden = rv.var_name in hvars
+                value = hvars[rv.var_name] if is_overridden else rv.default_value
+                if only_overridden is not None:
+                    want = only_overridden.lower() in ('1', 'true', 'yes')
+                    if is_overridden != want:
+                        continue
+                results.append({
+                    'host_id': host.pk,
+                    'project_id': project_id,
+                    'role_name': rv.role_name,
+                    'var_name': rv.var_name,
+                    'source': rv.source,
+                    'value': value,
+                    'default_value': rv.default_value,
+                    'value_type': rv.value_type,
+                    'is_overridden': is_overridden,
+                    'has_jinja': rv.has_jinja,
+                })
+        return Response({
+            'count': len(results),
+            'results': results,
+            'host_roles': host_roles,
+            'project_id': project_id,
+        })
 
 
 class HostRoleVariableDetailView(APIView):
     """
-    PATCH  /api/v2/hosts/{pk}/role_variables/{var_id}/   — Wert überschreiben
-           Body: {"value": <beliebiger JSON-Wert>}
-    DELETE /api/v2/hosts/{pk}/role_variables/{var_id}/   — Override auf Rollen-Default zurücksetzen
+    PATCH  /api/v2/hosts/{pk}/role_variables/{var_name}/  — Wert in host.variables setzen
+           Body: {"value": <beliebiger Wert>}
+    DELETE /api/v2/hosts/{pk}/role_variables/{var_name}/  — Variable aus host.variables
+           entfernen → fällt auf den Rollen-Default zurück
     """
-    def _get_obj(self, request, pk, var_id):
+    def _get_host(self, request, pk):
         host = get_object_or_404(Host, pk=pk)
         if not request.user.can_access(Host, 'change', host, None):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied()
-        return get_object_or_404(HostRoleVariable, pk=var_id, host_id=host.pk)
+        return host
 
-    def patch(self, request, pk, var_id, **kwargs):
-        obj = self._get_obj(request, pk, var_id)
+    def _save(self, host, hvars):
+        import yaml as _yaml
+        host.variables = _yaml.dump(hvars, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        host.save(update_fields=['variables'])
+
+    def patch(self, request, pk, var_name, **kwargs):
+        host = self._get_host(request, pk)
         if 'value' not in request.data:
             return Response({'error': "Feld 'value' fehlt."}, status=status.HTTP_400_BAD_REQUEST)
-        obj.value = request.data['value']
-        obj.is_overridden = (obj.value != obj.default_value)
-        obj.save(update_fields=['value', 'is_overridden', 'updated_at'])
-        return Response(HostRoleVariableSerializer(obj).data)
+        hvars = host.variables_dict or {}
+        hvars[var_name] = request.data['value']
+        self._save(host, hvars)
+        return Response({'var_name': var_name, 'value': hvars[var_name], 'is_overridden': True})
 
-    def delete(self, request, pk, var_id, **kwargs):
-        """Setzt den Override auf den Rollen-Default zurück (Zeile bleibt bestehen)."""
-        obj = self._get_obj(request, pk, var_id)
-        obj.value = obj.default_value
-        obj.is_overridden = False
-        obj.save(update_fields=['value', 'is_overridden', 'updated_at'])
-        return Response(HostRoleVariableSerializer(obj).data)
+    def delete(self, request, pk, var_name, **kwargs):
+        host = self._get_host(request, pk)
+        hvars = host.variables_dict or {}
+        existed = var_name in hvars
+        if existed:
+            del hvars[var_name]
+            self._save(host, hvars)
+        return Response({'var_name': var_name, 'is_overridden': False, 'removed': existed})
 
 
 # ── Runner ↔ Site-Zuordnung (Execution Node Locations) ───────────────────────

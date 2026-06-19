@@ -70,39 +70,11 @@ class RoleVariable(models.Model):
         return f"{self.role_name}.{self.var_name} ({self.source})"
 
 
-class HostRoleVariable(models.Model):
-    """
-    Foreman-Stil Override-Tabelle: pro Host + Rolle + Variable ein editierbarer Wert.
-
-    Wird beim Zuweisen einer Rolle an einen Host materialisiert — vorbelegt mit
-    dem Rollen-Default (default_value als unveränderliche Referenz). Editiert der
-    Nutzer den Wert, wird is_overridden=True und nur die Abweichung gespeichert.
-
-    Der Rollen-Default in RoleVariable bleibt unangetastet → Herkunft bleibt
-    nachvollziehbar; aggregated_variables kann beide Schichten zeigen.
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    host_id = models.IntegerField(db_index=True)          # AWX Host pk
-    project_id = models.IntegerField(db_index=True)        # Herkunfts-Projekt der Rolle
-    role_name = models.CharField(max_length=255, db_index=True)
-    var_name = models.CharField(max_length=255, db_index=True)
-    source = models.CharField(max_length=10, blank=True)   # defaults|vars (aus RoleVariable)
-    value = models.JSONField(null=True, blank=True)        # effektiver/überschriebener Wert
-    default_value = models.JSONField(null=True, blank=True)  # Snapshot des Rollen-Defaults (Referenz)
-    value_type = models.CharField(max_length=20, blank=True)
-    is_overridden = models.BooleanField(default=False)     # value weicht vom default ab (vom Nutzer editiert)
-    has_jinja = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        unique_together = [("host_id", "role_name", "var_name")]
-        ordering = ["role_name", "var_name"]
-        verbose_name = "Host Role Variable"
-
-    def __str__(self):
-        flag = "*" if self.is_overridden else ""
-        return f"host={self.host_id} {self.role_name}.{self.var_name}{flag}"
+# Hinweis: Es gibt KEINE separate Host-Rollen-Variablen-Tabelle mehr.
+# Rollen-Variablen eines Hosts leben in den nativen Host.variables (host_vars) —
+# einzige Quelle der Wahrheit, konsistent mit Ansible und der Variables-Ansicht.
+# Der Rollen-Variablen-Tab berechnet Defaults aus RoleVariable und zeigt als
+# 'überschrieben', was in host.variables gesetzt ist.
 
 
 class RoleHandler(models.Model):
