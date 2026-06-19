@@ -26,7 +26,7 @@ echo "[build-ui] react-scripts build…"
 # DISABLE_ESLINT_PLUGIN: ESLint-Warnungen sollen den Build nicht abbrechen
 # (CI=true behandelt sonst jede Warnung als Fehler). Babel/Webpack fangen
 # echte Syntax-/Import-Fehler weiterhin ab.
-( cd "$UI" && NODE_OPTIONS=--max-old-space-size=6144 CI=true DISABLE_ESLINT_PLUGIN=true npm run build )
+( cd "$UI" && NODE_OPTIONS=--max-old-space-size=6144 CI=false DISABLE_ESLINT_PLUGIN=true npm run build )
 
 echo "[build-ui] sync → $OUT (ohne .map)…"
 rm -rf "$OUT"

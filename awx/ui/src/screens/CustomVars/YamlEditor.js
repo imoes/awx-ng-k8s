@@ -1,13 +1,12 @@
 /* eslint-disable i18next/no-literal-string */
 // awx-ng: Monaco-basierter YAML-Editor mit Ansible-Schema-Validierung.
-// Lazy-loaded — Monaco (~4 MB) wird nur geladen wenn dieser Screen aktiv ist.
+// Verwendet lokales monaco-editor Package — kein CDN-Request nötig.
 import React, { useEffect, useRef, useCallback } from 'react';
-import Editor, { useMonaco } from '@monaco-editor/react';
+import Editor, { loader, useMonaco } from '@monaco-editor/react';
+import * as monacoEditor from 'monaco-editor';
 
-// Ansible JSON-Schema von SchemaStore — aktiviert Autocompletion + Validierung
-// für Playbooks, Tasks, Variablen-Dateien.
-const ANSIBLE_SCHEMA_URL =
-  'https://raw.githubusercontent.com/ansible/schemas/main/f/ansible-playbook.json';
+// Lokal gebautes Monaco verwenden statt CDN (funktioniert ohne Internet)
+loader.config({ monaco: monacoEditor });
 
 let _monacoYamlConfigured = false;
 
@@ -15,24 +14,13 @@ function configureYamlOnce(monaco) {
   if (_monacoYamlConfigured) return;
   _monacoYamlConfigured = true;
   try {
-    // monaco-yaml muss über den globalen monaco-Namespace konfiguriert werden
     const { configureMonacoYaml } = require('monaco-yaml');
     configureMonacoYaml(monaco, {
-      enableSchemaRequest: false, // Schema manuell angeben, kein Network-Request
-      schemas: [
-        {
-          uri: ANSIBLE_SCHEMA_URL,
-          // Gilt für alle .yml/.yaml Dateien im Editor
-          fileMatch: ['**/*.yml', '**/*.yaml'],
-          schema: {
-            // Minimales Fallback-Schema wenn kein Network-Request
-            type: ['object', 'array'],
-          },
-        },
-      ],
+      enableSchemaRequest: false,
+      schemas: [],  // Kein externes Schema — nur Syntax-Validierung
     });
   } catch (e) {
-    // monaco-yaml nicht verfügbar — Editor läuft ohne Schema-Validation
+    // monaco-yaml nicht verfügbar — läuft ohne Schema-Validation
   }
 }
 
