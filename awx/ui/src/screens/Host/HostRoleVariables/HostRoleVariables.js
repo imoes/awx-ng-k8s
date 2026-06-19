@@ -35,7 +35,7 @@ import {
   patchHostRoleVariable,
   readHostJobTemplates,
   readHostRoleVariables,
-  readProjectRoleVariables,
+  readProjectRoles,
   readProjects,
   resetHostRoleVariable,
   runHost,
@@ -91,8 +91,8 @@ function HostRoleVariables({ host }) {
 
   useEffect(() => {
     if (!projectId) { setAvailableRoles([]); return; }
-    readProjectRoleVariables(projectId, { page_size: 1000 }).then(({ data }) => {
-      const roles = Array.from(new Set(data.results.map((rv) => rv.role_name))).sort();
+    readProjectRoles(projectId).then(({ data }) => {
+      const roles = (data.results || []).map((r) => r.role_name).sort();
       setAvailableRoles(roles);
     });
   }, [projectId]);
@@ -332,6 +332,16 @@ function HostRoleVariables({ host }) {
           Values are stored in this host&apos;s variables (host_vars). Editing overrides the
           role default; reset removes it again.
         </p>
+        {(() => {
+          const rolesWithoutVars = hostRoles.filter(
+            (r) => !hostVars.some((v) => v.role_name === r)
+          );
+          return rolesWithoutVars.length > 0 ? (
+            <p style={{ color: '#6a6e73', fontSize: 13, margin: '4px 0 8px' }}>
+              Roles with no variables: {rolesWithoutVars.join(', ')}
+            </p>
+          ) : null;
+        })()}
         <TableComposable variant="compact" aria-label="Role variables">
           <Thead>
             <Tr>
@@ -450,7 +460,7 @@ function HostRoleVariables({ host }) {
               <TextInput
                 id="clone-name"
                 value={cloneName}
-                onChange={(v) => setCloneName(v)}
+                onChange={(v) => setCloneName(typeof v === 'string' ? v : v?.target?.value ?? '')}
               />
             </FormGroup>
             <FormGroup fieldId="clone-groups">
@@ -495,7 +505,7 @@ function HostRoleVariables({ host }) {
           <TextArea
             aria-label="Variable value"
             value={editText}
-            onChange={(v) => setEditText(v)}
+            onChange={(v) => setEditText(typeof v === 'string' ? v : v?.target?.value ?? '')}
             rows={20}
             resizeOrientation="vertical"
             style={{ fontFamily: 'monospace' }}

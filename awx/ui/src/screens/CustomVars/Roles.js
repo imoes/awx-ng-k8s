@@ -148,7 +148,7 @@ function Roles() {
                     </FormSelect>
                   </FormGroup>
                 </ToolbarItem>
-                <ToolbarItem>
+                <ToolbarItem style={{ alignSelf: 'flex-end' }}>
                   <SearchInput
                     placeholder="Filter roles..."
                     value={search}
