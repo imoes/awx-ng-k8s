@@ -103,9 +103,13 @@ Alle Endpoints: `http://localhost:8052/api/v2/`
 ### Rollen-Variablen
 
 ```
-GET  /api/v2/projects/{id}/role_variables/           # extrahierte Variablen
+GET  /api/v2/projects/{id}/role_variables/               # Variablen aus defaults/ + vars/
 GET  /api/v2/projects/{id}/role_variables/?role_name=img_docker
 POST /api/v2/projects/{id}/role_variables/scan/trigger/  # manueller Scan
+GET  /api/v2/projects/{id}/role_tags/                    # Tags aus tasks/**/*.yml
+GET  /api/v2/projects/{id}/role_tags/?role_name=img_system&tag_name=rootpw
+GET  /api/v2/projects/{id}/role_handlers/                # Handlers aus handlers/main.yml
+GET  /api/v2/projects/{id}/role_handlers/?role_name=img_docker
 ```
 
 Scan läuft automatisch nach jedem erfolgreichen `git sync`.
@@ -178,7 +182,10 @@ awx-ng/
 
 ## Lizenz
 
-Apache License 2.0 — siehe [LICENSE](LICENSE).
+Apache License 2.0 — Volltext in [LICENSE](LICENSE), Attributionen in [NOTICE](NOTICE).
 
-Fork von [ansible/awx](https://github.com/ansible/awx) (Copyright Ansible/Red Hat).
-Modifikationen Copyright Ippen Digital GmbH & Co. KG.
+awx-ng ist ein Fork von [ansible/awx](https://github.com/ansible/awx)
+(Copyright Ansible, a Red Hat Company), lizenziert unter Apache 2.0.
+Alle Modifikationen (Copyright Ippen Digital GmbH & Co. KG) stehen ebenfalls
+unter Apache 2.0. Geänderte AWX-Dateien tragen Änderungshinweise gemäß
+Apache 2.0 §4(b); siehe NOTICE für die Liste der Modifikationen.
