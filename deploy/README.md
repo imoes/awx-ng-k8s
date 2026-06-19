@@ -19,7 +19,7 @@ Based on [AWX 24.6.1](https://github.com/ansible/awx) (Apache 2.0).
 ## Quickstart
 
 ```bash
-git clone https://github.com/ippen-digital/awx-ng.git
+git clone https://github.com/imoes/awx-ng.git
 cd awx-ng
 
 # 1. Secrets generieren
@@ -186,6 +186,6 @@ Apache License 2.0 — Volltext in [LICENSE](LICENSE), Attributionen in [NOTICE]
 
 awx-ng ist ein Fork von [ansible/awx](https://github.com/ansible/awx)
 (Copyright Ansible, a Red Hat Company), lizenziert unter Apache 2.0.
-Alle Modifikationen (Copyright Ippen Digital GmbH & Co. KG) stehen ebenfalls
-unter Apache 2.0. Geänderte AWX-Dateien tragen Änderungshinweise gemäß
-Apache 2.0 §4(b); siehe NOTICE für die Liste der Modifikationen.
+Alle Modifikationen stehen ebenfalls unter Apache 2.0.
+Geänderte AWX-Dateien tragen Änderungshinweise gemäß Apache 2.0 §4(b);
+siehe NOTICE für die Liste der Modifikationen.

@@ -7,10 +7,10 @@ Client-ID + Secret aus, die in CentralStation konfiguriert werden müssen.
 
 Aufruf:
   python3 setup_oauth2_app.py \
-    --url  http://awx-ng.ippen.media:8052 \
+    --url  http://awx-ng.example.com:8052 \
     --user admin \
     --pass <admin-pw> \
-    --redirect-uri https://centralstation.ippen.media/auth/awx/callback
+    --redirect-uri https://centralstation.example.com/auth/awx/callback
 
 Das Script ist idempotent — existiert die App bereits (by name), wird sie
 ausgegeben statt neu angelegt.

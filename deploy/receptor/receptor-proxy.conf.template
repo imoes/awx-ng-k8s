@@ -2,9 +2,9 @@
 # Copy to /etc/receptor/receptor.conf on each ansible host and replace placeholders.
 #
 # Placeholders:
-#   AWX_NG_CONTROL_HOST — hostname/IP of the awx-ng control node (default: awx-ng.ippen.media)
+#   AWX_NG_CONTROL_HOST — hostname/IP of the awx-ng control node (default: awx-ng.example.com)
 #   AWX_NG_CONTROL_PORT — receptor TCP port (default: 2222)
-#   PROXY_NODE_ID       — unique ID for this proxy (e.g. ansible03-ippen-media)
+#   PROXY_NODE_ID       — unique ID for this proxy (e.g. ansible03-example)
 ---
 - node:
     id: {{ PROXY_NODE_ID }}

@@ -1,5 +1,4 @@
 awx-ng
-Copyright 2024 Ippen Digital GmbH & Co. KG
 
 This product is a fork of and includes software developed as part of the
 AWX project (https://github.com/ansible/awx).
@@ -8,7 +7,7 @@ AWX
 Copyright Ansible, a Red Hat Company.
 Licensed under the Apache License, Version 2.0.
 
-Modifications made by Ippen Digital in this fork (all under Apache 2.0):
+Modifications in this fork (all under Apache 2.0):
   - awx/customvars/        New Django app: role variable/tag/handler
                            extraction, location & subnet management,
                            aggregated host variables, survey generation.

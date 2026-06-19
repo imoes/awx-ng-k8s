@@ -9,7 +9,7 @@ awx-ng Control-Node auf Port 2222 und führen Playbooks lokal aus.
 ```
 awx-ng (8052)
   └─ awx_ee [local] (port 2222)   ← Receptor Control Node
-       ├─ ansible03.ippen.media   ← Remote Proxy (Site: MUE-0)
+       ├─ ansible03.example.com   ← Remote Proxy (Site: MUE-0)
        ├─ ansible01.dierichs.de   ← Remote Proxy (Site: Dierichs)
        └─ ... weitere Proxies
 ```
@@ -31,9 +31,9 @@ Ein vorgefertigtes Playbook liegt unter `deploy/ansible/install-receptor-proxy.y
 ```bash
 # Aus ansible03 oder einem anderen Ansible-Host ausführen:
 ansible-playbook deploy/ansible/install-receptor-proxy.yml \
-  -i "ansible03.ippen.media," \
-  -e "proxy_node_id=ansible03-ippen-media" \
-  -e "awx_ng_control_host=awx-ng.ippen.media" \
+  -i "ansible03.example.com," \
+  -e "proxy_node_id=ansible03-example" \
+  -e "awx_ng_control_host=awx-ng.example.com" \
   -e "awx_ng_control_port=2222" \
   -e "site_name=MUE-0" \
   --become
@@ -58,12 +58,12 @@ mkdir -p /etc/receptor /var/run/receptor
 cat > /etc/receptor/receptor.conf << EOF
 ---
 - node:
-    id: ansible03-ippen-media
+    id: ansible03-example
 
 - log-level: info
 
 - tcp-peer:
-    address: awx-ng.ippen.media:2222
+    address: awx-ng.example.com:2222
     redial: true
 
 - control-service:
@@ -104,14 +104,14 @@ Nach der Installation erscheint der Proxy automatisch unter **Administration →
 Execution Environments / Instance Groups** (sobald die Receptor-Verbindung steht).
 
 Zusätzlich in awx-ng:
-1. **Administration → Instances** → neuer Execution Node mit `hostname=ansible03-ippen-media`
+1. **Administration → Instances** → neuer Execution Node mit `hostname=ansible03-example`
 2. **Sites/Locations** (Phase 5) → Site auswählen → "Preferred Execution Node" = dieser Proxy
 
 ## Bekannte Proxy-Hosts
 
 | Hostname                  | Node-ID                    | Site       |
 |---------------------------|----------------------------|------------|
-| ansible03.ippen.media     | ansible03-ippen-media      | MUE-0      |
+| ansible03.example.com     | ansible03-example      | MUE-0      |
 | ansible01.dierichs.de     | ansible01-dierichs-de      | Dierichs   |
 
 (Diese Tabelle ist nach Registrierung in awx-ng zu pflegen.)
