@@ -31,6 +31,7 @@ import {
   Locations as NgLocations,
   RunnerSites as NgRunnerSites,
   Roles as NgRoles,
+  ProjectEditor as NgProjectEditor,
 } from 'screens/CustomVars';
 
 function getRouteConfig(userProfile = {}) {
@@ -115,6 +116,12 @@ function getRouteConfig(userProfile = {}) {
           title: <Trans>Roles</Trans>,
           path: '/roles',
           screen: NgRoles,
+        },
+        {
+          // awx-ng: Playbook/Rollen-Editor mit Monaco + YAML-Linter
+          title: <Trans>Playbook Editor</Trans>,
+          path: '/editor',
+          screen: NgProjectEditor,
         },
       ],
     },

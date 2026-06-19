@@ -106,3 +106,27 @@ export function runHost(hostId, jobTemplateId) {
     job_template_id: jobTemplateId,
   });
 }
+
+// ── Projekt-Datei-Editor ──────────────────────────────────────────────────────
+export function listProjectFiles(projectId, path = '') {
+  return LocationsAPI.http.get(`/api/v2/projects/${projectId}/files/`, {
+    params: path ? { path } : {},
+  });
+}
+export function readProjectFile(projectId, path) {
+  return LocationsAPI.http.get(`/api/v2/projects/${projectId}/files/content/`, {
+    params: { path },
+  });
+}
+export function saveProjectFile(projectId, path, content) {
+  return LocationsAPI.http.put(
+    `/api/v2/projects/${projectId}/files/content/?path=${encodeURIComponent(path)}`,
+    { content }
+  );
+}
+export function lintProjectFile(projectId, content, path = '') {
+  return LocationsAPI.http.post(`/api/v2/projects/${projectId}/files/lint/`, {
+    content,
+    path,
+  });
+}
