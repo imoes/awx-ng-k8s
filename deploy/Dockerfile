@@ -31,8 +31,9 @@ COPY awx/api/urls/job_template.py ${AWX_PKG}/api/urls/job_template.py
 COPY awx/api/urls/host.py         ${AWX_PKG}/api/urls/host.py
 COPY awx/api/urls/urls.py         ${AWX_PKG}/api/urls/urls.py
 
-# ── Gepatchtes jobs.py einspielen ────────────────────────────────────────────
-COPY awx/main/tasks/jobs.py ${AWX_PKG}/main/tasks/jobs.py
+# ── Gepatchtes jobs.py + receptor.py einspielen ──────────────────────────────
+COPY awx/main/tasks/jobs.py     ${AWX_PKG}/main/tasks/jobs.py
+COPY awx/main/tasks/receptor.py ${AWX_PKG}/main/tasks/receptor.py
 
 # ── .pyc-Cache invalidieren ──────────────────────────────────────────────────
 RUN find ${AWX_PKG} -name "*.pyc" -delete && \

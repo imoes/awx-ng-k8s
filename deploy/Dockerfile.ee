@@ -1,0 +1,23 @@
+# awx-ng Execution Environment
+# Basis: offizielles AWX EE 24.6.1
+# AWX_DISABLE_CONTAINER_ISOLATION=True: ansible-runner läuft direkt in diesem Container.
+
+FROM ghcr.io/ansible/awx-ee:24.6.1
+
+USER root
+
+# Ansible Collections für Inventar-Plugins (via pip als Fallback für galaxy-API-Bug)
+# netbox.netbox nutzt pynetbox als Backend → über pip installierbar
+RUN pip install pynetbox requests && \
+    ansible-galaxy collection install \
+        netbox.netbox:3.20.0 \
+        community.general:9.6.0 \
+        --server https://galaxy.ansible.com \
+        --collections-path /usr/share/ansible/collections \
+    || ansible-galaxy collection install \
+        "https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/netbox-netbox-3.20.0.tar.gz" \
+        "https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-general-9.6.0.tar.gz" \
+        --collections-path /usr/share/ansible/collections
+
+# Receptor-Socket-Verzeichnis sicherstellen
+RUN mkdir -p /var/run/receptor && chmod 777 /var/run/receptor

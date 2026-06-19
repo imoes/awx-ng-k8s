@@ -174,9 +174,11 @@ services:
       OIDC_ENDPOINT: ${OIDC_ENDPOINT:-}
       OIDC_VERIFY_SSL: ${OIDC_VERIFY_SSL:-true}
 
-  # ── Lokaler Execution Node (Receptor + ansible-runner) ────────────────────
+  # ── Lokaler Execution Node (Receptor + ansible-runner + docker CLI) ─────────
   awx_ee:
-    image: ghcr.io/ansible/awx-ee:24.6.1
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.ee
     restart: unless-stopped
     entrypoint: ["sh", "-c", "rm -f /var/run/receptor/receptor.sock* && exec receptor --config /etc/receptor/receptor.conf"]
     hostname: awx-ng-local-ee

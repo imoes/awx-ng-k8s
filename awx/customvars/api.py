@@ -421,7 +421,7 @@ class HostAggregatedVariablesView(APIView):
                 _apply({var_name: val}, {'source': 'role_default', 'role': role_name})
 
         # 2. Group vars (Elterngruppen zuerst, dann direkte Gruppen)
-        all_groups = list(host.all_groups().order_by('name'))
+        all_groups = list(host.all_groups.order_by('name'))
         for grp in all_groups:
             gvars = grp.variables_dict or {}
             if gvars:

@@ -390,7 +390,11 @@ class AWXReceptorJob:
             execution_environment_params = self.task.build_execution_environment_params(self.task.instance, runner_params['private_data_dir'])
             self.runner_params.update(execution_environment_params)
 
-        if not settings.IS_K8S and self.work_type == 'local' and 'only_transmit_kwargs' not in self.runner_params:
+        # In docker-compose mode (AWX_DISABLE_CONTAINER_ISOLATION=True), awx_task and awx_ee
+        # do NOT share /tmp. Full file transmission through receptor is needed so that
+        # ansible-runner worker can materialise the private_data_dir at /runner inside awx_ee.
+        _disable_isolation = getattr(settings, 'AWX_DISABLE_CONTAINER_ISOLATION', False)
+        if not settings.IS_K8S and not _disable_isolation and self.work_type == 'local' and 'only_transmit_kwargs' not in self.runner_params:
             self.runner_params['only_transmit_kwargs'] = True
 
     def run(self):

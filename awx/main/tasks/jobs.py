@@ -152,11 +152,16 @@ class BaseTask(object):
         if settings.IS_K8S and instance.instance_group.is_container_group:
             return {}
 
+        # In docker-compose mode (AWX_DISABLE_CONTAINER_ISOLATION=True) the awx_ee
+        # container IS the EE — skip launching a nested container via podman/docker.
+        if getattr(settings, 'AWX_DISABLE_CONTAINER_ISOLATION', False):
+            return {}
+
         image = instance.execution_environment.image
         params = {
             "container_image": image,
             "process_isolation": True,
-            "process_isolation_executable": "podman",  # need to provide, runner enforces default via argparse
+            "process_isolation_executable": getattr(settings, 'AWX_PROCESS_ISOLATION_EXECUTABLE', 'docker'),
             "container_options": ['--user=root'],
         }
 
@@ -1566,7 +1571,8 @@ class RunInventoryUpdate(SourceControlMixin, BaseTask):
                 args.append('-i')
                 script_params = dict(hostvars=True, towervars=True)
                 source_inv_path = self.write_inventory_file(input_inventory, private_data_dir, f'hosts_{input_inventory.id}', script_params)
-                args.append(to_container_path(source_inv_path, private_data_dir))
+                _path_fn = (lambda p, d: p) if getattr(settings, 'AWX_DISABLE_CONTAINER_ISOLATION', False) else to_container_path
+                args.append(_path_fn(source_inv_path, private_data_dir))
                 # Include any facts from input inventories so they can be used in filters
                 start_fact_cache(
                     input_inventory.hosts.only(*HOST_FACTS_FIELDS),
@@ -1579,8 +1585,14 @@ class RunInventoryUpdate(SourceControlMixin, BaseTask):
         container_location = os.path.join(CONTAINER_ROOT, rel_path)
         source_location = os.path.join(private_data_dir, rel_path)
 
+        # When running without container isolation (docker-compose mode), use actual filesystem
+        # paths instead of container-relative paths (/runner/...).
+        _no_isolation = getattr(settings, 'AWX_DISABLE_CONTAINER_ISOLATION', False)
+        inv_location = source_location if _no_isolation else container_location
+        out_base = private_data_dir if _no_isolation else CONTAINER_ROOT
+
         args.append('-i')
-        args.append(container_location)
+        args.append(inv_location)
         # Added this in order to allow older versions of ansible-inventory https://github.com/ansible/ansible/pull/79596
         # limit should be usable in ansible-inventory 2.15+
         if inventory_update.limit:
@@ -1588,12 +1600,12 @@ class RunInventoryUpdate(SourceControlMixin, BaseTask):
             args.append(inventory_update.limit)
 
         args.append('--output')
-        args.append(os.path.join(CONTAINER_ROOT, 'artifacts', str(inventory_update.id), 'output.json'))
+        args.append(os.path.join(out_base, 'artifacts', str(inventory_update.id), 'output.json'))
 
         if os.path.isdir(source_location):
-            playbook_dir = container_location
+            playbook_dir = inv_location
         else:
-            playbook_dir = os.path.dirname(container_location)
+            playbook_dir = os.path.dirname(inv_location)
         args.extend(['--playbook-dir', playbook_dir])
 
         if inventory_update.verbosity:

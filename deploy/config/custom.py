@@ -61,6 +61,7 @@ PROJECTS_ROOT = '/var/lib/awx/projects/'
 # Path where ansible03 is mounted (for custom variable extraction)
 AWX_NG_ANSIBLE03_PATH = '/var/lib/awx/ansible03'
 
+
 # ── Custom app registration ───────────────────────────────────────────────────
 # awx.customvars: Rollen-Variablen, Locations/Subnets, Proxy-Site-Zuordnung
 INSTALLED_APPS = INSTALLED_APPS + ['awx.customvars']
@@ -85,6 +86,11 @@ if _oidc_key and _oidc_secret and _oidc_endpoint:
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOGGING['handlers']['console']['level'] = 'INFO'
+
+# ── Execution Environment / Container Runtime ─────────────────────────────────
+# In docker-compose: awx_ee IS der EE — kein nested Container via podman/docker nötig.
+# Deaktiviert das Starten eines EE-Containers in ansible-runner (läuft direkt im awx_ee).
+AWX_DISABLE_CONTAINER_ISOLATION = True
 
 # ── Security ─────────────────────────────────────────────────────────────────
 ALLOWED_HOSTS = ['*']
