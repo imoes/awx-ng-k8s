@@ -137,10 +137,11 @@ export function readHostJobTemplates(hostId) {
   return LocationsAPI.http.get(`/api/v2/hosts/${hostId}/run/`);
 }
 // Host ausführen — limit defaults to hostname on the server if omitted
-export function runHost(hostId, jobTemplateId, limit) {
+export function runHost(hostId, jobTemplateId, limit, locationId) {
   return LocationsAPI.http.post(`/api/v2/hosts/${hostId}/run/`, {
     job_template_id: jobTemplateId,
     ...(limit !== undefined ? { limit } : {}),
+    ...(locationId ? { location_id: locationId } : {}),
   });
 }
 // All job templates for a project (for the Run dialog on the Playbooks screen)
@@ -149,12 +150,17 @@ export function readProjectJobTemplates(projectId) {
     params: { project: projectId, page_size: 200, order_by: 'playbook' },
   });
 }
-// Launch a job template that belongs to a project with an optional limit
-export function launchProjectPlaybook(projectId, jtId, limit) {
+// Launch a job template that belongs to a project with an optional limit + location
+export function launchProjectPlaybook(projectId, jtId, limit, locationId) {
   return LocationsAPI.http.post(`/api/v2/projects/${projectId}/launch/`, {
     job_template_id: jtId,
     limit: limit || '',
+    ...(locationId ? { location_id: locationId } : {}),
   });
+}
+// All configured Locations (Sites) — used by Run modals for runner selection
+export function readLocations(params) {
+  return LocationsAPI.http.get('/api/v2/locations/', { params });
 }
 
 // ── Projekt-Datei-Editor ──────────────────────────────────────────────────────

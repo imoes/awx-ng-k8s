@@ -96,10 +96,17 @@ class RoleScanSerializer(drf_serializers.ModelSerializer):
 
 
 class LocationSerializer(drf_serializers.ModelSerializer):
+    instance_group_id = drf_serializers.SerializerMethodField()
+
+    def get_instance_group_id(self, obj):
+        from awx.main.models import InstanceGroup
+        ig = InstanceGroup.objects.filter(name=obj.name).first()
+        return ig.id if ig else None
+
     class Meta:
         model = Location
         fields = [
-            'id', 'name', 'description',
+            'id', 'name', 'description', 'instance_group_id',
             'netbox_site_id', 'netbox_site_slug',
             'source', 'last_synced_at',
             'created_at', 'updated_at',
@@ -988,6 +995,17 @@ class GroupRoleVariableDetailView(APIView):
         return Response({'var_name': var_name, 'is_overridden': False, 'removed': existed})
 
 
+def _resolve_location_instance_group(location_id):
+    """Return the AWX InstanceGroup for a Location UUID, or None."""
+    if not location_id:
+        return None
+    from awx.main.models import InstanceGroup
+    loc = Location.objects.filter(pk=location_id).first()
+    if not loc:
+        return None
+    return InstanceGroup.objects.filter(name=loc.name).first()
+
+
 class HostRunView(APIView):
     """
     GET  /api/v2/hosts/{pk}/run/  — Job-Templates die dieses Host-Inventory nutzen
@@ -1017,9 +1035,13 @@ class HostRunView(APIView):
             return Response({'error': 'job_template_id required'}, status=status.HTTP_400_BAD_REQUEST)
         jt = get_object_or_404(JobTemplate, pk=jt_id)
         limit = request.data.get('limit', host.name)
+        ig = _resolve_location_instance_group(request.data.get('location_id'))
 
         try:
             job = jt.create_unified_job(limit=limit, _eager_fields={'created_by': request.user})
+            if ig:
+                job.instance_group = ig
+                job.save(update_fields=['instance_group'])
             job.signal_start()
         except Exception as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -1032,6 +1054,28 @@ class HostRunView(APIView):
 
 # ── Runner ↔ Site-Zuordnung (Execution Node Locations) ───────────────────────
 
+def _sync_runner_instance_group(enl):
+    """Keep the AWX InstanceGroup for enl.location in sync with runner assignment.
+
+    Called after every create/update/delete of ExecutionNodeLocation.
+    Skips silently if the runner's hostname is not yet registered in AWX.
+    """
+    from awx.main.models import Instance, InstanceGroup
+    try:
+        instance = Instance.objects.get(hostname=enl.instance_hostname)
+    except Instance.DoesNotExist:
+        return
+    # Remove instance from every non-system location group first
+    system_groups = {'controlplane', 'default'}
+    for ig in instance.rampart_groups.all():
+        if ig.name not in system_groups:
+            ig.instances.remove(instance)
+    # Add to the new location group when a location is assigned
+    if enl.location_id:
+        ig, _ = InstanceGroup.objects.get_or_create(name=enl.location.name)
+        ig.instances.add(instance)
+
+
 class ExecutionNodeLocationListView(generics.ListCreateAPIView):
     """GET/POST /api/v2/execution_node_locations/"""
     serializer_class = ExecutionNodeLocationSerializer
@@ -1039,11 +1083,25 @@ class ExecutionNodeLocationListView(generics.ListCreateAPIView):
     filter_backends = [filters.SearchFilter]
     search_fields = ['instance_hostname', 'ssh_user', 'description']
 
+    def perform_create(self, serializer):
+        enl = serializer.save()
+        _sync_runner_instance_group(enl)
+
 
 class ExecutionNodeLocationDetailView(generics.RetrieveUpdateDestroyAPIView):
     """GET/PATCH/DELETE /api/v2/execution_node_locations/{id}/"""
     serializer_class = ExecutionNodeLocationSerializer
     queryset = ExecutionNodeLocation.objects.all()
+
+    def perform_update(self, serializer):
+        enl = serializer.save()
+        _sync_runner_instance_group(enl)
+
+    def perform_destroy(self, instance):
+        # Detach from instance group before deleting the record
+        instance.location_id = None
+        _sync_runner_instance_group(instance)
+        instance.delete()
 
 
 # ── Phase 5: NetBox-Reconcile für Locations/Subnets ──────────────────────────
@@ -1633,12 +1691,16 @@ class ProjectLaunchView(APIView):
     def post(self, request, pk, **kwargs):
         jt_id = request.data.get('job_template_id')
         limit = request.data.get('limit', '')
+        ig = _resolve_location_instance_group(request.data.get('location_id'))
         if not jt_id:
             return Response({'error': 'job_template_id required'}, status=status.HTTP_400_BAD_REQUEST)
         jt = get_object_or_404(JobTemplate, pk=jt_id, project_id=pk)
 
         try:
             job = jt.create_unified_job(limit=limit, _eager_fields={'created_by': request.user})
+            if ig:
+                job.instance_group = ig
+                job.save(update_fields=['instance_group'])
             job.signal_start()
         except Exception as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)

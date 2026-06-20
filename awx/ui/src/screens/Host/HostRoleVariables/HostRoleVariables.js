@@ -41,6 +41,7 @@ import {
   patchHostRoleVariable,
   readHostJobTemplates,
   readHostRoleVariables,
+  readLocations,
   readProjectRoles,
   readProjects,
   resetHostRoleVariable,
@@ -79,6 +80,8 @@ function HostRoleVariables({ host }) {
   const [jobTemplates, setJobTemplates] = useState([]);
   const [selectedJT, setSelectedJT] = useState('');
   const [runLimit, setRunLimit] = useState('');
+  const [runLocations, setRunLocations] = useState([]);
+  const [runLocationId, setRunLocationId] = useState('');
 
   // UI state
   const [busy, setBusy] = useState(false);
@@ -218,13 +221,15 @@ function HostRoleVariables({ host }) {
 
   // ── Run host ──────────────────────────────────────────────────────────────
   const openRun = async () => {
-    try {
-      const { data } = await readHostJobTemplates(hostId);
-      setJobTemplates(data.results || []);
-      setSelectedJT(data.results?.[0]?.id ? String(data.results[0].id) : '');
-    } catch {
-      setJobTemplates([]);
-    }
+    const [jtRes, locRes] = await Promise.allSettled([
+      readHostJobTemplates(hostId),
+      readLocations({ page_size: 200, order_by: 'name' }),
+    ]);
+    const jts = jtRes.status === 'fulfilled' ? jtRes.value.data.results || [] : [];
+    setJobTemplates(jts);
+    setSelectedJT(jts[0]?.id ? String(jts[0].id) : '');
+    setRunLocations(locRes.status === 'fulfilled' ? locRes.value.data.results || [] : []);
+    setRunLocationId('');
     setRunLimit(host.name);
     setRunOpen(true);
   };
@@ -232,7 +237,9 @@ function HostRoleVariables({ host }) {
   const doRun = async () => {
     setBusy(true); setErr(null); setMsg(null);
     try {
-      const { data } = await runHost(hostId, Number(selectedJT), runLimit);
+      const { data } = await runHost(
+        hostId, Number(selectedJT), runLimit, runLocationId || undefined
+      );
       setRunOpen(false);
       setMsg(`Job #${data.job_id} started — limit: ${runLimit || host.name}`);
     } catch (e) {
@@ -557,6 +564,24 @@ function HostRoleVariables({ host }) {
                 onChange={(v) => setRunLimit(typeof v === 'string' ? v : v?.target?.value ?? '')}
               />
             </FormGroup>
+            {runLocations.length > 0 && (
+              <FormGroup
+                label="Location / Runner"
+                fieldId="run-location"
+                helperText="Optional — leave empty to use any available runner"
+              >
+                <FormSelect
+                  id="run-location"
+                  value={runLocationId}
+                  onChange={(v) => setRunLocationId(v)}
+                >
+                  <FormSelectOption value="" label="— any runner —" />
+                  {runLocations.map((loc) => (
+                    <FormSelectOption key={loc.id} value={String(loc.id)} label={loc.name} />
+                  ))}
+                </FormSelect>
+              </FormGroup>
+            )}
           </Form>
           {jobTemplates.length === 0 && (
             <Alert

@@ -38,6 +38,7 @@ import {
   deleteProjectFile,
   readProjectJobTemplates,
   launchProjectPlaybook,
+  readLocations,
 } from './api';
 
 function Playbooks() {
@@ -59,6 +60,8 @@ function Playbooks() {
   const [runTemplates, setRunTemplates] = useState([]);
   const [selectedRunJT, setSelectedRunJT] = useState('');
   const [runLimit, setRunLimit] = useState('');
+  const [runLocations, setRunLocations] = useState([]);
+  const [runLocationId, setRunLocationId] = useState('');
   const [runBusy, setRunBusy] = useState(false);
   const [runMsg, setRunMsg] = useState(null);
 
@@ -138,13 +141,20 @@ function Playbooks() {
     }
   };
 
-  const openRun = (playbook) => {
+  const openRun = async (playbook) => {
     const templates = jtMap[playbook] || [];
     setRunPb(playbook);
     setRunTemplates(templates);
     setSelectedRunJT(templates[0] ? String(templates[0].id) : '');
     setRunLimit('');
+    setRunLocationId('');
     setRunMsg(null);
+    try {
+      const { data } = await readLocations({ page_size: 200, order_by: 'name' });
+      setRunLocations(data.results || []);
+    } catch {
+      setRunLocations([]);
+    }
     setRunOpen(true);
   };
 
@@ -152,7 +162,9 @@ function Playbooks() {
     if (!selectedRunJT || !projectId) return;
     setRunBusy(true);
     try {
-      const { data } = await launchProjectPlaybook(projectId, Number(selectedRunJT), runLimit);
+      const { data } = await launchProjectPlaybook(
+        projectId, Number(selectedRunJT), runLimit, runLocationId || undefined
+      );
       setRunOpen(false);
       setRunMsg(`Job #${data.job_id} started${runLimit ? ` — limit: ${runLimit}` : ''}`);
     } catch (e) {
@@ -420,6 +432,24 @@ function Playbooks() {
                 placeholder="all hosts"
               />
             </FormGroup>
+            {runLocations.length > 0 && (
+              <FormGroup
+                label="Location / Runner"
+                fieldId="run-location"
+                helperText="Optional — leave empty to use any available runner"
+              >
+                <FormSelect
+                  id="run-location"
+                  value={runLocationId}
+                  onChange={(v) => setRunLocationId(v)}
+                >
+                  <FormSelectOption value="" label="— any runner —" />
+                  {runLocations.map((loc) => (
+                    <FormSelectOption key={loc.id} value={String(loc.id)} label={loc.name} />
+                  ))}
+                </FormSelect>
+              </FormGroup>
+            )}
           </Form>
         </Modal>
       )}
