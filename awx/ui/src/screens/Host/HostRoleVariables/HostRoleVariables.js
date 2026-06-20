@@ -78,6 +78,7 @@ function HostRoleVariables({ host }) {
   const [runOpen, setRunOpen] = useState(false);
   const [jobTemplates, setJobTemplates] = useState([]);
   const [selectedJT, setSelectedJT] = useState('');
+  const [runLimit, setRunLimit] = useState('');
 
   // UI state
   const [busy, setBusy] = useState(false);
@@ -224,15 +225,16 @@ function HostRoleVariables({ host }) {
     } catch {
       setJobTemplates([]);
     }
+    setRunLimit(host.name);
     setRunOpen(true);
   };
 
   const doRun = async () => {
     setBusy(true); setErr(null); setMsg(null);
     try {
-      const { data } = await runHost(hostId, Number(selectedJT));
+      const { data } = await runHost(hostId, Number(selectedJT), runLimit);
       setRunOpen(false);
-      setMsg(`Job #${data.job_id} started — limit: ${host.name}`);
+      setMsg(`Job #${data.job_id} started — limit: ${runLimit || host.name}`);
     } catch (e) {
       setErr(e?.response?.data || e.message);
     } finally {
@@ -527,25 +529,33 @@ function HostRoleVariables({ host }) {
             </Button>,
           ]}
         >
-          <p style={{ marginBottom: 12 }}>
-            Launches the selected Job Template with <code>--limit {host.name}</code>.
-          </p>
           <Form>
-            <FormGroup label="Job Template" isRequired fieldId="run-jt">
+            <FormGroup label="Playbook / Template" isRequired fieldId="run-jt">
               <FormSelect
                 id="run-jt"
                 value={selectedJT}
                 onChange={(v) => setSelectedJT(v)}
               >
-                <FormSelectOption value="" label="— select template —" />
+                <FormSelectOption value="" label="— select —" />
                 {jobTemplates.map((jt) => (
                   <FormSelectOption
                     key={jt.id}
                     value={String(jt.id)}
-                    label={`${jt.name} (${jt.playbook})`}
+                    label={`${jt.playbook} (${jt.name})`}
                   />
                 ))}
               </FormSelect>
+            </FormGroup>
+            <FormGroup
+              label="Limit"
+              fieldId="run-limit"
+              helperText="Host/group pattern passed to Ansible as --limit"
+            >
+              <TextInput
+                id="run-limit"
+                value={runLimit}
+                onChange={(v) => setRunLimit(typeof v === 'string' ? v : v?.target?.value ?? '')}
+              />
             </FormGroup>
           </Form>
           {jobTemplates.length === 0 && (

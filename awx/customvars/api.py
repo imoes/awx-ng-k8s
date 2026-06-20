@@ -1016,9 +1016,10 @@ class HostRunView(APIView):
         if not jt_id:
             return Response({'error': 'job_template_id required'}, status=status.HTTP_400_BAD_REQUEST)
         jt = get_object_or_404(JobTemplate, pk=jt_id)
+        limit = request.data.get('limit', host.name)
 
         try:
-            job = jt.create_unified_job(limit=host.name, _eager_fields={'launched_by': request.user})
+            job = jt.create_unified_job(limit=limit, _eager_fields={'created_by': request.user})
             job.signal_start()
         except Exception as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -1618,3 +1619,31 @@ class ProjectVariableUsagesView(APIView):
             'count': len(blocks),
             'results': blocks,
         })
+
+
+class ProjectLaunchView(APIView):
+    """
+    POST /api/v2/projects/{pk}/launch/
+    Body: {"job_template_id": N, "limit": "optional-pattern"}
+
+    Launches an existing Job Template that belongs to this project with an
+    arbitrary limit override.  Uses create_unified_job() directly so the limit
+    is always honoured regardless of ask_limit_on_launch on the template.
+    """
+    def post(self, request, pk, **kwargs):
+        jt_id = request.data.get('job_template_id')
+        limit = request.data.get('limit', '')
+        if not jt_id:
+            return Response({'error': 'job_template_id required'}, status=status.HTTP_400_BAD_REQUEST)
+        jt = get_object_or_404(JobTemplate, pk=jt_id, project_id=pk)
+
+        try:
+            job = jt.create_unified_job(limit=limit, _eager_fields={'created_by': request.user})
+            job.signal_start()
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {'job_id': job.id, 'job_url': f'/api/v2/jobs/{job.id}/'},
+            status=status.HTTP_201_CREATED,
+        )

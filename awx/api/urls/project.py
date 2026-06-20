@@ -16,6 +16,7 @@ from awx.customvars.api import (
     ProjectFileLintView,
     ProjectPlaysView,
     ProjectVariableUsagesView,
+    ProjectLaunchView,
 )
 
 from awx.api.views import (
@@ -81,6 +82,8 @@ urls = [
     re_path(r'^(?P<pk>[0-9]+)/plays/$', ProjectPlaysView.as_view(), name='project_plays'),
     # awx-ng: where a role variable is defined/used across the role (grepped blocks)
     re_path(r'^(?P<pk>[0-9]+)/variable_usages/$', ProjectVariableUsagesView.as_view(), name='project_variable_usages'),
+    # awx-ng: launch a job template that belongs to this project with optional limit
+    re_path(r'^(?P<pk>[0-9]+)/launch/$', ProjectLaunchView.as_view(), name='project_launch'),
 ]
 
 __all__ = ['urls']

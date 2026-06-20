@@ -1,7 +1,7 @@
 /* eslint-disable i18next/no-literal-string */
 // awx-ng: Playbook management screen — lists a project's playbooks (recursively, from
 // AWX's playbook detection) and lazily shows each playbook's plays (target pattern,
-// roles, tags), with quick links to the editor and to creating a Job Template.
+// roles, tags). Per-playbook "Run" button appears when a matching Job Template exists.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useHistory } from 'react-router-dom';
 import {
@@ -9,13 +9,16 @@ import {
   Button,
   Card,
   CardBody,
+  Form,
   FormGroup,
   FormSelect,
   FormSelectOption,
   Label,
+  Modal,
   PageSection,
   SearchInput,
   Spinner,
+  TextInput,
   Toolbar,
   ToolbarContent,
   ToolbarItem,
@@ -29,7 +32,13 @@ import {
   Tr,
 } from '@patternfly/react-table';
 import ScreenHeader from 'components/ScreenHeader/ScreenHeader';
-import { readProjects, readProjectPlays, deleteProjectFile } from './api';
+import {
+  readProjects,
+  readProjectPlays,
+  deleteProjectFile,
+  readProjectJobTemplates,
+  launchProjectPlaybook,
+} from './api';
 
 function Playbooks() {
   const history = useHistory();
@@ -38,9 +47,20 @@ function Playbooks() {
   const [playbooks, setPlaybooks] = useState([]);
   const [expanded, setExpanded] = useState({});
   const [plays, setPlays] = useState({}); // path -> plays[] | 'loading'
+  // playbook-name → [{id, name, playbook}, ...]
+  const [jtMap, setJtMap] = useState({});
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
+
+  // Run modal state
+  const [runOpen, setRunOpen] = useState(false);
+  const [runPb, setRunPb] = useState('');
+  const [runTemplates, setRunTemplates] = useState([]);
+  const [selectedRunJT, setSelectedRunJT] = useState('');
+  const [runLimit, setRunLimit] = useState('');
+  const [runBusy, setRunBusy] = useState(false);
+  const [runMsg, setRunMsg] = useState(null);
 
   useEffect(() => {
     readProjects({ page_size: 200, order_by: 'name' }).then(({ data }) => {
@@ -56,8 +76,18 @@ function Playbooks() {
     setExpanded({});
     setPlays({});
     try {
-      const { data } = await readProjectPlays(projectId);
-      setPlaybooks(data.results || []);
+      const [playsRes, jtRes] = await Promise.all([
+        readProjectPlays(projectId),
+        readProjectJobTemplates(projectId),
+      ]);
+      setPlaybooks(playsRes.data.results || []);
+      // group job templates by playbook filename
+      const map = {};
+      for (const jt of jtRes.data.results || []) {
+        if (!map[jt.playbook]) map[jt.playbook] = [];
+        map[jt.playbook].push(jt);
+      }
+      setJtMap(map);
     } catch (e) {
       setErr(e?.response?.data || e.message);
     } finally {
@@ -68,6 +98,7 @@ function Playbooks() {
   useEffect(() => {
     load();
     setSearch('');
+    setRunMsg(null);
   }, [projectId, load]);
 
   const filtered = useMemo(() => {
@@ -104,6 +135,31 @@ function Playbooks() {
       await load();
     } catch (e) {
       setErr(e?.response?.data || e.message);
+    }
+  };
+
+  const openRun = (playbook) => {
+    const templates = jtMap[playbook] || [];
+    setRunPb(playbook);
+    setRunTemplates(templates);
+    setSelectedRunJT(templates[0] ? String(templates[0].id) : '');
+    setRunLimit('');
+    setRunMsg(null);
+    setRunOpen(true);
+  };
+
+  const doRun = async () => {
+    if (!selectedRunJT || !projectId) return;
+    setRunBusy(true);
+    try {
+      const { data } = await launchProjectPlaybook(projectId, Number(selectedRunJT), runLimit);
+      setRunOpen(false);
+      setRunMsg(`Job #${data.job_id} started${runLimit ? ` — limit: ${runLimit}` : ''}`);
+    } catch (e) {
+      setErr(e?.response?.data || e.message);
+      setRunOpen(false);
+    } finally {
+      setRunBusy(false);
     }
   };
 
@@ -162,6 +218,17 @@ function Playbooks() {
                 <pre>{JSON.stringify(err, null, 2)}</pre>
               </Alert>
             )}
+            {runMsg && (
+              <Alert
+                variant="success"
+                title={runMsg}
+                isInline
+                style={{ marginTop: 8 }}
+                actionClose={
+                  <Button variant="plain" onClick={() => setRunMsg(null)}>×</Button>
+                }
+              />
+            )}
 
             <p style={{ color: '#6a6e73', fontSize: 13, margin: '4px 0 8px' }}>
               Detected from the project (incl. subfolders like <code>playbooks/</code>).
@@ -190,14 +257,33 @@ function Playbooks() {
                           >
                             <code>{pb.playbook}</code>
                           </Button>
+                          {jtMap[pb.playbook]?.length > 0 && (
+                            <Label
+                              color="green"
+                              isCompact
+                              style={{ marginLeft: 8, verticalAlign: 'middle' }}
+                            >
+                              {jtMap[pb.playbook].length} template{jtMap[pb.playbook].length > 1 ? 's' : ''}
+                            </Label>
+                          )}
                         </Td>
                         <Td dataLabel="Actions">
                           <Button variant="link" isInline onClick={() => openInEditor(pb.playbook)}>
                             Open in editor
                           </Button>{' '}
-                          <Button variant="link" isInline onClick={createTemplate}>
-                            Create template
-                          </Button>{' '}
+                          {jtMap[pb.playbook]?.length > 0 ? (
+                            <Button
+                              variant="link"
+                              isInline
+                              onClick={() => openRun(pb.playbook)}
+                            >
+                              Run
+                            </Button>
+                          ) : (
+                            <Button variant="link" isInline onClick={createTemplate}>
+                              Create template
+                            </Button>
+                          )}{' '}
                           <Button
                             variant="link"
                             isDanger
@@ -278,6 +364,65 @@ function Playbooks() {
           </CardBody>
         </Card>
       </PageSection>
+
+      {/* ── Run modal ── */}
+      {runOpen && (
+        <Modal
+          title={`Run: ${runPb}`}
+          isOpen
+          variant="small"
+          onClose={() => setRunOpen(false)}
+          actions={[
+            <Button
+              key="run"
+              variant="primary"
+              onClick={doRun}
+              isDisabled={!selectedRunJT || runBusy}
+            >
+              {runBusy ? 'Starting…' : 'Launch'}
+            </Button>,
+            <Button key="cancel" variant="link" onClick={() => setRunOpen(false)}>
+              Cancel
+            </Button>,
+          ]}
+        >
+          <Form>
+            {runTemplates.length > 1 ? (
+              <FormGroup label="Playbook / Template" isRequired fieldId="run-jt">
+                <FormSelect
+                  id="run-jt"
+                  value={selectedRunJT}
+                  onChange={(v) => setSelectedRunJT(v)}
+                >
+                  {runTemplates.map((jt) => (
+                    <FormSelectOption
+                      key={jt.id}
+                      value={String(jt.id)}
+                      label={`${jt.playbook} (${jt.name})`}
+                    />
+                  ))}
+                </FormSelect>
+              </FormGroup>
+            ) : (
+              <p style={{ margin: '0 0 12px' }}>
+                Template: <strong>{runTemplates[0]?.name}</strong>
+              </p>
+            )}
+            <FormGroup
+              label="Limit"
+              fieldId="run-limit"
+              helperText="Optional host/group pattern — leave empty to run on all hosts"
+            >
+              <TextInput
+                id="run-limit"
+                value={runLimit}
+                onChange={(v) => setRunLimit(typeof v === 'string' ? v : v?.target?.value ?? '')}
+                placeholder="all hosts"
+              />
+            </FormGroup>
+          </Form>
+        </Modal>
+      )}
     </>
   );
 }

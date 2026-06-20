@@ -136,10 +136,24 @@ export function readProjectPlays(projectId, params) {
 export function readHostJobTemplates(hostId) {
   return LocationsAPI.http.get(`/api/v2/hosts/${hostId}/run/`);
 }
-// Host ausführen (limit=hostname)
-export function runHost(hostId, jobTemplateId) {
+// Host ausführen — limit defaults to hostname on the server if omitted
+export function runHost(hostId, jobTemplateId, limit) {
   return LocationsAPI.http.post(`/api/v2/hosts/${hostId}/run/`, {
     job_template_id: jobTemplateId,
+    ...(limit !== undefined ? { limit } : {}),
+  });
+}
+// All job templates for a project (for the Run dialog on the Playbooks screen)
+export function readProjectJobTemplates(projectId) {
+  return LocationsAPI.http.get('/api/v2/job_templates/', {
+    params: { project: projectId, page_size: 200, order_by: 'playbook' },
+  });
+}
+// Launch a job template that belongs to a project with an optional limit
+export function launchProjectPlaybook(projectId, jtId, limit) {
+  return LocationsAPI.http.post(`/api/v2/projects/${projectId}/launch/`, {
+    job_template_id: jtId,
+    limit: limit || '',
   });
 }
 
