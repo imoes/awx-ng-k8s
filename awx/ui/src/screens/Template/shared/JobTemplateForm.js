@@ -36,10 +36,10 @@ import {
   InstanceGroupsLookup,
   ProjectLookup,
   MultiCredentialsLookup,
-  ExecutionEnvironmentLookup,
 } from 'components/Lookup';
 import Popover from 'components/Popover';
-import { JobTemplatesAPI } from 'api';
+import { JobTemplatesAPI, InstanceGroupsAPI } from 'api';
+import { readLocations } from 'screens/CustomVars/api';
 import useIsMounted from 'hooks/useIsMounted';
 import LabelSelect from 'components/LabelSelect';
 import { VerbositySelectField } from 'components/VerbositySelectField';
@@ -105,11 +105,9 @@ function JobTemplateForm({
   const [, webhookCredentialMeta, webhookCredentialHelpers] =
     useField('webhook_credential');
 
-  const [
-    executionEnvironmentField,
-    executionEnvironmentMeta,
-    executionEnvironmentHelpers,
-  ] = useField('execution_environment');
+  // awx-ng: location picker state (drives instanceGroups selection)
+  const [selectedLocation, setSelectedLocation] = useState(null);
+  const [locations, setLocations] = useState([]);
 
   const {
     request: loadRelatedInstanceGroups,
@@ -135,6 +133,48 @@ function JobTemplateForm({
   useEffect(() => {
     loadRelatedInstanceGroups();
   }, [loadRelatedInstanceGroups]);
+
+  // awx-ng: load all locations for the Site picker
+  useEffect(() => {
+    readLocations({ page_size: 200, order_by: 'name' }).then(({ data }) => {
+      if (isMounted.current) setLocations(data.results || []);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // awx-ng: when the template already has instanceGroups, pre-select the matching location
+  useEffect(() => {
+    if (instanceGroupsField.value?.length === 1 && locations.length > 0) {
+      const match = locations.find(
+        (l) => l.name === instanceGroupsField.value[0].name
+      );
+      if (match && !selectedLocation) setSelectedLocation(match);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locations, instanceGroupsField.value]);
+
+  // awx-ng: when a location is selected, look up the IG with that name and wire it in
+  const handleLocationChange = useCallback(
+    async (location) => {
+      setSelectedLocation(location);
+      if (!location) {
+        instanceGroupsHelpers.setValue([]);
+        return;
+      }
+      try {
+        const { data } = await InstanceGroupsAPI.read({ name: location.name });
+        if (data.results?.length > 0) {
+          instanceGroupsHelpers.setValue([data.results[0]]);
+        } else {
+          instanceGroupsHelpers.setValue([]);
+        }
+      } catch (_) {
+        instanceGroupsHelpers.setValue([]);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [instanceGroupsHelpers]
+  );
 
   useEffect(() => {
     if (enableWebhooks) {
@@ -182,14 +222,6 @@ function JobTemplateForm({
     (value) => {
       setFieldValue('inventory', value);
       setFieldTouched('inventory', true, false);
-    },
-    [setFieldValue, setFieldTouched]
-  );
-
-  const handleExecutionEnvironmentUpdate = useCallback(
-    (value) => {
-      setFieldValue('execution_environment', value);
-      setFieldTouched('execution_environment', true, false);
     },
     [setFieldValue, setFieldTouched]
   );
@@ -313,23 +345,30 @@ function JobTemplateForm({
           validate={handleProjectValidation}
         />
 
-        <ExecutionEnvironmentLookup
-          helperTextInvalid={executionEnvironmentMeta.error}
-          isValid={
-            !executionEnvironmentMeta.touched || !executionEnvironmentMeta.error
-          }
-          onBlur={() => executionEnvironmentHelpers.setTouched()}
-          value={executionEnvironmentField.value}
-          onChange={handleExecutionEnvironmentUpdate}
-          popoverContent={helpText.executionEnvironmentForm}
-          tooltip={t`Select a project before editing the execution environment.`}
-          globallyAvailable
-          isDisabled={!projectField.value?.id}
-          projectId={projectField.value?.id}
-          promptId="template-ask-execution-environment-on-launch"
-          promptName="ask_execution_environment_on_launch"
-          isPromptableField
-        />
+        {/* awx-ng: Location / Site picker — replaces Execution Environment (unused with isolation disabled) */}
+        <FormGroup fieldId="template-location" label={t`Site / Runner`}>
+          <AnsibleSelect
+            id="template-location"
+            value={selectedLocation?.id ?? ''}
+            data={[
+              { value: '', key: '', label: t`Any (default runner)`, isDisabled: false },
+              ...locations.map((l) => ({
+                value: l.id,
+                key: l.id,
+                label: l.name,
+                isDisabled: false,
+              })),
+            ]}
+            onChange={(_, value) => {
+              if (!value) {
+                handleLocationChange(null);
+              } else {
+                const loc = locations.find((l) => l.id === parseInt(value, 10));
+                handleLocationChange(loc || null);
+              }
+            }}
+          />
+        </FormGroup>
 
         {projectField.value?.allow_override && (
           <FieldWithPrompt
@@ -514,15 +553,18 @@ function JobTemplateForm({
               />
             </FieldWithPrompt>
             <FormFullWidthLayout>
-              <InstanceGroupsLookup
-                value={instanceGroupsField.value}
-                onChange={(value) => instanceGroupsHelpers.setValue(value)}
-                tooltip={helpText.instanceGroups}
-                fieldName="instanceGroups"
-                promptId="template-ask-instance-groups-on-launch"
-                promptName="ask_instance_groups_on_launch"
-                isPromptableField
-              />
+              {/* awx-ng: IG is auto-set by the Site picker above; hide when a location is active */}
+              {!selectedLocation && (
+                <InstanceGroupsLookup
+                  value={instanceGroupsField.value}
+                  onChange={(value) => instanceGroupsHelpers.setValue(value)}
+                  tooltip={helpText.instanceGroups}
+                  fieldName="instanceGroups"
+                  promptId="template-ask-instance-groups-on-launch"
+                  promptName="ask_instance_groups_on_launch"
+                  isPromptableField
+                />
+              )}
               <FieldWithPrompt
                 fieldId="template-tags"
                 label={t`Job Tags`}

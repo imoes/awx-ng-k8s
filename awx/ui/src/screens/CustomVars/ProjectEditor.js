@@ -18,9 +18,11 @@ import {
   FormSelect,
   FormSelectOption,
   Label,
+  Modal,
   PageSection,
   Spinner,
   Text,
+  TextInput,
   TextVariants,
   Title,
 } from '@patternfly/react-core';
@@ -37,10 +39,12 @@ import {
 import { useLocation } from 'react-router-dom';
 import ScreenHeader from 'components/ScreenHeader/ScreenHeader';
 import {
+  deleteProjectFile,
   listProjectFiles,
   lintProjectFile,
   readProjectFile,
   readProjects,
+  renameProjectFile,
   saveProjectFile,
 } from './api';
 
@@ -57,7 +61,7 @@ function FileIcon({ suffix }) {
   return <span style={{ marginRight: 4, fontSize: 11, color: '#6a6e73' }}>·</span>;
 }
 
-function FileTreeNode({ projectId, entry, depth = 0, onSelect, selectedPath, dirtyPath }) {
+function FileTreeNode({ projectId, entry, depth = 0, onSelect, onContextMenu, selectedPath, dirtyPath }) {
   const [open, setOpen] = useState(false);
   const [children, setChildren] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -89,6 +93,7 @@ function FileTreeNode({ projectId, entry, depth = 0, onSelect, selectedPath, dir
     <div>
       <div
         onClick={toggle}
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(entry, e); }}
         style={{
           paddingLeft: indent + 8,
           paddingTop: 3,
@@ -135,6 +140,7 @@ function FileTreeNode({ projectId, entry, depth = 0, onSelect, selectedPath, dir
           entry={child}
           depth={depth + 1}
           onSelect={onSelect}
+          onContextMenu={onContextMenu}
           selectedPath={selectedPath}
           dirtyPath={dirtyPath}
         />
@@ -143,7 +149,7 @@ function FileTreeNode({ projectId, entry, depth = 0, onSelect, selectedPath, dir
   );
 }
 
-function FileTree({ projectId, onSelect, selectedPath, dirtyPath }) {
+function FileTree({ projectId, onSelect, onContextMenu, selectedPath, dirtyPath, refreshKey }) {
   const [roots, setRoots] = useState(null);
   const [err, setErr] = useState(null);
 
@@ -153,7 +159,7 @@ function FileTree({ projectId, onSelect, selectedPath, dirtyPath }) {
     listProjectFiles(projectId, '')
       .then(({ data }) => setRoots(data.entries || []))
       .catch((e) => setErr(e?.response?.data?.detail || e.message));
-  }, [projectId]);
+  }, [projectId, refreshKey]);
 
   if (err) return <p style={{ color: 'red', padding: 8, fontSize: 12 }}>{err}</p>;
   if (!projectId) return <p style={{ color: '#6a6e73', padding: 8, fontSize: 12 }}>Projekt wählen…</p>;
@@ -169,6 +175,7 @@ function FileTree({ projectId, onSelect, selectedPath, dirtyPath }) {
           entry={entry}
           depth={0}
           onSelect={onSelect}
+          onContextMenu={onContextMenu}
           selectedPath={selectedPath}
           dirtyPath={dirtyPath}
         />
@@ -288,6 +295,11 @@ export default function ProjectEditor() {
   const [err, setErr] = useState(null);
   const [msg, setMsg] = useState(null);
 
+  // awx-ng: context menu + file operations
+  const [contextMenu, setContextMenu] = useState(null); // { x, y, entry }
+  const [opModal, setOpModal] = useState(null); // { type: 'rename'|'newfile'|'newfolder'|'duplicate', entry, value }
+  const [treeKey, setTreeKey] = useState(0); // increment to force tree reload
+
   const location = useLocation();
   const lintTimer = useRef(null);
   const deeplinkDone = useRef(false);
@@ -396,6 +408,68 @@ export default function ProjectEditor() {
       setSaving(false);
     }
   }, [projectId, selectedFile, content, dirty]);
+
+  // awx-ng: file-tree context-menu operations
+  const closeCtx = () => setContextMenu(null);
+
+  const handleContextMenu = useCallback((entry, e) => {
+    setContextMenu({ x: e.clientX, y: e.clientY, entry });
+  }, []);
+
+  const runOp = async () => {
+    if (!opModal) return;
+    const { type, entry, value } = opModal;
+    setOpModal(null);
+    setErr(null);
+    try {
+      if (type === 'rename') {
+        const dir = entry.path.includes('/')
+          ? entry.path.substring(0, entry.path.lastIndexOf('/') + 1)
+          : '';
+        await renameProjectFile(projectId, entry.path, dir + value.trim());
+      } else if (type === 'newfile') {
+        const parentPath = entry.type === 'dir' ? entry.path : entry.path.substring(0, entry.path.lastIndexOf('/'));
+        const newPath = `${parentPath}/${value.trim()}`;
+        await saveProjectFile(projectId, newPath, '');
+        const { data } = await readProjectFile(projectId, newPath);
+        setSelectedFile({ path: newPath, name: value.trim() });
+        setContent(data.content);
+        setSavedContent(data.content);
+      } else if (type === 'newfolder') {
+        const parentPath = entry.type === 'dir' ? entry.path : entry.path.substring(0, entry.path.lastIndexOf('/'));
+        await saveProjectFile(projectId, `${parentPath}/${value.trim()}/.gitkeep`, '');
+      } else if (type === 'duplicate') {
+        const dir = entry.path.includes('/')
+          ? entry.path.substring(0, entry.path.lastIndexOf('/') + 1)
+          : '';
+        const { data: src } = await readProjectFile(projectId, entry.path);
+        await saveProjectFile(projectId, dir + value.trim(), src.content);
+      }
+      setMsg(`Done: ${type} — ${value.trim()}`);
+      setTimeout(() => setMsg(null), 4000);
+      setTreeKey((k) => k + 1);
+    } catch (e) {
+      setErr(e?.response?.data?.detail || e.message);
+    }
+  };
+
+  const handleDelete = async (entry) => {
+    closeCtx();
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Delete "${entry.path}"?`)) return;
+    setErr(null);
+    try {
+      await deleteProjectFile(projectId, entry.path);
+      if (selectedFile?.path === entry.path || selectedFile?.path?.startsWith(entry.path + '/')) {
+        setSelectedFile(null);
+        setContent('');
+        setSavedContent('');
+      }
+      setTreeKey((k) => k + 1);
+    } catch (e) {
+      setErr(e?.response?.data?.detail || e.message);
+    }
+  };
 
   // Browser-Tab schließen warnen bei ungespeicherten Änderungen
   useEffect(() => {
@@ -506,8 +580,10 @@ export default function ProjectEditor() {
               <FileTree
                 projectId={projectId}
                 onSelect={openFile}
+                onContextMenu={handleContextMenu}
                 selectedPath={selectedFile?.path}
                 dirtyPath={dirty ? selectedFile?.path : null}
+                refreshKey={treeKey}
               />
             </div>
 
@@ -553,6 +629,113 @@ export default function ProjectEditor() {
           </CardBody>
         </Card>
       </PageSection>
+
+      {/* ── Context menu ── */}
+      {contextMenu && (
+        <>
+          {/* Invisible overlay to catch outside-clicks */}
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
+            onClick={closeCtx}
+            onContextMenu={(e) => { e.preventDefault(); closeCtx(); }}
+          />
+          <div
+            style={{
+              position: 'fixed',
+              top: contextMenu.y,
+              left: contextMenu.x,
+              zIndex: 9999,
+              background: '#fff',
+              border: '1px solid #d2d2d2',
+              borderRadius: 4,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              minWidth: 160,
+              padding: '4px 0',
+            }}
+          >
+            {contextMenu.entry.type === 'dir' ? (
+              <>
+                <CtxItem label="New file here" onClick={() => { closeCtx(); setOpModal({ type: 'newfile', entry: contextMenu.entry, value: '' }); }} />
+                <CtxItem label="New folder here" onClick={() => { closeCtx(); setOpModal({ type: 'newfolder', entry: contextMenu.entry, value: '' }); }} />
+                <CtxDivider />
+                <CtxItem label="Rename" onClick={() => { closeCtx(); setOpModal({ type: 'rename', entry: contextMenu.entry, value: contextMenu.entry.name }); }} />
+                <CtxItem label="Delete folder" danger onClick={() => handleDelete(contextMenu.entry)} />
+              </>
+            ) : (
+              <>
+                <CtxItem label="Rename" onClick={() => { closeCtx(); setOpModal({ type: 'rename', entry: contextMenu.entry, value: contextMenu.entry.name }); }} />
+                <CtxItem label="Duplicate" onClick={() => { closeCtx(); const n = contextMenu.entry.name; const dot = n.lastIndexOf('.'); const dupName = dot > 0 ? `${n.slice(0, dot)}-copy${n.slice(dot)}` : `${n}-copy`; setOpModal({ type: 'duplicate', entry: contextMenu.entry, value: dupName }); }} />
+                <CtxDivider />
+                <CtxItem label="Delete" danger onClick={() => handleDelete(contextMenu.entry)} />
+              </>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ── File-operation modal (rename / new file / new folder / duplicate) ── */}
+      {opModal && (
+        <Modal
+          title={
+            opModal.type === 'rename' ? `Rename: ${opModal.entry.name}` :
+            opModal.type === 'newfile' ? 'New file' :
+            opModal.type === 'newfolder' ? 'New folder' :
+            `Duplicate: ${opModal.entry.name}`
+          }
+          isOpen
+          variant="small"
+          onClose={() => setOpModal(null)}
+          actions={[
+            <Button
+              key="ok"
+              variant="primary"
+              isDisabled={!opModal.value.trim()}
+              onClick={runOp}
+            >
+              {opModal.type === 'rename' ? 'Rename' : opModal.type === 'duplicate' ? 'Duplicate' : 'Create'}
+            </Button>,
+            <Button key="cancel" variant="link" onClick={() => setOpModal(null)}>
+              Cancel
+            </Button>,
+          ]}
+        >
+          <TextInput
+            autoFocus
+            value={opModal.value}
+            onChange={(v) => setOpModal({ ...opModal, value: typeof v === 'string' ? v : v?.target?.value ?? '' })}
+            onKeyDown={(e) => { if (e.key === 'Enter' && opModal.value.trim()) runOp(); if (e.key === 'Escape') setOpModal(null); }}
+            placeholder={
+              opModal.type === 'newfile' ? 'filename.yml' :
+              opModal.type === 'newfolder' ? 'folder-name' :
+              'new-name'
+            }
+          />
+        </Modal>
+      )}
     </>
   );
+}
+
+// ── Small context-menu helper components ──────────────────────────────────────
+
+function CtxItem({ label, onClick, danger }) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        padding: '6px 16px',
+        fontSize: 13,
+        cursor: 'pointer',
+        color: danger ? '#c9190b' : '#151515',
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = '#f0f0f0'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+    >
+      {label}
+    </div>
+  );
+}
+
+function CtxDivider() {
+  return <div style={{ borderTop: '1px solid #e8e8e8', margin: '2px 0' }} />;
 }

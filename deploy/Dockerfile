@@ -44,6 +44,9 @@ COPY custom/ui-build/static/js/          /var/lib/awx/public/static/js/
 COPY custom/ui-build/static/css/         /var/lib/awx/public/static/css/
 COPY custom/ui-build/static/media/       /var/lib/awx/public/static/media/
 
+# ── watchdog für den Filesystem-Watcher (awx_task) ───────────────────────────
+RUN /var/lib/awx/venv/awx/bin/pip install --no-cache-dir watchdog==4.0.2
+
 # ── .pyc-Cache invalidieren ──────────────────────────────────────────────────
 RUN find ${AWX_PKG} -name "*.pyc" -delete && \
     find ${AWX_PKG} -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true

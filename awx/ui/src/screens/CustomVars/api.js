@@ -173,6 +173,13 @@ export function readLocations(params) {
   return LocationsAPI.http.get('/api/v2/locations/', { params });
 }
 
+export function renameProjectFile(projectId, fromPath, toPath) {
+  return LocationsAPI.http.post(`/api/v2/projects/${projectId}/files/rename/`, {
+    from_path: fromPath,
+    to_path: toPath,
+  });
+}
+
 // ── Projekt-Datei-Editor ──────────────────────────────────────────────────────
 export function listProjectFiles(projectId, path = '') {
   return LocationsAPI.http.get(`/api/v2/projects/${projectId}/files/`, {

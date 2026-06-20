@@ -1549,6 +1549,69 @@ class ProjectFileLintView(APIView):
         return Response({'valid': True, 'errors': errors})
 
 
+class ProjectFileRenameView(APIView):
+    """
+    POST /api/v2/projects/{pk}/files/rename/
+    Body: {"from_path": "roles/img_docker", "to_path": "roles/img_docker2"}
+    Renames or moves a file or directory within the project.
+    Updates DB role records when a role directory is renamed.
+    """
+    def post(self, request, pk, **kwargs):
+        if not request.user.is_superuser:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Only superusers may rename project files.')
+
+        project_path = _get_project_path(pk)
+        from_rel = (request.data.get('from_path') or '').strip()
+        to_rel = (request.data.get('to_path') or '').strip()
+        if not from_rel or not to_rel:
+            return Response({'detail': 'from_path and to_path are required.'}, status=400)
+
+        from_abs = _safe_resolve(project_path, from_rel)
+        to_abs = _safe_resolve(project_path, to_rel)
+
+        if not from_abs.exists():
+            return Response({'detail': 'Source not found.'}, status=404)
+        if to_abs.exists():
+            return Response({'detail': 'Target already exists.'}, status=409)
+
+        repo = project_path.resolve()
+
+        # git mv; fall back to shutil.move if not tracked
+        git_mv = subprocess.run(
+            ['git', 'mv', str(from_abs), str(to_abs)],
+            cwd=str(repo), capture_output=True, timeout=15,
+        )
+        if git_mv.returncode != 0:
+            to_abs.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(from_abs), str(to_abs))
+
+        try:
+            subprocess.run(
+                ['git', 'commit', '-m', f'awx-ng editor: rename {from_rel} → {to_rel}',
+                 '--author', f'{request.user.username} <awx-ng@localhost>'],
+                cwd=str(repo), capture_output=True, timeout=10,
+            )
+        except Exception:
+            pass
+
+        # When a role directory is renamed: update all DB records
+        project_id_int = int(pk)
+        try:
+            from_parts = from_abs.relative_to(project_path).parts
+            to_parts = to_abs.relative_to(project_path).parts
+        except ValueError:
+            from_parts = to_parts = ()
+        if (len(from_parts) == 2 and from_parts[0] == 'roles' and
+                len(to_parts) == 2 and to_parts[0] == 'roles'):
+            old_role, new_role = from_parts[1], to_parts[1]
+            RoleVariable.objects.filter(project_id=project_id_int, role_name=old_role).update(role_name=new_role)
+            RoleTag.objects.filter(project_id=project_id_int, role_name=old_role).update(role_name=new_role)
+            RoleHandler.objects.filter(project_id=project_id_int, role_name=old_role).update(role_name=new_role)
+
+        return Response({'renamed': True, 'from_path': from_rel, 'to_path': to_rel})
+
+
 def _extract_plays(content):
     """Parse a playbook's YAML and return per-play metadata (hosts/roles/tags)."""
     import yaml as _yaml

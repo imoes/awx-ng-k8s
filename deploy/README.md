@@ -11,10 +11,12 @@ Based on [AWX 24.6.1](https://github.com/ansible/awx) (Apache 2.0).
 | Role variable extraction | ✗ | ✓ Scanned automatically after every git sync |
 | Per-host aggregated variables | ✗ | ✓ Merged view: role defaults → group vars → host vars |
 | Survey generation from roles | ✗ | ✓ One click → survey spec from role defaults |
-| Location/Subnet management | ✗ | ✓ Sites + subnets, NetBox reconcile |
+| Location/Site management | ✗ | ✓ Sites + SSH keys per site, NetBox reconcile |
 | Root password hashing | ✗ | ✓ sha512crypt, stored in host vars |
 | NetBox integration | ✗ | ✓ Location reconcile, inventory source ready |
 | SSO / Keycloak | optional | ✓ OIDC preconfigured via env vars |
+
+Vollständige Schritt-für-Schritt-Dokumentation: **[WORKFLOW.md](WORKFLOW.md)**
 
 ## Quickstart
 
@@ -133,7 +135,7 @@ POST /api/v2/tools/hash_password/                  # sha512crypt-Hash
 
 ```
 GET  /api/v2/locations/               # alle Standorte
-GET  /api/v2/locations/{id}/          # Detail + Subnetze
+GET  /api/v2/locations/{id}/          # Location detail
 POST /api/v2/locations/reconcile/     # Abgleich mit NetBox
 ```
 

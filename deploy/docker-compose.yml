@@ -173,6 +173,7 @@ services:
       OIDC_SECRET: ${OIDC_SECRET:-}
       OIDC_ENDPOINT: ${OIDC_ENDPOINT:-}
       OIDC_VERIFY_SSL: ${OIDC_VERIFY_SSL:-true}
+      AWX_NG_WATCH_PROJECTS: "true"
 
   # ── Lokaler Execution Node (Receptor + ansible-runner + docker CLI) ─────────
   awx_ee:

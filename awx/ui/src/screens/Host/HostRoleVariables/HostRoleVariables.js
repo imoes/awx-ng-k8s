@@ -20,7 +20,6 @@ import {
   Label,
   Modal,
   SearchInput,
-  TextArea,
   TextInput,
   Title,
 } from '@patternfly/react-core';
@@ -35,6 +34,10 @@ import {
 import yaml from 'js-yaml';
 import { object } from 'prop-types';
 import { HostsAPI } from 'api';
+import CodeEditor from 'components/CodeEditor';
+import MultiButtonToggle from 'components/MultiButtonToggle';
+import { YAML_MODE, JSON_MODE } from 'components/CodeEditor/constants';
+import { yamlToJson, jsonToYaml, isJsonString } from 'util/yaml';
 import {
   assignHostRoles,
   cloneHost,
@@ -69,6 +72,7 @@ function HostRoleVariables({ host }) {
   const [editingVar, setEditingVar] = useState(null);
   const [editName, setEditName] = useState('');
   const [editText, setEditText] = useState('');
+  const [editMode, setEditMode] = useState(YAML_MODE);
 
   // Clone
   const [cloneOpen, setCloneOpen] = useState(false);
@@ -171,8 +175,20 @@ function HostRoleVariables({ host }) {
   const openEdit = (v) => {
     setEditingVar(v);
     setEditName(v.var_name);
-    setEditText(stringify(v.value));
+    const valueStr = stringify(v.value);
+    setEditText(valueStr);
+    setEditMode(isJsonString(valueStr) ? JSON_MODE : YAML_MODE);
     setErr(null);
+  };
+
+  const handleEditModeChange = (newMode) => {
+    try {
+      const converted = newMode === YAML_MODE ? jsonToYaml(editText) : yamlToJson(editText);
+      setEditText(converted);
+    } catch (_) {
+      // keep text as-is on parse error, just switch the highlight mode
+    }
+    setEditMode(newMode);
   };
 
   const openAddFreeVar = () => {
@@ -673,13 +689,21 @@ function HostRoleVariables({ host }) {
               </code>
             </p>
           )}
-          <TextArea
-            aria-label="Variable value"
+          {/* awx-ng: YAML/JSON editor with toggle — replaces plain TextArea */}
+          <div style={{ marginBottom: 6 }}>
+            <MultiButtonToggle
+              buttons={[[YAML_MODE, 'YAML'], [JSON_MODE, 'JSON']]}
+              value={editMode}
+              onChange={handleEditModeChange}
+              name="editVarMode"
+            />
+          </div>
+          <CodeEditor
+            id="edit-var-value"
+            mode={editMode}
             value={editText}
-            onChange={(v) => setEditText(typeof v === 'string' ? v : v?.target?.value ?? '')}
+            onChange={(v) => setEditText(v)}
             rows={20}
-            resizeOrientation="vertical"
-            style={{ fontFamily: 'monospace' }}
           />
           <p style={{ marginTop: 8, color: '#6a6e73' }}>
             JSON is parsed; invalid JSON is stored as a raw string.
