@@ -6,7 +6,6 @@ import Applications from 'screens/Application';
 import CredentialTypes from 'screens/CredentialType';
 import Credentials from 'screens/Credential';
 import Dashboard from 'screens/Dashboard';
-import ExecutionEnvironments from 'screens/ExecutionEnvironment';
 import Hosts from 'screens/Host';
 import Instances from 'screens/Instances';
 import InstanceGroups from 'screens/InstanceGroup';
@@ -186,11 +185,6 @@ function getRouteConfig(userProfile = {}) {
           title: <Trans>Applications</Trans>,
           path: '/applications',
           screen: Applications,
-        },
-        {
-          title: <Trans>Execution Environments</Trans>,
-          path: '/execution_environments',
-          screen: ExecutionEnvironments,
         },
         {
           title: <Trans>Topology View</Trans>,

@@ -1,0 +1,26 @@
+# awx-ng Remote Execution Node
+# Same Ansible toolchain as local awx_ee — only the Receptor config differs
+# (proxy dials out via tcp-peer instead of listening on port 2222).
+#
+# Build context must include deploy/collections/ tarballs.
+# On the remote host:
+#   scp deploy/Dockerfile.proxy deploy/docker-compose.proxy.yml \
+#       deploy/scripts/setup-proxy.sh deploy/collections/*.tar.gz \
+#       user@host:~/awx-runner/collections/
+#   docker compose -f docker-compose.proxy.yml build
+
+FROM ghcr.io/ansible/awx-ee:24.6.1
+
+USER root
+
+COPY collections/netbox-netbox-3.20.0.tar.gz     /tmp/collections/
+COPY collections/community-general-10.7.0.tar.gz  /tmp/collections/
+
+RUN pip install pynetbox requests && \
+    ansible-galaxy collection install \
+        /tmp/collections/netbox-netbox-3.20.0.tar.gz \
+        /tmp/collections/community-general-10.7.0.tar.gz \
+        --collections-path /usr/share/ansible/collections && \
+    rm -rf /tmp/collections
+
+RUN mkdir -p /var/run/receptor && chmod 777 /var/run/receptor

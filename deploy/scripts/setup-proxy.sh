@@ -39,6 +39,7 @@ sed \
 echo "receptor.conf written: node='$NODE_ID' → $CONTROL_HOST:$CONTROL_PORT"
 echo ""
 echo "Next steps:"
+echo "  0.  docker compose -f docker-compose.proxy.yml build   # once — builds image with Ansible collections"
 echo "  1.  docker compose -f docker-compose.proxy.yml up -d"
 echo "  2.  AWX UI → Administration → Runners → Register runner (hostname=$NODE_ID)"
 echo "  3.  Click 'health check' in the UI — Capacity appears once the mesh link is up"

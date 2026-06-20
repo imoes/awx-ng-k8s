@@ -1,7 +1,8 @@
 # awx-ng Remote Execution Node — Docker Compose template
 #
-# Deploy this file (+ receptor.conf) on each remote runner host.
+# Deploy this file + Dockerfile.proxy + collections/ tarballs on each remote runner host.
 # Generate receptor.conf first with: ./scripts/setup-proxy.sh <node-id> <control-host>
+# Then build the image:           docker compose -f docker-compose.proxy.yml build
 #
 # Corporate HTTP proxy: add a docker-compose.override.yml (gitignored) with
 # the HTTP_PROXY / HTTPS_PROXY environment variables — same pattern as the
@@ -11,7 +12,9 @@ name: awx-runner
 
 services:
   awx_runner:
-    image: ghcr.io/ansible/awx-ee:24.6.1
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
     restart: unless-stopped
     entrypoint:
       - /bin/sh
