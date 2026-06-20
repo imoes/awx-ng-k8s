@@ -1,5 +1,5 @@
 /* eslint-disable i18next/no-literal-string */
-// awx-ng: Locations (sites) + subnets, searchable list, with NetBox reconcile.
+// awx-ng: Locations (sites) — searchable list with NetBox reconcile.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Button,
@@ -30,8 +30,6 @@ import ScreenHeader from 'components/ScreenHeader/ScreenHeader';
 import useRequest from 'hooks/useRequest';
 import {
   LocationsAPI,
-  readSubnets,
-  createSubnet,
   reconcileLocations,
 } from './api';
 
@@ -39,7 +37,6 @@ function Locations() {
   const [isCreateOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
-  const [subnetFor, setSubnetFor] = useState(null);
   const [reconcileResult, setReconcileResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState(null);
@@ -64,7 +61,6 @@ function Locations() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    // only start filtering from the 2nd character onwards
     if (q.length < 2) return locations;
     return locations.filter(
       (l) =>
@@ -160,8 +156,7 @@ function Locations() {
                 }
               >
                 New locations: {reconcileResult.created_locations?.length ?? 0},
-                new subnets: {reconcileResult.created_subnets?.length ?? 0}, drift:{' '}
-                {reconcileResult.drift?.length ?? 0}
+                drift: {reconcileResult.drift?.length ?? 0}
               </Alert>
             )}
 
@@ -177,7 +172,6 @@ function Locations() {
                     <Th>Description</Th>
                     <Th>Source</Th>
                     <Th>NetBox slug</Th>
-                    <Th>Subnets</Th>
                   </Tr>
                 </Thead>
                 <Tbody>
@@ -189,15 +183,6 @@ function Locations() {
                         <Label isCompact>{loc.source}</Label>
                       </Td>
                       <Td dataLabel="NetBox slug">{loc.netbox_site_slug}</Td>
-                      <Td dataLabel="Subnets">
-                        <Button
-                          variant="link"
-                          isInline
-                          onClick={() => setSubnetFor(loc)}
-                        >
-                          manage
-                        </Button>
-                      </Td>
                     </Tr>
                   ))}
                 </Tbody>
@@ -243,120 +228,7 @@ function Locations() {
           </FormGroup>
         </Form>
       </Modal>
-
-      {subnetFor && (
-        <SubnetModal location={subnetFor} onClose={() => setSubnetFor(null)} />
-      )}
     </>
-  );
-}
-
-function SubnetModal({ location, onClose }) {
-  const [subnets, setSubnets] = useState([]);
-  const [cidr, setCidr] = useState('');
-  const [vlan, setVlan] = useState('');
-  const [gateway, setGateway] = useState('');
-  const [err, setErr] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await readSubnets(location.id);
-      setSubnets(data.results || data);
-    } catch (e) {
-      setErr(e?.response?.data || e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [location.id]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const add = async () => {
-    setErr(null);
-    try {
-      await createSubnet(location.id, {
-        cidr,
-        vlan: vlan ? Number(vlan) : null,
-        gateway,
-      });
-      setCidr('');
-      setVlan('');
-      setGateway('');
-      load();
-    } catch (e) {
-      setErr(e?.response?.data || e.message);
-    }
-  };
-
-  return (
-    <Modal
-      title={`Subnets — ${location.name}`}
-      isOpen
-      variant="medium"
-      onClose={onClose}
-      actions={[
-        <Button key="close" variant="primary" onClick={onClose}>
-          Close
-        </Button>,
-      ]}
-    >
-      {err && (
-        <Alert variant="danger" title="Error" isInline>
-          <pre>{JSON.stringify(err, null, 2)}</pre>
-        </Alert>
-      )}
-      {loading ? (
-        <Spinner />
-      ) : (
-        <TableComposable variant="compact" aria-label="Subnets">
-          <Thead>
-            <Tr>
-              <Th>CIDR</Th>
-              <Th>VLAN</Th>
-              <Th>Gateway</Th>
-              <Th>Source</Th>
-            </Tr>
-          </Thead>
-          <Tbody>
-            {subnets.map((s) => (
-              <Tr key={s.id}>
-                <Td dataLabel="CIDR">{s.cidr}</Td>
-                <Td dataLabel="VLAN">{s.vlan}</Td>
-                <Td dataLabel="Gateway">{s.gateway}</Td>
-                <Td dataLabel="Source">{s.source}</Td>
-              </Tr>
-            ))}
-          </Tbody>
-        </TableComposable>
-      )}
-      <Form style={{ marginTop: 16 }}>
-        <FormGroup label="CIDR" isRequired fieldId="sub-cidr">
-          <TextInput
-            id="sub-cidr"
-            placeholder="10.32.188.0/24"
-            value={cidr}
-            onChange={(v) => setCidr(v)}
-          />
-        </FormGroup>
-        <FormGroup label="VLAN" fieldId="sub-vlan">
-          <TextInput id="sub-vlan" value={vlan} onChange={(v) => setVlan(v)} />
-        </FormGroup>
-        <FormGroup label="Gateway" fieldId="sub-gw">
-          <TextInput
-            id="sub-gw"
-            value={gateway}
-            onChange={(v) => setGateway(v)}
-          />
-        </FormGroup>
-        <Button variant="secondary" onClick={add} isDisabled={!cidr}>
-          Add subnet
-        </Button>
-      </Form>
-    </Modal>
   );
 }
 

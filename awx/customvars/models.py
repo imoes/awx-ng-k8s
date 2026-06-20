@@ -3,7 +3,7 @@ awx-ng Custom Models
 
 Drei Bereiche:
   1. Rollen-Variablen (extraction cache)
-  2. Locations + Subnets (Foreman-style)
+  2. Locations (Foreman-style, NetBox-reconcileable)
   3. Proxy-Site-Zuordnung (Execution Nodes ↔ Locations)
 """
 
@@ -124,7 +124,7 @@ class RoleTag(models.Model):
         return f"{self.role_name}:{self.tag_name} ({self.task_count}x)"
 
 
-# ── 2. Locations + Subnets (Foreman-Stil) ────────────────────────────────────
+# ── 2. Locations (Foreman-Stil) ──────────────────────────────────────────────
 
 class Location(models.Model):
     """
@@ -158,28 +158,6 @@ class Location(models.Model):
         return self.name
 
 
-class Subnet(models.Model):
-    """
-    Subnetz/CIDR pro Location. Mapped auf NetBox Prefix.
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    location = models.ForeignKey(Location, on_delete=models.CASCADE, related_name="subnets")
-    cidr = models.CharField(max_length=64)          # z.B. "10.32.188.0/24" — validiert per API
-    vlan = models.IntegerField(null=True, blank=True)
-    gateway = models.CharField(max_length=64, blank=True)
-    netbox_prefix_id = models.IntegerField(null=True, blank=True, db_index=True)
-    source = models.CharField(max_length=15, default="local")
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        unique_together = [("location", "cidr")]
-        ordering = ["cidr"]
-        verbose_name = "Subnet"
-
-    def __str__(self):
-        return f"{self.cidr} @ {self.location.name}"
-
-
 # ── 3. Proxy ↔ Location-Zuordnung ────────────────────────────────────────────
 
 class ExecutionNodeLocation(models.Model):
@@ -203,6 +181,8 @@ class ExecutionNodeLocation(models.Model):
     # ── Site-spezifische Ansible-Verbindungsparameter ──────────────────────
     ssh_user = models.CharField(max_length=255, blank=True)
     ssh_credential_id = models.IntegerField(null=True, blank=True)  # AWX Credential pk (Machine/SSH)
+    ssh_private_key = models.TextField(blank=True, default='',
+        help_text='Raw SSH private key (PEM/OpenSSH) for this site')
     ansible_cfg = models.TextField(blank=True)                       # roher ansible.cfg-Inhalt
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

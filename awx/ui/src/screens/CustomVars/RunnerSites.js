@@ -99,6 +99,7 @@ function RunnerSites() {
         location: a?.location || '',
         ssh_user: a?.ssh_user || '',
         ssh_credential_id: a?.ssh_credential_id ?? '',
+        ssh_private_key: a?.ssh_private_key || '',
         ansible_cfg: a?.ansible_cfg || '',
       },
     });
@@ -119,6 +120,7 @@ function RunnerSites() {
       ssh_credential_id: form.ssh_credential_id
         ? Number(form.ssh_credential_id)
         : null,
+      ssh_private_key: form.ssh_private_key,
       ansible_cfg: form.ansible_cfg,
     };
     try {
@@ -431,6 +433,16 @@ function RunnerSites() {
                 id="rs-cred"
                 value={editing.form.ssh_credential_id}
                 onChange={upd('ssh_credential_id')}
+              />
+            </FormGroup>
+            <FormGroup label="SSH private key (id_rsa / PEM)" fieldId="rs-key">
+              <TextArea
+                id="rs-key"
+                value={editing.form.ssh_private_key}
+                onChange={upd('ssh_private_key')}
+                rows={8}
+                resizeOrientation="vertical"
+                placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----'}
               />
             </FormGroup>
             <FormGroup label="ansible.cfg (for this site)" fieldId="rs-cfg">

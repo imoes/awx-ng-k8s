@@ -14,16 +14,6 @@ export const ExecNodeLocationsAPI = new CustomEndpoint(
   '/api/v2/execution_node_locations/'
 );
 
-// Subnetze hängen unter einer Location
-export function readSubnets(locationId) {
-  return LocationsAPI.http.get(`/api/v2/locations/${locationId}/subnets/`);
-}
-export function createSubnet(locationId, data) {
-  return LocationsAPI.http.post(
-    `/api/v2/locations/${locationId}/subnets/`,
-    data
-  );
-}
 export function reconcileLocations() {
   return LocationsAPI.http.post('/api/v2/locations/reconcile/', {});
 }

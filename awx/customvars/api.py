@@ -11,8 +11,7 @@ Endpunkte:
   POST /api/v2/hosts/{id}/assign_roles/                  — host_roles schreiben
   POST /api/v2/tools/hash_password/                      — sha512-Hash erzeugen
   GET  /api/v2/locations/                                — Locations (Sites)
-  GET  /api/v2/locations/{id}/subnets/                   — Subnetze einer Location
-  POST /api/v2/locations/reconcile/                      — NetBox-Reconcile
+  POST /api/v2/locations/reconcile/                      — NetBox-Reconcile (Sites only)
 """
 
 import json
@@ -39,7 +38,7 @@ from awx.main.models import Project, JobTemplate, Host, Instance
 
 from .models import (
     RoleVariable, RoleTag, RoleHandler, RoleScan,
-    Location, Subnet, ExecutionNodeLocation,
+    Location, ExecutionNodeLocation,
 )
 
 
@@ -72,7 +71,7 @@ class ExecutionNodeLocationSerializer(drf_serializers.ModelSerializer):
         model = ExecutionNodeLocation
         fields = [
             'id', 'instance_hostname', 'location', 'location_name',
-            'ssh_user', 'ssh_credential_id', 'ansible_cfg',
+            'ssh_user', 'ssh_credential_id', 'ssh_private_key', 'ansible_cfg',
             'description', 'created_at', 'updated_at',
         ]
 
@@ -110,15 +109,6 @@ class LocationSerializer(drf_serializers.ModelSerializer):
             'netbox_site_id', 'netbox_site_slug',
             'source', 'last_synced_at',
             'created_at', 'updated_at',
-        ]
-
-
-class SubnetSerializer(drf_serializers.ModelSerializer):
-    class Meta:
-        model = Subnet
-        fields = [
-            'id', 'location', 'cidr', 'vlan', 'gateway',
-            'netbox_prefix_id', 'source', 'created_at',
         ]
 
 
@@ -301,21 +291,6 @@ class LocationDetailView(generics.RetrieveUpdateDestroyAPIView):
     """GET/PATCH/DELETE /api/v2/locations/{id}/"""
     serializer_class = LocationSerializer
     queryset = Location.objects.all()
-
-
-class SubnetListView(generics.ListCreateAPIView):
-    """GET/POST /api/v2/locations/{location_id}/subnets/"""
-    serializer_class = SubnetSerializer
-
-    def get_queryset(self):
-        location_id = self.kwargs['location_id']
-        get_object_or_404(Location, pk=location_id)
-        return Subnet.objects.filter(location_id=location_id)
-
-    def perform_create(self, serializer):
-        location_id = self.kwargs['location_id']
-        location = get_object_or_404(Location, pk=location_id)
-        serializer.save(location=location)
 
 
 # ── Survey-Generierung ────────────────────────────────────────────────────────
@@ -1180,13 +1155,13 @@ class RunnerDeprovisionView(APIView):
         return Response({'hostname': hostname, 'deprovisioned': True})
 
 
-# ── Phase 5: NetBox-Reconcile für Locations/Subnets ──────────────────────────
+# ── Phase 5: NetBox-Reconcile für Locations ──────────────────────────────────
 
 class LocationReconcileView(APIView):
     """
     POST /api/v2/locations/reconcile/
 
-    Zieht Sites + Prefixes aus NetBox und legt fehlende Locations/Subnets an.
+    Zieht Sites aus NetBox und legt fehlende Locations an.
     Überschreibt keine lokalen Edits (Drift-Meldung statt Overwrite).
 
     NetBox-Zugangsdaten aus Django-Settings (Schlüssel NETBOX_URL / NETBOX_TOKEN)
@@ -1196,7 +1171,6 @@ class LocationReconcileView(APIView):
       {
         "created_locations": [...],
         "updated_locations": [...],
-        "created_subnets":   [...],
         "drift":             [...],   ← lokale Felder die von NetBox abweichen
         "errors":            [...]
       }
@@ -1238,7 +1212,6 @@ class LocationReconcileView(APIView):
         errors = []
         created_locations = []
         updated_locations = []
-        created_subnets = []
         drift = []
 
         try:
@@ -1278,54 +1251,9 @@ class LocationReconcileView(APIView):
                     updated_locations.append(site_name)
             site_id_to_location[site_id] = loc
 
-        # Prefixes → Subnets
-        try:
-            nb_prefixes = nb_get('/ipam/prefixes/')
-        except Exception as exc:
-            errors.append(f'NetBox /ipam/prefixes/ nicht erreichbar: {exc}')
-            nb_prefixes = []
-
-        for prefix in nb_prefixes:
-            # Scope auf Site prüfen (NetBox 4.x: scope_type + scope)
-            site_id = None
-            scope = prefix.get('scope')
-            scope_type = prefix.get('scope_type', '')
-            if scope and 'dcim.site' in scope_type:
-                site_id = scope.get('id') if isinstance(scope, dict) else None
-            # Fallback: älteres NetBox mit direktem site-Feld
-            if site_id is None and isinstance(prefix.get('site'), dict):
-                site_id = prefix['site'].get('id')
-
-            if site_id not in site_id_to_location:
-                continue
-
-            loc = site_id_to_location[site_id]
-            cidr = prefix.get('prefix', '')
-            if not cidr:
-                continue
-
-            subnet, created = Subnet.objects.get_or_create(
-                location=loc,
-                cidr=cidr,
-                defaults={
-                    'netbox_prefix_id': prefix['id'],
-                    'source': 'netbox',
-                    'vlan': (prefix.get('vlan') or {}).get('vid') if isinstance(prefix.get('vlan'), dict) else None,
-                },
-            )
-            if created:
-                created_subnets.append(f'{cidr} @ {loc.name}')
-            else:
-                if subnet.netbox_prefix_id != prefix['id'] and subnet.netbox_prefix_id is not None:
-                    drift.append({'subnet': cidr, 'location': loc.name,
-                                  'field': 'netbox_prefix_id',
-                                  'local': subnet.netbox_prefix_id,
-                                  'netbox': prefix['id']})
-
         return Response({
             'created_locations': created_locations,
             'updated_locations': updated_locations,
-            'created_subnets': created_subnets,
             'drift': drift,
             'errors': errors,
         })
