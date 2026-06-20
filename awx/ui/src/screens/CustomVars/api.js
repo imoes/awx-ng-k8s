@@ -87,6 +87,26 @@ export function assignGroupRoles(groupId, roles) {
 export function readInstances(params) {
   return LocationsAPI.http.get('/api/v2/instances/', { params });
 }
+// Register a new execution/hop node (runner). AWX blocks POST /instances/ outside
+// Kubernetes, so this goes through a custom endpoint that uses Instance.register().
+export function registerRunner(hostname, nodeType = 'execution') {
+  return LocationsAPI.http.post('/api/v2/runners/register/', {
+    hostname,
+    node_type: nodeType,
+  });
+}
+// Trigger an async health check on an execution node
+export function triggerInstanceHealthCheck(instanceId) {
+  return LocationsAPI.http.post(`/api/v2/instances/${instanceId}/health_check/`);
+}
+// Read the last health check result (capacity, errors, …)
+export function readInstanceHealthCheck(instanceId) {
+  return LocationsAPI.http.get(`/api/v2/instances/${instanceId}/health_check/`);
+}
+// Deprovision (remove) an unmanaged runner via the custom endpoint
+export function deprovisionRunner(hostname) {
+  return LocationsAPI.http.post('/api/v2/runners/deprovision/', { hostname });
+}
 // Zuordnung per Instanz-Hostname anlegen oder aktualisieren (Upsert)
 export function upsertExecNodeLocation(existing, payload) {
   if (existing && existing.id) {

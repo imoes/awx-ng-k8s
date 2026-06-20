@@ -198,7 +198,7 @@ function getRouteConfig(userProfile = {}) {
           screen: TopologyView,
         },
         {
-          title: <Trans>Runner Sites</Trans>,
+          title: <Trans>Runners</Trans>,
           path: '/runner_sites',
           screen: NgRunnerSites,
         },

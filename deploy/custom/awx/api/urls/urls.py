@@ -91,6 +91,7 @@ from awx.customvars.urls import urls as customvars_location_urls
 from awx.customvars.api import (
     HashPasswordView, LocationReconcileView,
     ExecutionNodeLocationListView, ExecutionNodeLocationDetailView,
+    RunnerRegisterView, RunnerDeprovisionView,
 )
 
 v2_urls = [
@@ -168,6 +169,9 @@ v2_urls = [
     re_path(r'^locations/', include(customvars_location_urls)),
     re_path(r'^execution_node_locations/$', ExecutionNodeLocationListView.as_view(), name='execution_node_locations'),
     re_path(r'^execution_node_locations/(?P<pk>[0-9a-f-]+)/$', ExecutionNodeLocationDetailView.as_view(), name='execution_node_location_detail'),
+    # awx-ng: Runner-Registrierung (non-K8s, umgeht den K8s-Guard von /instances/)
+    re_path(r'^runners/register/$', RunnerRegisterView.as_view(), name='runner_register'),
+    re_path(r'^runners/deprovision/$', RunnerDeprovisionView.as_view(), name='runner_deprovision'),
     # awx-ng: Tools
     re_path(r'^tools/hash_password/$', HashPasswordView.as_view(), name='tools_hash_password'),
 ]

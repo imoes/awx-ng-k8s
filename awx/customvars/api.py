@@ -35,7 +35,7 @@ from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 
 from awx.api.permissions import IsSystemAdminOrAuditor
-from awx.main.models import Project, JobTemplate, Host
+from awx.main.models import Project, JobTemplate, Host, Instance
 
 from .models import (
     RoleVariable, RoleTag, RoleHandler, RoleScan,
@@ -1102,6 +1102,82 @@ class ExecutionNodeLocationDetailView(generics.RetrieveUpdateDestroyAPIView):
         instance.location_id = None
         _sync_runner_instance_group(instance)
         instance.delete()
+
+
+# ── Runner-Registrierung (non-K8s) ───────────────────────────────────────────
+# AWX blockt POST /api/v2/instances/ ausserhalb von Kubernetes. Diese Endpunkte
+# registrieren Execution Nodes über Instance.objects.register() (wie es auch der
+# awx-manage provision_instance Befehl tut) und umgehen damit den K8s-Guard.
+
+def _runner_summary(inst):
+    return {
+        'id': inst.id,
+        'hostname': inst.hostname,
+        'node_type': inst.node_type,
+        'node_state': inst.node_state,
+        'enabled': inst.enabled,
+        'managed': inst.managed,
+        'capacity': inst.capacity,
+    }
+
+
+class RunnerRegisterView(APIView):
+    """
+    POST /api/v2/runners/register/
+    Body: {"hostname": "ansible03", "node_type": "execution"}
+
+    Registers an execution/hop node as an unmanaged Instance.  The hostname must
+    match the Receptor node id configured on the remote host.  The remote host
+    still needs Receptor + ansible-runner set up (see deploy/PROXIES.md).
+    """
+    permission_classes = [IsSystemAdminOrAuditor]
+
+    def post(self, request, **kwargs):
+        hostname = (request.data.get('hostname') or '').strip()
+        node_type = request.data.get('node_type', 'execution')
+        if not hostname:
+            return Response({'error': 'hostname required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not re.match(r'^[\w.-]+$', hostname):
+            return Response({'error': 'invalid hostname'}, status=status.HTTP_400_BAD_REQUEST)
+        if node_type not in ('execution', 'hop'):
+            return Response({'error': 'node_type must be execution or hop'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            changed, inst = Instance.objects.register(
+                hostname=hostname, node_type=node_type, defaults={'managed': False}
+            )
+        except Exception as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        resp = _runner_summary(inst)
+        resp['changed'] = changed
+        return Response(resp, status=status.HTTP_201_CREATED if changed else status.HTTP_200_OK)
+
+
+class RunnerDeprovisionView(APIView):
+    """
+    POST /api/v2/runners/deprovision/
+    Body: {"hostname": "ansible03"}
+
+    Removes an unmanaged execution/hop node from the database.  Refuses to touch
+    managed or control/hybrid nodes.
+    """
+    permission_classes = [IsSystemAdminOrAuditor]
+
+    def post(self, request, **kwargs):
+        hostname = (request.data.get('hostname') or '').strip()
+        if not hostname:
+            return Response({'error': 'hostname required'}, status=status.HTTP_400_BAD_REQUEST)
+        inst = Instance.objects.filter(hostname=hostname).first()
+        if not inst:
+            return Response({'error': 'instance not found'}, status=status.HTTP_404_NOT_FOUND)
+        if inst.managed or inst.node_type in ('control', 'hybrid'):
+            return Response(
+                {'error': 'cannot deprovision a managed or control/hybrid node'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        inst.delete()
+        return Response({'hostname': hostname, 'deprovisioned': True})
 
 
 # ── Phase 5: NetBox-Reconcile für Locations/Subnets ──────────────────────────
