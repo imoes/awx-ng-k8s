@@ -116,6 +116,13 @@ export function triggerProjectRoleScan(projectId) {
     {}
   );
 }
+// Every block across a role that defines or references a variable (grepped)
+export function readVariableUsages(projectId, role, varName) {
+  return LocationsAPI.http.get(
+    `/api/v2/projects/${projectId}/variable_usages/`,
+    { params: { role, var: varName } }
+  );
+}
 // A project's playbooks (native AWX list) + play metadata (awx-ng scan)
 export function readProjectPlaybooks(projectId) {
   return LocationsAPI.http.get(`/api/v2/projects/${projectId}/playbooks/`);

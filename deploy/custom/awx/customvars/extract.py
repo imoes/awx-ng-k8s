@@ -204,6 +204,160 @@ def _extract_comment(text: str, key: str) -> str:
     return "\n".join(comment_lines)
 
 
+# ── Variable usage across a role ("where is this variable used") ─────────────
+
+# Text file extensions we scan for variable usages inside a role.
+_USAGE_TEXT_EXTS = {
+    ".yml", ".yaml", ".j2", ".jinja2", ".conf", ".cfg", ".ini",
+    ".cnf", ".sh", ".service", ".repo", ".list", ".old", ".txt", ".env",
+}
+_USAGE_YAML_EXTS = {".yml", ".yaml"}
+_USAGE_MAX_FILE_BYTES = 256 * 1024
+_USAGE_MAX_BLOCKS = 50
+
+
+def _trim_block(lines: list[str], start: int, end: int) -> tuple[str, int, int]:
+    """Slice lines[start:end] (0-based) and trim leading/trailing blank lines.
+    Returns (text, line_start_1based, line_end_1based)."""
+    s, e = start, max(start + 1, end)
+    block = lines[s:e]
+    # Trim trailing blanks
+    while block and not block[-1].strip():
+        block.pop()
+        e -= 1
+    # Trim leading blanks
+    while block and not block[0].strip():
+        block.pop(0)
+        s += 1
+    return "\n".join(block), s + 1, e
+
+
+def find_variable_blocks(role_dir: pathlib.Path, var_name: str) -> list[dict]:
+    """
+    Find every block across a role that defines or references ``var_name``.
+
+    Uses the YAML library to split task/handler/mapping files into blocks (line
+    ranges from PyYAML node marks) and a line-based grep with context for
+    non-YAML files (templates, configs). The variable is matched on word
+    boundaries so ``foo`` does not match ``foobar``.
+
+    Returns a list of dicts:
+      {file, line_start, line_end, block, kind, is_definition}
+    where ``file`` is role-relative and ``kind`` is one of
+    definition | mapping | task | template.
+    """
+    pattern = re.compile(r"\b" + re.escape(var_name) + r"\b")
+    results: list[dict] = []
+
+    if not role_dir.is_dir():
+        return results
+
+    for path in sorted(role_dir.rglob("*")):
+        if len(results) >= _USAGE_MAX_BLOCKS:
+            break
+        if not path.is_file() or path.suffix not in _USAGE_TEXT_EXTS:
+            continue
+        try:
+            if path.stat().st_size > _USAGE_MAX_FILE_BYTES:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if not pattern.search(text):
+            continue
+
+        rel = str(path.relative_to(role_dir))
+        lines = text.splitlines()
+        file_blocks: list[dict] = []
+
+        if path.suffix in _USAGE_YAML_EXTS:
+            file_blocks = _yaml_blocks(text, lines, rel, var_name, pattern)
+
+        # Fall back to grep when not YAML or when YAML parsing found nothing
+        # (e.g. unparseable file that still references the variable).
+        if not file_blocks:
+            file_blocks = _grep_blocks(lines, rel, pattern)
+
+        results.extend(file_blocks)
+
+    # Definition blocks first, then by file path
+    results.sort(key=lambda b: (not b["is_definition"], b["file"], b["line_start"]))
+    return results[:_USAGE_MAX_BLOCKS]
+
+
+def _yaml_blocks(text, lines, rel, var_name, pattern) -> list[dict]:
+    """Split a YAML file into node blocks and keep those referencing the var."""
+    try:
+        root = yaml.compose(text, Loader=_AnsibleSafeLoader)
+    except Exception:
+        return []
+    if root is None:
+        return []
+
+    blocks: list[dict] = []
+
+    if isinstance(root, yaml.SequenceNode):
+        # Task / handler list — each item is a task block
+        for item in root.value:
+            block, ls, le = _trim_block(lines, item.start_mark.line, item.end_mark.line)
+            if block and pattern.search(block):
+                blocks.append({
+                    "file": rel, "line_start": ls, "line_end": le,
+                    "block": block, "kind": "task", "is_definition": False,
+                })
+    elif isinstance(root, yaml.MappingNode):
+        # defaults / vars / meta mapping — each top-level key is a block
+        for key_node, val_node in root.value:
+            key = getattr(key_node, "value", None)
+            start = key_node.start_mark.line
+            end = val_node.end_mark.line
+            block, ls, le = _trim_block(lines, start, end)
+            if not block:
+                continue
+            is_def = key == var_name
+            if is_def or pattern.search(block):
+                blocks.append({
+                    "file": rel, "line_start": ls, "line_end": le,
+                    "block": block,
+                    "kind": "definition" if is_def else "mapping",
+                    "is_definition": is_def,
+                })
+
+    return blocks
+
+
+def _grep_blocks(lines, rel, pattern) -> list[dict]:
+    """Line-based grep with ±2 lines of context; nearby matches are merged."""
+    matches = [i for i, ln in enumerate(lines) if pattern.search(ln)]
+    if not matches:
+        return []
+
+    CONTEXT = 2
+    GAP = CONTEXT * 2 + 1
+    blocks: list[dict] = []
+    group_start = matches[0]
+    prev = matches[0]
+    for idx in matches[1:]:
+        if idx - prev <= GAP:
+            prev = idx
+            continue
+        blocks.append(_window(lines, rel, group_start, prev, CONTEXT))
+        group_start = idx
+        prev = idx
+    blocks.append(_window(lines, rel, group_start, prev, CONTEXT))
+    return blocks
+
+
+def _window(lines, rel, first_match, last_match, context) -> dict:
+    start = max(0, first_match - context)
+    end = min(len(lines), last_match + context + 1)
+    block, ls, le = _trim_block(lines, start, end)
+    return {
+        "file": rel, "line_start": ls, "line_end": le,
+        "block": block, "kind": "template", "is_definition": False,
+    }
+
+
 # ── Tag-Extraktion ───────────────────────────────────────────────────────────
 
 def _collect_tags_from_item(item: dict) -> list[str]:

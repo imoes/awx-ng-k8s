@@ -1586,3 +1586,35 @@ class ProjectPlaysView(APIView):
             'count': len(rels),
             'results': [{'playbook': r} for r in rels],
         })
+
+
+class ProjectVariableUsagesView(APIView):
+    """
+    GET /api/v2/projects/{pk}/variable_usages/?role=<role>&var=<var_name>
+
+    Returns every block across the role that defines or references the variable:
+    the definition block in defaults/vars plus each task/template block that uses
+    it. Blocks are split with the YAML library (PyYAML node line marks) and a
+    grep-with-context fallback for non-YAML files.
+    """
+    def get(self, request, pk, **kwargs):
+        project_path = _get_project_path(pk)
+        role = request.query_params.get('role', '')
+        var = request.query_params.get('var', '')
+        if not role or not var:
+            return Response({'detail': 'role and var query params required.'}, status=400)
+        if not re.match(r'^[\w.-]+$', role) or not re.match(r'^[\w.-]+$', var):
+            return Response({'detail': 'invalid role or var name.'}, status=400)
+
+        role_dir = _safe_resolve(project_path, f'roles/{role}')
+        if not role_dir.is_dir():
+            return Response({'detail': 'role not found on disk.'}, status=404)
+
+        from awx.customvars.extract import find_variable_blocks
+        blocks = find_variable_blocks(role_dir, var)
+        return Response({
+            'role': role,
+            'var': var,
+            'count': len(blocks),
+            'results': blocks,
+        })

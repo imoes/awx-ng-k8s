@@ -37,6 +37,7 @@ import {
   readProjectRoleVariables,
   triggerProjectRoleScan,
   deleteProjectFile,
+  readVariableUsages,
 } from './api';
 
 function Roles() {
@@ -47,8 +48,10 @@ function Roles() {
   const [lastScan, setLastScan] = useState(null);
   const [expanded, setExpanded] = useState({});
   const [roleVars, setRoleVars] = useState({});
-  // Expanded variable rows (RoleVariable.id) → show the raw YAML source block
+  // Expanded variable rows (RoleVariable.id) → show where the var is used
   const [expandedVars, setExpandedVars] = useState(() => new Set());
+  // RoleVariable.id → usage blocks across the role | 'loading'
+  const [varUsages, setVarUsages] = useState({});
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -84,16 +87,28 @@ function Roles() {
     setExpanded({});
     setRoleVars({});
     setExpandedVars(new Set());
+    setVarUsages({});
     setSearch('');
   }, [projectId, loadRoles]);
 
-  const toggleVar = (varId) => {
+  // Expand/collapse a variable; on first expand, lazy-load its usage blocks
+  const toggleVar = async (v) => {
+    const isOpen = expandedVars.has(v.id);
     setExpandedVars((prev) => {
       const next = new Set(prev);
-      if (next.has(varId)) next.delete(varId);
-      else next.add(varId);
+      if (isOpen) next.delete(v.id);
+      else next.add(v.id);
       return next;
     });
+    if (!isOpen && varUsages[v.id] === undefined && projectId) {
+      setVarUsages((prev) => ({ ...prev, [v.id]: 'loading' }));
+      try {
+        const { data } = await readVariableUsages(projectId, v.role_name, v.var_name);
+        setVarUsages((prev) => ({ ...prev, [v.id]: data.results || [] }));
+      } catch {
+        setVarUsages((prev) => ({ ...prev, [v.id]: [] }));
+      }
+    }
   };
 
   const filtered = useMemo(() => {
@@ -340,10 +355,10 @@ function Roles() {
                                             variant="plain"
                                             aria-label={
                                               expandedVars.has(v.id)
-                                                ? 'Hide YAML block'
-                                                : 'Show YAML block'
+                                                ? 'Hide usages'
+                                                : 'Show usages'
                                             }
-                                            onClick={() => toggleVar(v.id)}
+                                            onClick={() => toggleVar(v)}
                                             style={{ padding: 0 }}
                                           >
                                             {expandedVars.has(v.id) ? (
@@ -371,43 +386,73 @@ function Roles() {
                                       {expandedVars.has(v.id) && (
                                         <Tr>
                                           <Td colSpan={5} style={{ background: '#fff' }}>
-                                            {v.comment && (
-                                              <p
-                                                style={{
-                                                  color: '#6a6e73',
-                                                  fontSize: 12,
-                                                  margin: '0 0 6px',
-                                                  whiteSpace: 'pre-wrap',
-                                                }}
-                                              >
-                                                {v.comment}
-                                              </p>
-                                            )}
-                                            {v.raw_yaml ? (
-                                              <CodeEditor
-                                                mode="yaml"
-                                                value={v.raw_yaml}
-                                                readOnly
-                                                rows="auto"
-                                              />
-                                            ) : (
+                                            {varUsages[v.id] === 'loading' ||
+                                            varUsages[v.id] === undefined ? (
+                                              <Spinner size="sm" />
+                                            ) : varUsages[v.id].length === 0 ? (
                                               <span style={{ color: '#6a6e73', fontSize: 13 }}>
-                                                No source block captured for this variable.
+                                                No usages of <code>{v.var_name}</code> found in
+                                                this role.
                                               </span>
+                                            ) : (
+                                              <>
+                                                <p
+                                                  style={{
+                                                    color: '#6a6e73',
+                                                    fontSize: 12,
+                                                    margin: '0 0 8px',
+                                                  }}
+                                                >
+                                                  {varUsages[v.id].length} block(s) across the
+                                                  role define or reference{' '}
+                                                  <code>{v.var_name}</code>:
+                                                </p>
+                                                {varUsages[v.id].map((u) => (
+                                                  <div
+                                                    key={`${u.file}:${u.line_start}`}
+                                                    style={{ marginBottom: 12 }}
+                                                  >
+                                                    <div
+                                                      style={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: 8,
+                                                        marginBottom: 4,
+                                                      }}
+                                                    >
+                                                      <Label
+                                                        isCompact
+                                                        color={
+                                                          u.is_definition
+                                                            ? 'green'
+                                                            : u.kind === 'task'
+                                                            ? 'blue'
+                                                            : 'grey'
+                                                        }
+                                                      >
+                                                        {u.is_definition ? 'definition' : u.kind}
+                                                      </Label>
+                                                      <code style={{ fontSize: 12 }}>
+                                                        {u.file}
+                                                      </code>
+                                                      <span
+                                                        style={{ color: '#8a8d90', fontSize: 11 }}
+                                                      >
+                                                        Lines {u.line_start}–{u.line_end}
+                                                      </span>
+                                                    </div>
+                                                    <CodeEditor
+                                                      mode={
+                                                        u.kind === 'template' ? 'jinja2' : 'yaml'
+                                                      }
+                                                      value={u.block}
+                                                      readOnly
+                                                      rows="auto"
+                                                    />
+                                                  </div>
+                                                ))}
+                                              </>
                                             )}
-                                            <p
-                                              style={{
-                                                color: '#8a8d90',
-                                                fontSize: 11,
-                                                margin: '6px 0 0',
-                                              }}
-                                            >
-                                              Best-effort excerpt of{' '}
-                                              <code>
-                                                roles/{role.role_name}/{v.source}/main.yml
-                                              </code>
-                                              ; may include adjacent comments or keys.
-                                            </p>
                                           </Td>
                                         </Tr>
                                       )}
