@@ -15,31 +15,66 @@ awx-ng (8052)
 ```
 
 Jeder Proxy wird in awx-ng einer **Site/Location** zugeordnet. Job-Templates können
-dann "Preferred Execution Node" auf einen Proxy einer bestimmten Site setzen.
+dann über die Location gesteuert werden, welcher Proxy den Job ausführt.
 
-## Voraussetzungen (Remote Host)
+**Wichtig:** AWX registriert Receptor-Nodes **nicht** automatisch. Ein Proxy, der sich
+über Receptor verbindet, erscheint als `"Unrecognized node advertising on mesh"` in den
+Logs und wird ignoriert, bis ein Instance-Datensatz in AWX angelegt wurde (Schritt 2
+in den Anleitungen unten).
 
-- Linux (Debian/Ubuntu/RHEL)
-- `ansible-runner` installiert: `pip3 install ansible-runner`
-- `receptor` Binaries installiert (siehe unten)
-- Ausgehende TCP-Verbindung zu awx-ng-Control-Host:2222
+## Docker (empfohlen)
 
-## Installation via Ansible (empfohlen)
-
-Ein vorgefertigtes Playbook liegt unter `deploy/ansible/install-receptor-proxy.yml`:
+Voraussetzungen: Docker + Docker Compose auf dem Remote-Host.
 
 ```bash
-# Aus ansible03 oder einem anderen Ansible-Host ausführen:
+# 1. Dateien auf den Remote-Host kopieren
+scp deploy/docker-compose.proxy.yml \
+    deploy/scripts/setup-proxy.sh \
+    deploy/receptor/receptor-proxy.conf.template \
+    user@ansible03:~/awx-runner/
+
+# 2. Auf dem Remote-Host: receptor.conf generieren + Verzeichnisse anlegen
+cd ~/awx-runner
+./setup-proxy.sh ansible03 awx-ng.example.com 2222
+
+# 3. Container starten (Receptor verbindet sich ausgehend zu Port 2222)
+docker compose -f docker-compose.proxy.yml up -d
+
+# 4. In AWX UI registrieren: Administration → Runners → "Register runner"
+#    hostname=ansible03, node_type=execution
+#    → AWX legt den Instance-Datensatz an
+
+# 5. Health check klicken (oder ~20s warten)
+#    → AWX erkennt den Receptor-Node im Mesh → node_state=ready, Capacity > 0
+```
+
+Für Hosts hinter einem Corporate-HTTP-Proxy: `docker-compose.override.yml` anlegen
+(gitignored) mit `HTTP_PROXY` / `HTTPS_PROXY` Environment-Variablen.
+
+Ansible-Collections (z.B. `netbox.netbox`) werden beim ersten Job-Run automatisch
+aus der `requirements.yml` des Projects in `data/projects/` installiert.
+
+## Manuelle Installation (ohne Docker)
+
+Voraussetzungen auf dem Remote-Host:
+- Linux (Debian/Ubuntu/RHEL)
+- `ansible-runner` installiert: `pip3 install ansible-runner`
+- `receptor` Binary installiert (siehe unten)
+- Ausgehende TCP-Verbindung zu awx-ng-Control-Host:2222
+
+### Via Ansible-Playbook
+
+```bash
+# Aus einem Ansible-Host ausführen:
 ansible-playbook deploy/ansible/install-receptor-proxy.yml \
   -i "ansible03.example.com," \
-  -e "proxy_node_id=ansible03-example" \
+  -e "proxy_node_id=ansible03" \
   -e "awx_ng_control_host=awx-ng.example.com" \
   -e "awx_ng_control_port=2222" \
-  -e "site_name=MUE-0" \
   --become
 ```
 
-## Manuelle Installation
+### Manuell
 
 ```bash
 # 1. receptor installieren
@@ -58,7 +93,7 @@ mkdir -p /etc/receptor /var/run/receptor
 cat > /etc/receptor/receptor.conf << EOF
 ---
 - node:
-    id: ansible03-example
+    id: ansible03
 
 - log-level: info
 
@@ -98,20 +133,14 @@ systemctl daemon-reload
 systemctl enable --now receptor
 ```
 
-## Registrierung in awx-ng
-
-Nach der Installation erscheint der Proxy automatisch unter **Administration →
-Execution Environments / Instance Groups** (sobald die Receptor-Verbindung steht).
-
-Zusätzlich in awx-ng:
-1. **Administration → Instances** → neuer Execution Node mit `hostname=ansible03-example`
-2. **Sites/Locations** (Phase 5) → Site auswählen → "Preferred Execution Node" = dieser Proxy
+Danach: In AWX UI registrieren (Administration → Runners → „Register runner",
+hostname=ansible03).
 
 ## Bekannte Proxy-Hosts
 
 | Hostname                  | Node-ID                    | Site       |
 |---------------------------|----------------------------|------------|
-| ansible03.example.com     | ansible03-example      | MUE-0      |
+| ansible03.example.com     | ansible03                  | MUE-0      |
 | ansible01.dierichs.de     | ansible01-dierichs-de      | Dierichs   |
 
-(Diese Tabelle ist nach Registrierung in awx-ng zu pflegen.)
+(Diese Tabelle nach Registrierung in awx-ng pflegen.)

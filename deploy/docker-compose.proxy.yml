@@ -1,0 +1,31 @@
+# awx-ng Remote Execution Node — Docker Compose template
+#
+# Deploy this file (+ receptor.conf) on each remote runner host.
+# Generate receptor.conf first with: ./scripts/setup-proxy.sh <node-id> <control-host>
+#
+# Corporate HTTP proxy: add a docker-compose.override.yml (gitignored) with
+# the HTTP_PROXY / HTTPS_PROXY environment variables — same pattern as the
+# main deploy/docker-compose.override.yml.
+
+name: awx-runner
+
+services:
+  awx_runner:
+    image: ghcr.io/ansible/awx-ee:24.6.1
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        rm -f /var/run/receptor/receptor.sock*
+        exec receptor --config /etc/receptor/receptor.conf
+    volumes:
+      - ./receptor.conf:/etc/receptor/receptor.conf:ro
+      - ./data/projects:/var/lib/awx/projects
+      - ./data/receptor:/var/run/receptor
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /var/run/receptor/receptor.sock"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
