@@ -27,8 +27,10 @@ import {
   Thead,
   Tr,
 } from '@patternfly/react-table';
+import { AngleDownIcon, AngleRightIcon } from '@patternfly/react-icons';
 import { useHistory } from 'react-router-dom';
 import ScreenHeader from 'components/ScreenHeader/ScreenHeader';
+import CodeEditor from 'components/CodeEditor';
 import {
   readProjects,
   readProjectRoles,
@@ -45,6 +47,8 @@ function Roles() {
   const [lastScan, setLastScan] = useState(null);
   const [expanded, setExpanded] = useState({});
   const [roleVars, setRoleVars] = useState({});
+  // Expanded variable rows (RoleVariable.id) → show the raw YAML source block
+  const [expandedVars, setExpandedVars] = useState(() => new Set());
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -79,8 +83,18 @@ function Roles() {
     loadRoles();
     setExpanded({});
     setRoleVars({});
+    setExpandedVars(new Set());
     setSearch('');
   }, [projectId, loadRoles]);
+
+  const toggleVar = (varId) => {
+    setExpandedVars((prev) => {
+      const next = new Set(prev);
+      if (next.has(varId)) next.delete(varId);
+      else next.add(varId);
+      return next;
+    });
+  };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -310,6 +324,7 @@ function Roles() {
                               >
                                 <Thead>
                                   <Tr>
+                                    <Th aria-label="Expand" />
                                     <Th>Variable</Th>
                                     <Th>Type</Th>
                                     <Th>Source</Th>
@@ -318,22 +333,85 @@ function Roles() {
                                 </Thead>
                                 <Tbody>
                                   {roleVars[role.role_name].map((v) => (
-                                    <Tr key={v.var_name}>
-                                      <Td dataLabel="Variable">
-                                        <code>{v.var_name}</code>
-                                      </Td>
-                                      <Td dataLabel="Type">
-                                        <Label isCompact>{v.value_type}</Label>
-                                      </Td>
-                                      <Td dataLabel="Source">{v.source}</Td>
-                                      <Td dataLabel="Default">
-                                        <code style={{ fontSize: 11 }}>
-                                          {v.value_type === 'dict' || v.value_type === 'list'
-                                            ? JSON.stringify(v.default_value).slice(0, 80)
-                                            : String(v.default_value ?? '').slice(0, 80)}
-                                        </code>
-                                      </Td>
-                                    </Tr>
+                                    <React.Fragment key={v.id}>
+                                      <Tr>
+                                        <Td dataLabel="Expand" modifier="fitContent">
+                                          <Button
+                                            variant="plain"
+                                            aria-label={
+                                              expandedVars.has(v.id)
+                                                ? 'Hide YAML block'
+                                                : 'Show YAML block'
+                                            }
+                                            onClick={() => toggleVar(v.id)}
+                                            style={{ padding: 0 }}
+                                          >
+                                            {expandedVars.has(v.id) ? (
+                                              <AngleDownIcon />
+                                            ) : (
+                                              <AngleRightIcon />
+                                            )}
+                                          </Button>
+                                        </Td>
+                                        <Td dataLabel="Variable">
+                                          <code>{v.var_name}</code>
+                                        </Td>
+                                        <Td dataLabel="Type">
+                                          <Label isCompact>{v.value_type}</Label>
+                                        </Td>
+                                        <Td dataLabel="Source">{v.source}</Td>
+                                        <Td dataLabel="Default">
+                                          <code style={{ fontSize: 11 }}>
+                                            {v.value_type === 'dict' || v.value_type === 'list'
+                                              ? JSON.stringify(v.default_value).slice(0, 80)
+                                              : String(v.default_value ?? '').slice(0, 80)}
+                                          </code>
+                                        </Td>
+                                      </Tr>
+                                      {expandedVars.has(v.id) && (
+                                        <Tr>
+                                          <Td colSpan={5} style={{ background: '#fff' }}>
+                                            {v.comment && (
+                                              <p
+                                                style={{
+                                                  color: '#6a6e73',
+                                                  fontSize: 12,
+                                                  margin: '0 0 6px',
+                                                  whiteSpace: 'pre-wrap',
+                                                }}
+                                              >
+                                                {v.comment}
+                                              </p>
+                                            )}
+                                            {v.raw_yaml ? (
+                                              <CodeEditor
+                                                mode="yaml"
+                                                value={v.raw_yaml}
+                                                readOnly
+                                                rows="auto"
+                                              />
+                                            ) : (
+                                              <span style={{ color: '#6a6e73', fontSize: 13 }}>
+                                                No source block captured for this variable.
+                                              </span>
+                                            )}
+                                            <p
+                                              style={{
+                                                color: '#8a8d90',
+                                                fontSize: 11,
+                                                margin: '6px 0 0',
+                                              }}
+                                            >
+                                              Best-effort excerpt of{' '}
+                                              <code>
+                                                roles/{role.role_name}/{v.source}/main.yml
+                                              </code>
+                                              ; may include adjacent comments or keys.
+                                            </p>
+                                          </Td>
+                                        </Tr>
+                                      )}
+                                    </React.Fragment>
                                   ))}
                                 </Tbody>
                               </TableComposable>
