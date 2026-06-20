@@ -186,7 +186,7 @@ function FileTree({ projectId, onSelect, onContextMenu, selectedPath, dirtyPath,
 
 // ── LintPanel ─────────────────────────────────────────────────────────────────
 
-function LintPanel({ errors, loading }) {
+function LintPanel({ errors, loading, active }) {
   const [collapsed, setCollapsed] = useState(false);
 
   const errorCount = errors.filter((e) => e.severity === 'error').length;
@@ -223,7 +223,9 @@ function LintPanel({ errors, loading }) {
         {collapsed ? <AngleRightIcon /> : <AngleDownIcon />}
         <StatusIcon style={{ color: statusColor }} />
         <span>
-          {loading
+          {!active
+            ? 'Lint — nicht verfügbar für diesen Dateityp'
+            : loading
             ? 'Lint läuft…'
             : errors.length === 0
             ? 'YAML valid — keine Fehler'
@@ -359,11 +361,16 @@ export default function ProjectEditor() {
     [projectId, dirty]
   );
 
-  // Debounced Lint nach Änderung (800 ms)
+  // Debounced Lint nach Änderung (800 ms) — only for YAML files
   const handleChange = useCallback(
     (newValue) => {
       setContent(newValue ?? '');
       if (!selectedFile) return;
+      const isYaml = selectedFile.path.endsWith('.yml') || selectedFile.path.endsWith('.yaml');
+      if (!isYaml) {
+        setLintErrors([]);
+        return;
+      }
       clearTimeout(lintTimer.current);
       lintTimer.current = setTimeout(async () => {
         setLintLoading(true);
@@ -607,7 +614,11 @@ export default function ProjectEditor() {
                       />
                     </Suspense>
                   </div>
-                  <LintPanel errors={lintErrors} loading={lintLoading} />
+                  <LintPanel
+                    errors={lintErrors}
+                    loading={lintLoading}
+                    active={selectedFile?.path.endsWith('.yml') || selectedFile?.path.endsWith('.yaml')}
+                  />
                 </>
               ) : (
                 <div
