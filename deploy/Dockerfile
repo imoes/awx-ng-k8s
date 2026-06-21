@@ -22,6 +22,7 @@ RUN chmod +x /usr/local/bin/init_awx.sh /usr/bin/launch_awx_task_ng.sh
 COPY custom/awx/customvars/ ${AWX_PKG}/customvars/
 
 # ── Gepatchte URL-Routen einspielen ──────────────────────────────────────────
+COPY custom/awx/urls.py                  ${AWX_PKG}/urls.py
 COPY custom/awx/api/urls/project.py      ${AWX_PKG}/api/urls/project.py
 COPY custom/awx/api/urls/job_template.py ${AWX_PKG}/api/urls/job_template.py
 COPY custom/awx/api/urls/host.py         ${AWX_PKG}/api/urls/host.py
@@ -44,8 +45,8 @@ COPY custom/ui-build/static/js/          /var/lib/awx/public/static/js/
 COPY custom/ui-build/static/css/         /var/lib/awx/public/static/css/
 COPY custom/ui-build/static/media/       /var/lib/awx/public/static/media/
 
-# ── watchdog für den Filesystem-Watcher (awx_task) ───────────────────────────
-RUN /var/lib/awx/venv/awx/bin/pip install --no-cache-dir watchdog==4.0.2
+# ── watchdog + httpx (MCP-Tool-HTTP-Client) ──────────────────────────────────
+RUN /var/lib/awx/venv/awx/bin/pip install --no-cache-dir watchdog==4.0.2 "httpx>=0.27,<1"
 
 # ── .pyc-Cache invalidieren ──────────────────────────────────────────────────
 RUN find ${AWX_PKG} -name "*.pyc" -delete && \
