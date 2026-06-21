@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- AWX-NextGeneration login lockup: emblem + wordmark -->
 <svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
-     x="0px" y="0px" viewBox="0 0 520 640" xml:space="preserve">
+     x="0px" y="0px" viewBox="0 0 560 600" xml:space="preserve">
   <defs>
-    <linearGradient id="awxngGradLogin" x1="80" y1="40" x2="440" y2="380" gradientUnits="userSpaceOnUse">
+    <linearGradient id="awxngGradLogin" x1="100" y1="30" x2="460" y2="360" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#3b82f6"/>
       <stop offset="1" stop-color="#10b981"/>
     </linearGradient>
-    <linearGradient id="awxngText" x1="120" y1="440" x2="400" y2="540" gradientUnits="userSpaceOnUse">
+    <linearGradient id="awxngText" x1="140" y1="420" x2="420" y2="540" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#3b82f6"/>
       <stop offset="1" stop-color="#10b981"/>
     </linearGradient>
   </defs>
 
-  <!-- Emblem (scaled 0.72, centered) -->
-  <g transform="translate(80,30) scale(0.72)">
+  <!-- Emblem centered at x=280, scale 0.72 -->
+  <g transform="translate(100,20) scale(0.72)">
     <polygon points="445,250 347.5,418.9 152.5,418.9 55,250 152.5,81.1 347.5,81.1"
              fill="url(#awxngGradLogin)" stroke="url(#awxngGradLogin)" stroke-width="30"
              stroke-linejoin="round"/>
@@ -24,13 +24,15 @@
     </g>
   </g>
 
-  <!-- Wordmark -->
-  <text x="260" y="510" text-anchor="middle"
+  <!-- "AWX" wordmark -->
+  <text x="280" y="480" text-anchor="middle"
         font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
-        font-size="120" font-weight="800" letter-spacing="4"
+        font-size="116" font-weight="800" letter-spacing="6"
         fill="url(#awxngText)">AWX</text>
-  <text x="260" y="572" text-anchor="middle"
+
+  <!-- "NEXT GENERATION" subtitle — smaller spacing to avoid clipping -->
+  <text x="280" y="537" text-anchor="middle"
         font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
-        font-size="38" font-weight="600" letter-spacing="14"
+        font-size="32" font-weight="600" letter-spacing="8"
         fill="#64748b">NEXT GENERATION</text>
 </svg>
