@@ -1612,6 +1612,130 @@ class ProjectFileRenameView(APIView):
         return Response({'renamed': True, 'from_path': from_rel, 'to_path': to_rel})
 
 
+# Archive suffixes handled by ProjectFilesUploadView
+_ARCHIVE_ZIP_SUFFIX = '.zip'
+_ARCHIVE_TAR_SUFFIXES = {'.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tbz2', '.tar.xz', '.txz'}
+_UPLOAD_ALLOWED_SUFFIXES = _ALLOWED_SUFFIXES | {'.zip', '.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tbz2', '.tar.xz', '.txz', '.gz'}
+
+
+def _is_safe_tar_member(member_name: str) -> bool:
+    """Reject absolute paths and directory traversal in tar member names."""
+    if member_name.startswith('/'):
+        return False
+    parts = member_name.replace('\\', '/').split('/')
+    return '..' not in parts
+
+
+class ProjectFilesUploadView(APIView):
+    """
+    POST /api/v2/projects/{pk}/files/upload/
+
+    Upload a single file or an archive (ZIP / tar.gz / tgz / tar.bz2 / …) into
+    the project directory. After writing, roles/ changes trigger a DB re-scan.
+
+    Multipart form fields:
+      file  — the uploaded file (required)
+      path  — target directory inside the project, e.g. "roles/" or "playbooks/"
+              (optional, defaults to "" = project root)
+    """
+    parser_classes = [
+        __import__('rest_framework.parsers', fromlist=['MultiPartParser']).MultiPartParser,
+        __import__('rest_framework.parsers', fromlist=['FormParser']).FormParser,
+    ]
+
+    def post(self, request, pk, **kwargs):
+        import zipfile
+        import tarfile as tarfilemod
+        import io
+
+        if not request.user.is_superuser:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Only superusers may upload project files.')
+
+        project_path = _get_project_path(pk)
+        upload = request.FILES.get('file')
+        if not upload:
+            return Response({'detail': 'file field required.'}, status=400)
+
+        target_dir_rel = (request.data.get('path') or '').strip().strip('/')
+        if target_dir_rel:
+            target_dir = _safe_resolve(project_path, target_dir_rel)
+        else:
+            target_dir = project_path
+
+        filename = upload.name
+        # Determine archive type by suffix (handle compound suffixes like .tar.gz)
+        fname_lower = filename.lower()
+        is_zip = fname_lower.endswith('.zip')
+        is_tar = any(fname_lower.endswith(s) for s in _ARCHIVE_TAR_SUFFIXES)
+
+        created = []
+
+        if is_zip:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            data = upload.read()
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                    for info in zf.infolist():
+                        if info.is_dir():
+                            continue
+                        member_name = info.filename
+                        if not _is_safe_tar_member(member_name):
+                            continue
+                        dest = _safe_resolve(target_dir, member_name)
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        dest.write_bytes(zf.read(info.filename))
+                        created.append(str(dest.relative_to(project_path)))
+            except zipfile.BadZipFile as exc:
+                return Response({'detail': f'Invalid ZIP archive: {exc}'}, status=400)
+
+        elif is_tar:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            data = upload.read()
+            try:
+                with tarfilemod.open(fileobj=io.BytesIO(data)) as tf:
+                    for member in tf.getmembers():
+                        if not member.isfile():
+                            continue
+                        if not _is_safe_tar_member(member.name):
+                            continue
+                        dest = _safe_resolve(target_dir, member.name)
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        fobj = tf.extractfile(member)
+                        if fobj:
+                            dest.write_bytes(fobj.read())
+                            created.append(str(dest.relative_to(project_path)))
+            except tarfilemod.TarError as exc:
+                return Response({'detail': f'Invalid tar archive: {exc}'}, status=400)
+
+        else:
+            # Single file upload
+            suffix = pathlib.Path(filename).suffix.lower()
+            if suffix not in _UPLOAD_ALLOWED_SUFFIXES:
+                return Response({'detail': f'File type "{suffix}" not allowed.'}, status=403)
+            dest = _safe_resolve(target_dir, filename)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(upload.read())
+            created.append(str(dest.relative_to(project_path)))
+
+        # Trigger role DB re-scan for any role that was touched
+        roles_touched = set()
+        for rel_path in created:
+            parts = pathlib.Path(rel_path).parts
+            if len(parts) >= 2 and parts[0] == 'roles':
+                roles_touched.add(parts[1])
+
+        if roles_touched:
+            try:
+                from awx.customvars.extract import scan_project_roles
+                project_id_int = int(pk)
+                scan_project_roles(project_id_int, str(project_path), 'upload')
+            except Exception:
+                pass  # best-effort — files are written regardless
+
+        return Response({'created': created, 'count': len(created)}, status=201)
+
+
 def _extract_plays(content):
     """Parse a playbook's YAML and return per-play metadata (hosts/roles/tags)."""
     import yaml as _yaml
@@ -1655,29 +1779,26 @@ def _extract_plays(content):
 
 
 def _list_project_playbooks(pk, project_path):
-    """List a project's playbooks (recursively).
+    """List a project's playbooks — only from ./playbooks/ (Ansible convention).
 
-    Primarily AWX's own sync-time playbook detection (project.playbooks) — the same
-    list the Job Template playbook dropdown uses. Fallback: live-scan the project
-    root + playbooks/ from disk (in case no sync has run yet).
+    Primary source: AWX's own sync-time detection (proj.playbooks), filtered to
+    entries that live under playbooks/. Fallback: live-scan ./playbooks/ from disk.
+    Root-level .yml files are intentionally excluded to enforce the convention.
     """
     rels = []
     try:
         from awx.main.models import Project
         proj = Project.objects.get(pk=pk)
-        rels = list(proj.playbooks or [])
+        # enforce convention: only files inside playbooks/
+        rels = [p for p in (proj.playbooks or []) if p.startswith('playbooks/')]
     except Exception:
         rels = []
     if not rels:
-        cand = [
-            p for p in project_path.iterdir()
-            if p.is_file() and p.suffix in ('.yml', '.yaml') and not p.name.startswith('.')
-        ]
         pb_dir = project_path / 'playbooks'
         if pb_dir.is_dir():
-            cand += [p for p in pb_dir.rglob('*.yml') if p.is_file()]
+            cand = [p for p in pb_dir.rglob('*.yml') if p.is_file()]
             cand += [p for p in pb_dir.rglob('*.yaml') if p.is_file()]
-        rels = [str(p.relative_to(project_path)) for p in cand]
+            rels = [str(p.relative_to(project_path)) for p in cand]
     return sorted(set(rels))
 
 

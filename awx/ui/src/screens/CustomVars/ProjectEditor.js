@@ -35,6 +35,7 @@ import {
   FolderIcon,
   FolderOpenIcon,
   SaveAltIcon,
+  UploadIcon,
 } from '@patternfly/react-icons';
 import { useLocation } from 'react-router-dom';
 import ScreenHeader from 'components/ScreenHeader/ScreenHeader';
@@ -46,6 +47,7 @@ import {
   readProjects,
   renameProjectFile,
   saveProjectFile,
+  uploadProjectFile,
 } from './api';
 
 // Monaco lazy-loaded — ~4 MB nur wenn Screen aktiv
@@ -302,6 +304,12 @@ export default function ProjectEditor() {
   const [opModal, setOpModal] = useState(null); // { type: 'rename'|'newfile'|'newfolder'|'duplicate', entry, value }
   const [treeKey, setTreeKey] = useState(0); // increment to force tree reload
 
+  // Upload modal state
+  const [uploadModal, setUploadModal] = useState(false);
+  const [uploadTarget, setUploadTarget] = useState('');
+  const [uploadFile, setUploadFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+
   const location = useLocation();
   const lintTimer = useRef(null);
   const deeplinkDone = useRef(false);
@@ -478,6 +486,25 @@ export default function ProjectEditor() {
     }
   };
 
+  const handleUpload = async () => {
+    if (!uploadFile || !projectId) return;
+    setUploading(true);
+    setErr(null);
+    try {
+      await uploadProjectFile(projectId, uploadTarget || '', uploadFile);
+      setUploadModal(false);
+      setUploadFile(null);
+      setUploadTarget('');
+      setTreeKey((k) => k + 1);
+      setMsg(`Upload successful: ${uploadFile.name}`);
+      setTimeout(() => setMsg(null), 3000);
+    } catch (e) {
+      setErr(e?.response?.data?.detail || e.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   // Browser-Tab schließen warnen bei ungespeicherten Änderungen
   useEffect(() => {
     const handler = (e) => {
@@ -540,6 +567,14 @@ export default function ProjectEditor() {
             )}
 
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+              <Button
+                variant="secondary"
+                icon={<UploadIcon />}
+                onClick={() => { setUploadTarget('playbooks/'); setUploadFile(null); setUploadModal(true); }}
+                isDisabled={!projectId}
+              >
+                Upload
+              </Button>
               <Button
                 variant="primary"
                 icon={<SaveAltIcon />}
@@ -668,6 +703,7 @@ export default function ProjectEditor() {
               <>
                 <CtxItem label="New file here" onClick={() => { closeCtx(); setOpModal({ type: 'newfile', entry: contextMenu.entry, value: '' }); }} />
                 <CtxItem label="New folder here" onClick={() => { closeCtx(); setOpModal({ type: 'newfolder', entry: contextMenu.entry, value: '' }); }} />
+                <CtxItem label="Upload file here" onClick={() => { closeCtx(); setUploadTarget(contextMenu.entry.path ? contextMenu.entry.path + '/' : ''); setUploadFile(null); setUploadModal(true); }} />
                 <CtxDivider />
                 <CtxItem label="Rename" onClick={() => { closeCtx(); setOpModal({ type: 'rename', entry: contextMenu.entry, value: contextMenu.entry.name }); }} />
                 <CtxItem label="Delete folder" danger onClick={() => handleDelete(contextMenu.entry)} />
@@ -721,6 +757,64 @@ export default function ProjectEditor() {
               'new-name'
             }
           />
+        </Modal>
+      )}
+
+      {/* ── Upload modal ── */}
+      {uploadModal && (
+        <Modal
+          title="Upload file or archive"
+          isOpen
+          variant="small"
+          onClose={() => { setUploadModal(false); setUploadFile(null); }}
+          actions={[
+            <Button
+              key="upload"
+              variant="primary"
+              icon={<UploadIcon />}
+              isDisabled={!uploadFile || uploading}
+              isLoading={uploading}
+              onClick={handleUpload}
+            >
+              {uploading ? 'Uploading…' : 'Upload'}
+            </Button>,
+            <Button key="cancel" variant="link" onClick={() => { setUploadModal(false); setUploadFile(null); }}>
+              Cancel
+            </Button>,
+          ]}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>
+                Target directory in project
+              </label>
+              <TextInput
+                value={uploadTarget}
+                onChange={(v) => setUploadTarget(typeof v === 'string' ? v : v?.target?.value ?? '')}
+                placeholder="e.g. playbooks/ or roles/"
+              />
+              <div style={{ marginTop: 4, fontSize: 12, color: '#6a6e73' }}>
+                ZIP / tar.gz / tgz are extracted into this directory.
+                Single files are placed directly inside it.
+              </div>
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>
+                File
+              </label>
+              <input
+                type="file"
+                accept=".yml,.yaml,.j2,.jinja2,.conf,.ini,.md,.txt,.cfg,.zip,.tar,.gz,.tgz,.bz2,.xz"
+                onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                style={{ width: '100%' }}
+              />
+              {uploadFile && (
+                <div style={{ marginTop: 4, fontSize: 12, color: '#6a6e73' }}>
+                  {uploadFile.name} ({(uploadFile.size / 1024).toFixed(1)} KB)
+                </div>
+              )}
+            </div>
+          </div>
         </Modal>
       )}
     </>

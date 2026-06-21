@@ -15,6 +15,7 @@ from awx.customvars.api import (
     ProjectFileContentView,
     ProjectFileLintView,
     ProjectFileRenameView,
+    ProjectFilesUploadView,
     ProjectPlaysView,
     ProjectVariableUsagesView,
     ProjectLaunchView,
@@ -80,6 +81,7 @@ urls = [
     re_path(r'^(?P<pk>[0-9]+)/files/content/$', ProjectFileContentView.as_view(), name='project_file_content'),
     re_path(r'^(?P<pk>[0-9]+)/files/lint/$', ProjectFileLintView.as_view(), name='project_file_lint'),
     re_path(r'^(?P<pk>[0-9]+)/files/rename/$', ProjectFileRenameView.as_view(), name='project_file_rename'),
+    re_path(r'^(?P<pk>[0-9]+)/files/upload/$', ProjectFilesUploadView.as_view(), name='project_files_upload'),
     # awx-ng: Play-Metadaten je Playbook (hosts/roles/tags) für die Playbook-Verwaltung
     re_path(r'^(?P<pk>[0-9]+)/plays/$', ProjectPlaysView.as_view(), name='project_plays'),
     # awx-ng: where a role variable is defined/used across the role (grepped blocks)

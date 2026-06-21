@@ -208,3 +208,13 @@ export function deleteProjectFile(projectId, path) {
     `/api/v2/projects/${projectId}/files/content/?path=${encodeURIComponent(path)}`
   );
 }
+export function uploadProjectFile(projectId, targetPath, file) {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('path', targetPath);
+  return LocationsAPI.http.post(
+    `/api/v2/projects/${projectId}/files/upload/`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' } }
+  );
+}

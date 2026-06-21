@@ -194,3 +194,68 @@ def awx_trigger_role_scan(project_id: int) -> dict:
         resp = client.post(f"projects/{project_id}/scan_roles/")
         resp.raise_for_status()
     return {"project_id": project_id, "triggered": True}
+
+
+@mcp.tool()
+def awx_create_role(project_id: int, role_name: str) -> dict:
+    """Create a new Ansible role scaffold in a project (Ansible standard directory structure).
+
+    Creates: defaults/main.yml, tasks/main.yml, handlers/main.yml, meta/main.yml
+    Then triggers a role scan to register the new role in the AWX-ng database.
+
+    Args:
+        project_id: ID of the project
+        role_name:  Name of the new role (e.g. "nginx", "postgresql")
+
+    Returns: {"role": role_name, "created": [...files...], "scanned": true}
+    """
+    scaffold = {
+        f"roles/{role_name}/defaults/main.yml": "---\n# Default variables for role {role_name}\n{}: {{}}\n".format(role_name, role_name),
+        f"roles/{role_name}/tasks/main.yml": "---\n# Tasks for role {}\n".format(role_name),
+        f"roles/{role_name}/handlers/main.yml": "---\n# Handlers for role {}\n".format(role_name),
+        f"roles/{role_name}/meta/main.yml": "---\ngalaxy_info:\n  role_name: {}\n  author: awx-ng\n  description: ''\n  min_ansible_version: '2.9'\n".format(role_name),
+    }
+    created = []
+    with awx_http() as client:
+        for path, content in scaffold.items():
+            resp = client.put(
+                f"projects/{project_id}/files/content/",
+                params={"path": path},
+                content=content.encode(),
+                headers={"Content-Type": "text/plain"},
+            )
+            resp.raise_for_status()
+            created.append(path)
+
+        # trigger role scan to register variables in DB
+        client.post(f"projects/{project_id}/scan_roles/")
+
+    return {"role": role_name, "created": created, "scanned": True}
+
+
+@mcp.tool()
+def awx_create_playbook(project_id: int, name: str, content: str) -> dict:
+    """Create a new playbook in the project's playbooks/ directory (Ansible convention).
+
+    Playbooks must live in ./playbooks/ — this tool enforces that convention.
+    Appends .yml extension if the name has none.
+
+    Args:
+        project_id: ID of the project
+        name:       Playbook filename (e.g. "site.yml" or "deploy")
+        content:    Full YAML content of the playbook
+
+    Returns: {"path": "playbooks/{name}", "bytes": N}
+    """
+    if not any(name.endswith(s) for s in ('.yml', '.yaml')):
+        name = name + '.yml'
+    path = f"playbooks/{name}"
+    with awx_http() as client:
+        resp = client.put(
+            f"projects/{project_id}/files/content/",
+            params={"path": path},
+            content=content.encode(),
+            headers={"Content-Type": "text/plain"},
+        )
+        resp.raise_for_status()
+    return {"path": path, "bytes": len(content.encode())}
