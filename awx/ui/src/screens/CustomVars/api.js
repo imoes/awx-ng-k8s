@@ -218,3 +218,17 @@ export function uploadProjectFile(projectId, targetPath, file) {
     { headers: { 'Content-Type': 'multipart/form-data' } }
   );
 }
+
+// ── Personal OAuth2 tokens (work for both /api/v2/ and /mcp) ─────────────────
+export function listMyTokens() {
+  return LocationsAPI.http.get('/api/v2/tokens/');
+}
+export function createToken(data) {
+  return LocationsAPI.http.post('/api/v2/tokens/', data);
+}
+export function deleteToken(tokenId) {
+  return LocationsAPI.http.delete(`/api/v2/tokens/${tokenId}/`);
+}
+export function readMe() {
+  return LocationsAPI.http.get('/api/v2/me/');
+}

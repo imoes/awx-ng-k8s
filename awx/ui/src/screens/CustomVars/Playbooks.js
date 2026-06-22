@@ -54,6 +54,11 @@ function Playbooks() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
 
+  // Variable detail modal: { playName, vars, vars_prompt } | null
+  const [varModal, setVarModal] = useState(null);
+  // Raw YAML block sub-modal
+  const [rawModal, setRawModal] = useState(null); // { name, raw_yaml } | null
+
   // Run modal state
   const [runOpen, setRunOpen] = useState(false);
   const [runPb, setRunPb] = useState('');
@@ -323,6 +328,7 @@ function Playbooks() {
                                     <Th>Target (hosts)</Th>
                                     <Th>Roles</Th>
                                     <Th>Tags</Th>
+                                    <Th>Vars</Th>
                                   </Tr>
                                 </Thead>
                                 <Tbody>
@@ -351,6 +357,23 @@ function Playbooks() {
                                       <Td dataLabel="Tags">
                                         {play.tags?.length ? play.tags.join(', ') : '—'}
                                       </Td>
+                                      <Td dataLabel="Vars">
+                                        {(play.vars_count || 0) > 0 ? (
+                                          <Button
+                                            variant="link"
+                                            isInline
+                                            onClick={() => setVarModal({
+                                              playName: play.name || play.hosts || `Play ${i + 1}`,
+                                              vars: play.vars || [],
+                                              vars_prompt: play.vars_prompt || [],
+                                            })}
+                                          >
+                                            <Label isCompact color="blue">
+                                              {play.vars_count} var{play.vars_count !== 1 ? 's' : ''}
+                                            </Label>
+                                          </Button>
+                                        ) : '—'}
+                                      </Td>
                                     </Tr>
                                   ))}
                                 </Tbody>
@@ -376,6 +399,112 @@ function Playbooks() {
           </CardBody>
         </Card>
       </PageSection>
+
+      {/* ── Play variables modal ── */}
+      {varModal && (
+        <Modal
+          title={`Variables — ${varModal.playName}`}
+          isOpen
+          variant="large"
+          onClose={() => setVarModal(null)}
+          actions={[
+            <Button key="close" variant="primary" onClick={() => setVarModal(null)}>Close</Button>,
+          ]}
+        >
+          {varModal.vars.length > 0 && (
+            <>
+              <p style={{ marginBottom: 8, fontWeight: 600 }}>vars:</p>
+              <TableComposable variant="compact" aria-label="Play variables">
+                <Thead>
+                  <Tr>
+                    <Th>Variable</Th>
+                    <Th>Value</Th>
+                    <Th>Type</Th>
+                    <Th>Jinja</Th>
+                  </Tr>
+                </Thead>
+                <Tbody>
+                  {varModal.vars.map((v) => (
+                    <Tr key={v.name}>
+                      <Td dataLabel="Variable"><code>{v.name}</code></Td>
+                      <Td dataLabel="Value">
+                        <Button
+                          variant="link"
+                          isInline
+                          onClick={() => setRawModal({ name: v.name, raw_yaml: v.raw_yaml })}
+                          title="Click to see full YAML block"
+                        >
+                          <code style={{ color: '#151515' }}>
+                            {String(typeof v.value === 'object' ? JSON.stringify(v.value) : v.value).slice(0, 80)}
+                            {String(typeof v.value === 'object' ? JSON.stringify(v.value) : v.value).length > 80 ? '…' : ''}
+                          </code>
+                        </Button>
+                      </Td>
+                      <Td dataLabel="Type">
+                        <Label isCompact color="grey">{v.value_type}</Label>
+                      </Td>
+                      <Td dataLabel="Jinja">
+                        {v.has_jinja && <Label isCompact color="orange">Jinja</Label>}
+                      </Td>
+                    </Tr>
+                  ))}
+                </Tbody>
+              </TableComposable>
+            </>
+          )}
+          {varModal.vars_prompt.length > 0 && (
+            <>
+              <p style={{ marginTop: 16, marginBottom: 8, fontWeight: 600 }}>vars_prompt (interactive):</p>
+              <TableComposable variant="compact" aria-label="Interactive variables">
+                <Thead>
+                  <Tr>
+                    <Th>Variable</Th>
+                    <Th>Prompt</Th>
+                    <Th>Default</Th>
+                    <Th>Private</Th>
+                  </Tr>
+                </Thead>
+                <Tbody>
+                  {varModal.vars_prompt.map((vp) => (
+                    <Tr key={vp.name}>
+                      <Td dataLabel="Variable"><code>{vp.name}</code></Td>
+                      <Td dataLabel="Prompt">{vp.prompt || '—'}</Td>
+                      <Td dataLabel="Default">
+                        {vp.default !== null && vp.default !== undefined
+                          ? <code>{String(vp.default)}</code>
+                          : <span style={{ color: '#6a6e73' }}>—</span>}
+                      </Td>
+                      <Td dataLabel="Private">
+                        {vp.private && <Label isCompact color="red">private</Label>}
+                      </Td>
+                    </Tr>
+                  ))}
+                </Tbody>
+              </TableComposable>
+            </>
+          )}
+        </Modal>
+      )}
+
+      {/* ── Raw YAML block sub-modal ── */}
+      {rawModal && (
+        <Modal
+          title={`YAML block: ${rawModal.name}`}
+          isOpen
+          variant="small"
+          onClose={() => setRawModal(null)}
+          actions={[
+            <Button key="close" variant="primary" onClick={() => setRawModal(null)}>Close</Button>,
+          ]}
+        >
+          <pre style={{
+            background: '#1e1e1e', color: '#d4d4d4', padding: 16, borderRadius: 4,
+            fontSize: 13, overflow: 'auto', maxHeight: 400,
+          }}>
+            {rawModal.raw_yaml}
+          </pre>
+        </Modal>
+      )}
 
       {/* ── Run modal ── */}
       {runOpen && (

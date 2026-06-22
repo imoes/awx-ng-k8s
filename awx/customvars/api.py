@@ -1736,9 +1736,27 @@ class ProjectFilesUploadView(APIView):
         return Response({'created': created, 'count': len(created)}, status=201)
 
 
+def _pb_value_type(v):
+    """Return a simple type string for a playbook variable value."""
+    if v is None:
+        return 'null'
+    if isinstance(v, bool):
+        return 'bool'
+    if isinstance(v, int):
+        return 'int'
+    if isinstance(v, float):
+        return 'float'
+    if isinstance(v, dict):
+        return 'dict'
+    if isinstance(v, list):
+        return 'list'
+    return 'str'
+
+
 def _extract_plays(content):
-    """Parse a playbook's YAML and return per-play metadata (hosts/roles/tags)."""
+    """Parse a playbook's YAML and return per-play metadata (hosts/roles/tags/vars)."""
     import yaml as _yaml
+    import re as _re
     plays = []
     try:
         doc = _yaml.safe_load(content)
@@ -1756,6 +1774,9 @@ def _extract_plays(content):
                 'hosts': None,
                 'roles': [],
                 'tags': [],
+                'vars': [],
+                'vars_prompt': [],
+                'vars_count': 0,
             })
             continue
         roles = []
@@ -1768,12 +1789,42 @@ def _extract_plays(content):
         if isinstance(tags, str):
             tags = [tags]
         hosts = entry.get('hosts')
+
+        # Extract vars: block
+        play_vars = []
+        raw_vars = entry.get('vars')
+        if isinstance(raw_vars, dict):
+            for k, v in raw_vars.items():
+                raw_block = _yaml.dump({k: v}, default_flow_style=False, allow_unicode=True).strip()
+                has_jinja = bool(_re.search(r'\{\{.*?\}\}', str(v)))
+                play_vars.append({
+                    'name': k,
+                    'value': v if not isinstance(v, (dict, list)) else v,
+                    'value_type': _pb_value_type(v),
+                    'raw_yaml': raw_block,
+                    'has_jinja': has_jinja,
+                })
+
+        # Extract vars_prompt: block
+        play_vars_prompt = []
+        for vp in (entry.get('vars_prompt') or []):
+            if isinstance(vp, dict) and vp.get('name'):
+                play_vars_prompt.append({
+                    'name': vp['name'],
+                    'prompt': vp.get('prompt', ''),
+                    'private': bool(vp.get('private', False)),
+                    'default': vp.get('default'),
+                })
+
         plays.append({
             'name': entry.get('name', ''),
             'kind': 'play',
             'hosts': hosts if isinstance(hosts, str) else (str(hosts) if hosts is not None else None),
             'roles': [r for r in roles if r],
             'tags': tags or [],
+            'vars': play_vars,
+            'vars_prompt': play_vars_prompt,
+            'vars_count': len(play_vars) + len(play_vars_prompt),
         })
     return plays
 

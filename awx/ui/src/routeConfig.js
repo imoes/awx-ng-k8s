@@ -32,6 +32,7 @@ import {
   Roles as NgRoles,
   Playbooks as NgPlaybooks,
   ProjectEditor as NgProjectEditor,
+  UserTokens as NgUserTokens,
 } from 'screens/CustomVars';
 
 function getRouteConfig(userProfile = {}) {
@@ -128,6 +129,11 @@ function getRouteConfig(userProfile = {}) {
           title: <Trans>Editor</Trans>,
           path: '/editor',
           screen: NgProjectEditor,
+        },
+        {
+          title: <Trans>API Tokens</Trans>,
+          path: '/tokens',
+          screen: NgUserTokens,
         },
       ],
     },
