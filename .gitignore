@@ -184,3 +184,4 @@ deploy/secrets/SECRET_KEY
 deploy/secrets/pg_password
 deploy/secrets/broadcast_websocket_secret
 deploy/.env
+deploy/
