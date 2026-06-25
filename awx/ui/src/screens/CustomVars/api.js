@@ -77,6 +77,13 @@ export function assignGroupRoles(groupId, roles) {
 export function readInstances(params) {
   return LocationsAPI.http.get('/api/v2/instances/', { params });
 }
+// Machine/SSH credentials — used for the runner-site credential dropdown.
+// Injected at launch when a job template has no machine credential of its own.
+export function listMachineCredentials() {
+  return LocationsAPI.http.get('/api/v2/credentials/', {
+    params: { credential_type__namespace: 'ssh', page_size: 200 },
+  });
+}
 // Register a new execution/hop node (runner). AWX blocks POST /instances/ outside
 // Kubernetes, so this goes through a custom endpoint that uses Instance.register().
 export function registerRunner(hostname, nodeType = 'execution') {

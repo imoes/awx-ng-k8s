@@ -42,6 +42,7 @@ import {
   registerRunner,
   triggerInstanceHealthCheck,
   deprovisionRunner,
+  listMachineCredentials,
 } from './api';
 
 const STATE_COLORS = {
@@ -62,24 +63,26 @@ function RunnerSites() {
   const [hcPending, setHcPending] = useState({}); // instanceId → true while running
 
   const {
-    result: { instances, assignments, locations },
+    result: { instances, assignments, locations, credentials },
     isLoading,
     error,
     request: fetchAll,
   } = useRequest(
     useCallback(async () => {
-      const [i, a, l] = await Promise.all([
+      const [i, a, l, c] = await Promise.all([
         readInstances({ page_size: 200 }),
         ExecNodeLocationsAPI.read({ page_size: 200 }),
         LocationsAPI.read({ page_size: 1000 }),
+        listMachineCredentials(),
       ]);
       return {
         instances: i.data.results,
         assignments: a.data.results,
         locations: l.data.results,
+        credentials: c.data.results,
       };
     }, []),
-    { instances: [], assignments: [], locations: [] }
+    { instances: [], assignments: [], locations: [], credentials: [] }
   );
 
   useEffect(() => {
@@ -99,7 +102,6 @@ function RunnerSites() {
         location: a?.location || '',
         ssh_user: a?.ssh_user || '',
         ssh_credential_id: a?.ssh_credential_id ?? '',
-        ssh_private_key: a?.ssh_private_key || '',
         ansible_cfg: a?.ansible_cfg || '',
       },
     });
@@ -120,7 +122,6 @@ function RunnerSites() {
       ssh_credential_id: form.ssh_credential_id
         ? Number(form.ssh_credential_id)
         : null,
-      ssh_private_key: form.ssh_private_key,
       ansible_cfg: form.ansible_cfg,
     };
     try {
@@ -426,24 +427,24 @@ function RunnerSites() {
               />
             </FormGroup>
             <FormGroup
-              label="SSH credential ID (AWX machine credential)"
+              label="Machine credential"
               fieldId="rs-cred"
+              helperText="Used when the job template has no machine credential of its own (template wins)."
             >
-              <TextInput
+              <FormSelect
                 id="rs-cred"
                 value={editing.form.ssh_credential_id}
                 onChange={upd('ssh_credential_id')}
-              />
-            </FormGroup>
-            <FormGroup label="SSH private key (id_rsa / PEM)" fieldId="rs-key">
-              <TextArea
-                id="rs-key"
-                value={editing.form.ssh_private_key}
-                onChange={upd('ssh_private_key')}
-                rows={8}
-                resizeOrientation="vertical"
-                placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----'}
-              />
+              >
+                <FormSelectOption value="" label="— none —" />
+                {credentials.map((c) => (
+                  <FormSelectOption
+                    key={c.id}
+                    value={c.id}
+                    label={`${c.name} (#${c.id})`}
+                  />
+                ))}
+              </FormSelect>
             </FormGroup>
             <FormGroup label="ansible.cfg (for this site)" fieldId="rs-cfg">
               <TextArea

@@ -168,7 +168,9 @@ class ExecutionNodeLocation(models.Model):
     Ein Runner pro Site kann eigene Defaults haben:
       - ssh_user        : Standard-SSH-User für Hosts dieser Site
       - ssh_credential_id: Referenz auf eine AWX Machine-Credential (SSH-Key,
-                           nutzt den nativen AWX-Keystore — kein Klartext hier)
+                           nutzt den nativen AWX-Keystore — kein Klartext hier).
+                           Wird beim Launch injiziert, wenn das Job Template
+                           keine eigene Machine-Credential hat (Template gewinnt).
       - ansible_cfg     : roher ansible.cfg-Inhalt, der für Jobs dieser Site
                            verwendet wird (z.B. eigener known_hosts, Forks, Timeouts)
     """
@@ -181,8 +183,6 @@ class ExecutionNodeLocation(models.Model):
     # ── Site-spezifische Ansible-Verbindungsparameter ──────────────────────
     ssh_user = models.CharField(max_length=255, blank=True)
     ssh_credential_id = models.IntegerField(null=True, blank=True)  # AWX Credential pk (Machine/SSH)
-    ssh_private_key = models.TextField(blank=True, default='',
-        help_text='Raw SSH private key (PEM/OpenSSH) for this site')
     ansible_cfg = models.TextField(blank=True)                       # roher ansible.cfg-Inhalt
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

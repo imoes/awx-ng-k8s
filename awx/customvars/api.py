@@ -71,7 +71,7 @@ class ExecutionNodeLocationSerializer(drf_serializers.ModelSerializer):
         model = ExecutionNodeLocation
         fields = [
             'id', 'instance_hostname', 'location', 'location_name',
-            'ssh_user', 'ssh_credential_id', 'ssh_private_key', 'ansible_cfg',
+            'ssh_user', 'ssh_credential_id', 'ansible_cfg',
             'description', 'created_at', 'updated_at',
         ]
 
@@ -981,6 +981,33 @@ def _resolve_location_instance_group(location_id):
     return InstanceGroup.objects.filter(name=loc.name).first()
 
 
+def _resolve_location_credential(location_id):
+    """Return the Machine-Credential of a runner at this Location, or None.
+
+    Used as a fallback at launch time: when a Job Template has no machine
+    credential of its own, the site's runner credential is injected. The
+    template always wins when it carries its own machine credential.
+    """
+    if not location_id:
+        return None
+    from awx.main.models import Credential
+    enl = (ExecutionNodeLocation.objects
+           .filter(location_id=location_id, ssh_credential_id__isnull=False)
+           .first())
+    if not enl:
+        return None
+    return Credential.objects.filter(pk=enl.ssh_credential_id).first()
+
+
+def _inject_runner_credential(job, location_id):
+    """Attach the site's runner credential if the job has no machine credential."""
+    if job.machine_credential is not None:
+        return
+    cred = _resolve_location_credential(location_id)
+    if cred is not None:
+        job.credentials.add(cred)
+
+
 class HostRunView(APIView):
     """
     GET  /api/v2/hosts/{pk}/run/  — Job-Templates die dieses Host-Inventory nutzen
@@ -1010,13 +1037,15 @@ class HostRunView(APIView):
             return Response({'error': 'job_template_id required'}, status=status.HTTP_400_BAD_REQUEST)
         jt = get_object_or_404(JobTemplate, pk=jt_id)
         limit = request.data.get('limit', host.name)
-        ig = _resolve_location_instance_group(request.data.get('location_id'))
+        location_id = request.data.get('location_id')
+        ig = _resolve_location_instance_group(location_id)
 
         try:
             job = jt.create_unified_job(limit=limit, _eager_fields={'created_by': request.user})
             if ig:
                 job.instance_group = ig
                 job.save(update_fields=['instance_group'])
+            _inject_runner_credential(job, location_id)
             job.signal_start()
         except Exception as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -1930,7 +1959,8 @@ class ProjectLaunchView(APIView):
     def post(self, request, pk, **kwargs):
         jt_id = request.data.get('job_template_id')
         limit = request.data.get('limit', '')
-        ig = _resolve_location_instance_group(request.data.get('location_id'))
+        location_id = request.data.get('location_id')
+        ig = _resolve_location_instance_group(location_id)
         if not jt_id:
             return Response({'error': 'job_template_id required'}, status=status.HTTP_400_BAD_REQUEST)
         jt = get_object_or_404(JobTemplate, pk=jt_id, project_id=pk)
@@ -1940,6 +1970,7 @@ class ProjectLaunchView(APIView):
             if ig:
                 job.instance_group = ig
                 job.save(update_fields=['instance_group'])
+            _inject_runner_credential(job, location_id)
             job.signal_start()
         except Exception as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
