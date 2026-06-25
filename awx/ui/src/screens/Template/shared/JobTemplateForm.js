@@ -159,32 +159,30 @@ function JobTemplateForm({
   }, []);
 
   // awx-ng: when the template already has instanceGroups, pre-select the matching location
+  // (a Site/Location maps to an InstanceGroup of the same name)
   useEffect(() => {
     if (instanceGroupsField.value?.length === 1 && locations.length > 0) {
       const igName = instanceGroupsField.value[0].name;
-      const match = locations.find((l) => l.location_name === igName);
+      const match = locations.find((l) => l.name === igName);
       if (match && !selectedLocation) setSelectedLocation(match);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locations, instanceGroupsField.value]);
 
-  // awx-ng: when a location is selected, look up the IG by execution node hostname and wire it in
+  // awx-ng: when a location is selected, set its instance group (Site.name == IG.name,
+  // resolved server-side into location.instance_group_id)
   const handleLocationChange = useCallback(
     async (location) => {
       setSelectedLocation(location);
-      if (!location) {
+      if (!location || !location.instance_group_id) {
         instanceGroupsHelpers.setValue([]);
         return;
       }
       try {
-        const { data } = await InstanceGroupsAPI.read({
-          instances__hostname: location.instance_hostname,
-        });
-        if (data.results?.length > 0) {
-          instanceGroupsHelpers.setValue([data.results[0]]);
-        } else {
-          instanceGroupsHelpers.setValue([]);
-        }
+        const { data } = await InstanceGroupsAPI.readDetail(
+          location.instance_group_id
+        );
+        instanceGroupsHelpers.setValue([data]);
       } catch (_) {
         instanceGroupsHelpers.setValue([]);
       }
@@ -361,12 +359,14 @@ function JobTemplateForm({
             value={selectedLocation?.id ?? ''}
             data={[
               { value: '', key: '', label: t`Any (default runner)`, isDisabled: false },
-              ...locations.map((l) => ({
-                value: l.id,
-                key: l.id,
-                label: l.location_name || l.instance_hostname,
-                isDisabled: false,
-              })),
+              ...locations
+                .filter((l) => l.instance_group_id)
+                .map((l) => ({
+                  value: l.id,
+                  key: l.id,
+                  label: l.name,
+                  isDisabled: false,
+                })),
             ]}
             onChange={(_, value) => {
               if (!value) {
