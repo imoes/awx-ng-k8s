@@ -1011,6 +1011,38 @@ def _inject_runner_credential(job, location_id):
         job.credentials.add(cred)
 
 
+def inject_runner_credential_for_job(job_pk):
+    """Inject the runner credential for a job started via native AWX UI.
+
+    Called via post_save signal (on_commit) so template credentials are already
+    copied before we check machine_credential. Matches runner by execution_node
+    hostname; falls back to the single configured runner if only one exists.
+    """
+    try:
+        from awx.main.models import Job, Credential
+        job = Job.objects.get(pk=job_pk)
+        if job.machine_credential is not None:
+            return
+        enl = None
+        execution_node = job.execution_node or job.controller_node
+        if execution_node:
+            enl = (ExecutionNodeLocation.objects
+                   .filter(instance_hostname=execution_node, ssh_credential_id__isnull=False)
+                   .first())
+        if enl is None:
+            runners = ExecutionNodeLocation.objects.filter(ssh_credential_id__isnull=False)
+            if runners.count() == 1:
+                enl = runners.first()
+        if enl is None:
+            return
+        cred = Credential.objects.filter(pk=enl.ssh_credential_id).first()
+        if cred is not None:
+            job.credentials.add(cred)
+            log.info('auto-injected runner credential %s into job %s', cred.name, job_pk)
+    except Exception:
+        log.exception('inject_runner_credential_for_job failed for job %s', job_pk)
+
+
 class HostRunView(APIView):
     """
     GET  /api/v2/hosts/{pk}/run/  — Job-Templates die dieses Host-Inventory nutzen
