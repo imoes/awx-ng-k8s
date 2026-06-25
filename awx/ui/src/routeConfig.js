@@ -3,6 +3,7 @@ import { Trans } from '@lingui/macro';
 
 import ActivityStream from 'screens/ActivityStream';
 import Applications from 'screens/Application';
+import ExecutionEnvironments from 'screens/ExecutionEnvironment';
 import CredentialTypes from 'screens/CredentialType';
 import Credentials from 'screens/Credential';
 import Dashboard from 'screens/Dashboard';
@@ -186,6 +187,11 @@ function getRouteConfig(userProfile = {}) {
           path: '/instances',
           screen: Instances,
           hideNav: true,
+        },
+        {
+          title: <Trans>Execution Environments</Trans>,
+          path: '/execution_environments',
+          screen: ExecutionEnvironments,
         },
         {
           title: <Trans>Applications</Trans>,
