@@ -13,7 +13,6 @@ import CredentialLookup from 'components/Lookup/CredentialLookup';
 import FormActionGroup from 'components/FormActionGroup/FormActionGroup';
 import FormField, { FormSubmitError } from 'components/FormField';
 import OrganizationLookup from 'components/Lookup/OrganizationLookup';
-import ExecutionEnvironmentLookup from 'components/Lookup/ExecutionEnvironmentLookup';
 import { CredentialTypesAPI, ProjectsAPI } from 'api';
 import { required } from 'util/validators';
 import { FormColumnLayout, SubFormLayout } from 'components/FormLayout';
@@ -114,12 +113,6 @@ function ProjectFormFields({
   const [organizationField, organizationMeta, organizationHelpers] =
     useField('organization');
 
-  const [
-    executionEnvironmentField,
-    executionEnvironmentMeta,
-    executionEnvironmentHelpers,
-  ] = useField('default_environment');
-
   /* Save current scm subform field values to state */
   const saveSubFormState = (form) => {
     const currentScmFormFields = { ...scmFormFields };
@@ -199,14 +192,6 @@ function ProjectFormFields({
     [setFieldValue, setFieldTouched]
   );
 
-  const handleExecutionEnvironmentUpdate = useCallback(
-    (value) => {
-      setFieldValue('default_environment', value);
-      setFieldTouched('default_environment', true, false);
-    },
-    [setFieldValue, setFieldTouched]
-  );
-
   return (
     <>
       <FormField
@@ -232,22 +217,6 @@ function ProjectFormFields({
         required
         autoPopulate={!project?.id}
         validate={required(t`Select a value for this field`)}
-      />
-      <ExecutionEnvironmentLookup
-        helperTextInvalid={executionEnvironmentMeta.error}
-        isValid={
-          !executionEnvironmentMeta.touched || !executionEnvironmentMeta.error
-        }
-        onBlur={() => executionEnvironmentHelpers.setTouched()}
-        value={executionEnvironmentField.value}
-        popoverContent={projectHelpText.executionEnvironment}
-        onChange={handleExecutionEnvironmentUpdate}
-        tooltip={t`Select an organization before editing the default execution environment.`}
-        globallyAvailable
-        isDisabled={!organizationField.value}
-        organizationId={organizationField.value?.id}
-        isDefaultEnvironment
-        fieldName="default_environment"
       />
       <FormGroup
         fieldId="project-scm-type"
