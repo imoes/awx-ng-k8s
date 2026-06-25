@@ -391,6 +391,7 @@ export default function ProjectEditor() {
   const [mountForm, setMountForm] = useState({ name: '', local_path: '' });
   const [mountBusy, setMountBusy] = useState(false);
   const [mountError, setMountError] = useState(null);
+  const [availablePaths, setAvailablePaths] = useState([]);
 
   // Git panel
   const [gitStatus, setGitStatus] = useState(null);
@@ -445,6 +446,25 @@ export default function ProjectEditor() {
   }, [projectId]);
 
   // ── Mountpoint project creation ──────────────────────────────────────────────
+  const openMountModal = async () => {
+    setMountError(null);
+    setMountForm({ name: '', local_path: '' });
+    setAvailablePaths([]);
+    setMountModal(true);
+    try {
+      const { data: cfg } = await LocationsAPI.http.get('/api/v2/config/');
+      const paths = cfg.project_local_paths || [];
+      setAvailablePaths(paths);
+      if (paths.length > 0) {
+        const first = paths[0];
+        setMountForm({
+          local_path: first,
+          name: first.charAt(0).toUpperCase() + first.slice(1).replace(/[-_]/g, ' '),
+        });
+      }
+    } catch (_) {}
+  };
+
   const createMountpoint = async () => {
     setMountBusy(true);
     setMountError(null);
@@ -741,7 +761,7 @@ export default function ProjectEditor() {
               </FormSelect>
               <Button
                 variant="plain"
-                onClick={() => { setMountModal(true); setMountError(null); }}
+                onClick={openMountModal}
                 title="Add mountpoint project (bind-mounted directory)"
                 style={{ padding: '4px 6px', color: '#0066cc' }}
               >
@@ -1122,14 +1142,32 @@ export default function ProjectEditor() {
               <label style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>
                 Container directory
               </label>
-              <TextInput
-                value={mountForm.local_path}
-                onChange={(v) => setMountForm((p) => ({ ...p, local_path: typeof v === 'string' ? v : v?.target?.value ?? '' }))}
-                placeholder="ansible03"
-              />
+              {availablePaths.length > 0 ? (
+                <FormSelect
+                  value={mountForm.local_path}
+                  onChange={(v) => {
+                    const dir = typeof v === 'string' ? v : v?.target?.value ?? '';
+                    setMountForm((p) => ({
+                      local_path: dir,
+                      name: p.name || (dir.charAt(0).toUpperCase() + dir.slice(1).replace(/[-_]/g, ' ')),
+                    }));
+                  }}
+                >
+                  <FormSelectOption value="" label="— select directory —" />
+                  {availablePaths.map((p) => (
+                    <FormSelectOption key={p} value={p} label={p} />
+                  ))}
+                </FormSelect>
+              ) : (
+                <TextInput
+                  value={mountForm.local_path}
+                  onChange={(v) => setMountForm((p) => ({ ...p, local_path: typeof v === 'string' ? v : v?.target?.value ?? '' }))}
+                  placeholder="ansible03"
+                />
+              )}
               <div style={{ marginTop: 4, fontSize: 12, color: '#6a6e73' }}>
-                Name of the directory under <code>/var/lib/awx/projects/</code> inside the container.
-                Must exist as a bind mount before creating.
+                Directory under <code>/var/lib/awx/projects/</code> — must be bind-mounted before creating.
+                {availablePaths.length === 0 && ' No free directories found.'}
               </div>
             </div>
           </div>
