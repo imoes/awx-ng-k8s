@@ -1,7 +1,7 @@
 /* eslint-disable i18next/no-literal-string */
 // awx-ng: Runner management — register execution nodes, download install bundles,
 // run health checks, deprovision, and assign each runner to a site with
-// site-specific ssh_user, ssh credential and ansible.cfg.
+// a site-specific machine credential and ansible.cfg.
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Button,
@@ -100,7 +100,6 @@ function RunnerSites() {
       assignment: a,
       form: {
         location: a?.location || '',
-        ssh_user: a?.ssh_user || '',
         ssh_credential_id: a?.ssh_credential_id ?? '',
         ansible_cfg: a?.ansible_cfg || '',
       },
@@ -118,7 +117,6 @@ function RunnerSites() {
     const payload = {
       instance_hostname: instance.hostname,
       location: form.location || null,
-      ssh_user: form.ssh_user,
       ssh_credential_id: form.ssh_credential_id
         ? Number(form.ssh_credential_id)
         : null,
@@ -418,13 +416,6 @@ function RunnerSites() {
                   <FormSelectOption key={l.id} value={l.id} label={l.name} />
                 ))}
               </FormSelect>
-            </FormGroup>
-            <FormGroup label="SSH user" fieldId="rs-user">
-              <TextInput
-                id="rs-user"
-                value={editing.form.ssh_user}
-                onChange={upd('ssh_user')}
-              />
             </FormGroup>
             <FormGroup
               label="Machine credential"

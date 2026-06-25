@@ -108,11 +108,6 @@ function getRouteConfig(userProfile = {}) {
           screen: Hosts,
         },
         {
-          title: <Trans>Locations</Trans>,
-          path: '/locations',
-          screen: NgLocations,
-        },
-        {
           // awx-ng: Rollen-Verwaltung (Import, Übersicht, Variablen)
           title: <Trans>Roles</Trans>,
           path: '/roles',
@@ -201,6 +196,12 @@ function getRouteConfig(userProfile = {}) {
           title: <Trans>Runners</Trans>,
           path: '/runner_sites',
           screen: NgRunnerSites,
+        },
+        {
+          // awx-ng: Sites (formerly "Locations") — site-based runner routing
+          title: <Trans>Sites</Trans>,
+          path: '/locations',
+          screen: NgLocations,
         },
       ],
     },

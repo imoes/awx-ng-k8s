@@ -15,9 +15,12 @@ Endpunkte:
 """
 
 import json
+import logging
 import os
 import re
 import shutil
+
+log = logging.getLogger('awx.customvars.api')
 
 try:
     import crypt as _crypt
@@ -71,7 +74,7 @@ class ExecutionNodeLocationSerializer(drf_serializers.ModelSerializer):
         model = ExecutionNodeLocation
         fields = [
             'id', 'instance_hostname', 'location', 'location_name',
-            'ssh_user', 'ssh_credential_id', 'ansible_cfg',
+            'ssh_credential_id', 'ansible_cfg',
             'description', 'created_at', 'updated_at',
         ]
 
@@ -1085,7 +1088,7 @@ class ExecutionNodeLocationListView(generics.ListCreateAPIView):
     serializer_class = ExecutionNodeLocationSerializer
     queryset = ExecutionNodeLocation.objects.all()
     filter_backends = [filters.SearchFilter]
-    search_fields = ['instance_hostname', 'ssh_user', 'description']
+    search_fields = ['instance_hostname', 'description']
 
     def perform_create(self, serializer):
         enl = serializer.save()
@@ -1334,6 +1337,23 @@ def _safe_resolve(project_path: pathlib.Path, rel: str) -> pathlib.Path:
     return resolved
 
 
+def _refresh_playbook_cache(pk):
+    """Re-derive Project.playbook_files from disk so the native Job-Template
+    playbook picker sees editor/upload changes without a full project sync.
+
+    The native picker reads the cached playbook_files JSONField, which AWX only
+    refreshes when a ProjectUpdate completes. Project.playbooks walks the disk
+    via could_be_playbook() — exactly the list the picker expects.
+    """
+    from awx.main.models import Project
+    try:
+        proj = Project.objects.get(pk=pk)
+        proj.playbook_files = proj.playbooks
+        proj.save(update_fields=['playbook_files'])
+    except Exception:
+        log.exception('playbook_files cache refresh failed for project %s', pk)
+
+
 class ProjectFilesListView(APIView):
     """
     GET /api/v2/projects/{pk}/files/?path=roles/img_docker
@@ -1416,6 +1436,10 @@ class ProjectFileContentView(APIView):
         # Create parent dirs if needed (within project only)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding='utf-8')
+
+        # Keep the native playbook picker in sync when a playbook is written
+        if target.suffix in {'.yml', '.yaml'}:
+            _refresh_playbook_cache(pk)
 
         # Optional: git add + commit (silently skip if not a git repo)
         try:
@@ -1518,6 +1542,10 @@ class ProjectFileContentView(APIView):
             )
         except Exception:
             pass
+
+        # Refresh the native playbook picker after a playbook (or dir) is removed
+        if is_dir or target.suffix in {'.yml', '.yaml'}:
+            _refresh_playbook_cache(pk)
 
         return Response(status=204)
 
@@ -1637,6 +1665,9 @@ class ProjectFileRenameView(APIView):
             RoleVariable.objects.filter(project_id=project_id_int, role_name=old_role).update(role_name=new_role)
             RoleTag.objects.filter(project_id=project_id_int, role_name=old_role).update(role_name=new_role)
             RoleHandler.objects.filter(project_id=project_id_int, role_name=old_role).update(role_name=new_role)
+
+        # A rename can move/rename a playbook — refresh the native picker
+        _refresh_playbook_cache(pk)
 
         return Response({'renamed': True, 'from_path': from_rel, 'to_path': to_rel})
 
@@ -1761,6 +1792,10 @@ class ProjectFilesUploadView(APIView):
                 scan_project_roles(project_id_int, str(project_path), 'upload')
             except Exception:
                 pass  # best-effort — files are written regardless
+
+        # Refresh the native playbook picker if any playbook was uploaded
+        if any(str(p).endswith(('.yml', '.yaml')) for p in created):
+            _refresh_playbook_cache(pk)
 
         return Response({'created': created, 'count': len(created)}, status=201)
 

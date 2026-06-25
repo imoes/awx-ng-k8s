@@ -50,6 +50,16 @@ function PlaybookSelect({
     }
   }, [error, onError]);
 
+  // Substring match across the full path so e.g. "deploy" finds
+  // "playbooks/deploy.yml" without having to type the folder prefix.
+  const onFilter = (event) => {
+    const typed = (event?.target?.value || '').toLowerCase();
+    const matches = typed
+      ? options.filter((opt) => opt.toLowerCase().includes(typed))
+      : options;
+    return matches.map((opt) => <SelectOption key={opt} value={opt} />);
+  };
+
   return (
     <Select
       ouiaId="JobTemplateForm-playbook"
@@ -65,6 +75,7 @@ function PlaybookSelect({
         setIsOpen(false);
         onChange(value);
       }}
+      onFilter={onFilter}
       id="template-playbook"
       validated={isValid ? 'default' : 'error'}
       onBlur={onBlur}

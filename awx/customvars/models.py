@@ -166,7 +166,6 @@ class ExecutionNodeLocation(models.Model):
     inkl. site-spezifischer Ansible-Verbindungsparameter.
 
     Ein Runner pro Site kann eigene Defaults haben:
-      - ssh_user        : Standard-SSH-User für Hosts dieser Site
       - ssh_credential_id: Referenz auf eine AWX Machine-Credential (SSH-Key,
                            nutzt den nativen AWX-Keystore — kein Klartext hier).
                            Wird beim Launch injiziert, wenn das Job Template
@@ -181,7 +180,6 @@ class ExecutionNodeLocation(models.Model):
         Location, on_delete=models.SET_NULL, null=True, blank=True, related_name="execution_nodes"
     )
     # ── Site-spezifische Ansible-Verbindungsparameter ──────────────────────
-    ssh_user = models.CharField(max_length=255, blank=True)
     ssh_credential_id = models.IntegerField(null=True, blank=True)  # AWX Credential pk (Machine/SSH)
     ansible_cfg = models.TextField(blank=True)                       # roher ansible.cfg-Inhalt
     description = models.TextField(blank=True)

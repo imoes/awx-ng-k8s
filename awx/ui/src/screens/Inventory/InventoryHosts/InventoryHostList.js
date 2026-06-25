@@ -183,6 +183,7 @@ function InventoryHostList() {
             editUrl={`/inventories/inventory/${id}/hosts/${host.id}/edit`}
             isSelected={selected.some((row) => row.id === host.id)}
             onSelect={() => handleSelect(host)}
+            onCloned={fetchData}
             rowIndex={index}
           />
         )}

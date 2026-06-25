@@ -63,14 +63,42 @@ function FileIcon({ suffix }) {
   return <span style={{ marginRight: 4, fontSize: 11, color: '#6a6e73' }}>·</span>;
 }
 
-function FileTreeNode({ projectId, entry, depth = 0, onSelect, onContextMenu, selectedPath, dirtyPath }) {
+function FileTreeNode({ projectId, entry, depth = 0, onSelect, onContextMenu, selectedPath, dirtyPath, expandToPath }) {
   const [open, setOpen] = useState(false);
   const [children, setChildren] = useState(null);
   const [loading, setLoading] = useState(false);
+  const didAutoExpand = useRef(false);
 
   const indent = depth * 16;
   const isSelected = selectedPath === entry.path;
   const isDirtyFile = entry.type === 'file' && entry.path === dirtyPath;
+
+  const loadChildren = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await listProjectFiles(projectId, entry.path);
+      setChildren(data.entries || []);
+    } catch {
+      setChildren([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId, entry.path]);
+
+  // Auto-expand this directory when the deep-link target lives inside it.
+  // Cascades down: each parent on the path opens and loads its children,
+  // which then evaluate the same condition until the target file is reached.
+  // Fires at most once per node so the user can collapse folders afterwards.
+  useEffect(() => {
+    if (entry.type !== 'dir' || !expandToPath || didAutoExpand.current) return;
+    const isAncestor =
+      expandToPath === entry.path || expandToPath.startsWith(`${entry.path}/`);
+    if (isAncestor) {
+      didAutoExpand.current = true;
+      if (children === null) loadChildren();
+      setOpen(true);
+    }
+  }, [expandToPath, entry.type, entry.path, children, loadChildren]);
 
   const toggle = async () => {
     if (entry.type === 'file') {
@@ -78,15 +106,7 @@ function FileTreeNode({ projectId, entry, depth = 0, onSelect, onContextMenu, se
       return;
     }
     if (!open && children === null) {
-      setLoading(true);
-      try {
-        const { data } = await listProjectFiles(projectId, entry.path);
-        setChildren(data.entries || []);
-      } catch {
-        setChildren([]);
-      } finally {
-        setLoading(false);
-      }
+      await loadChildren();
     }
     setOpen((o) => !o);
   };
@@ -145,13 +165,14 @@ function FileTreeNode({ projectId, entry, depth = 0, onSelect, onContextMenu, se
           onContextMenu={onContextMenu}
           selectedPath={selectedPath}
           dirtyPath={dirtyPath}
+          expandToPath={expandToPath}
         />
       ))}
     </div>
   );
 }
 
-function FileTree({ projectId, onSelect, onContextMenu, selectedPath, dirtyPath, refreshKey }) {
+function FileTree({ projectId, onSelect, onContextMenu, selectedPath, dirtyPath, refreshKey, expandToPath }) {
   const [roots, setRoots] = useState(null);
   const [err, setErr] = useState(null);
 
@@ -180,6 +201,7 @@ function FileTree({ projectId, onSelect, onContextMenu, selectedPath, dirtyPath,
           onContextMenu={onContextMenu}
           selectedPath={selectedPath}
           dirtyPath={dirtyPath}
+          expandToPath={expandToPath}
         />
       ))}
     </div>
@@ -288,6 +310,8 @@ export default function ProjectEditor() {
 
   // Editor state
   const [selectedFile, setSelectedFile] = useState(null);
+  // Deep-link target the tree should auto-expand to (parent folders + file)
+  const [expandToPath, setExpandToPath] = useState(null);
   const [content, setContent] = useState('');
   const [savedContent, setSavedContent] = useState('');
   const [lintErrors, setLintErrors] = useState([]);
@@ -336,6 +360,7 @@ export default function ProjectEditor() {
     const qPath = params.get('path');
     if (!qProject || !qPath) return;
     deeplinkDone.current = true;
+    setExpandToPath(qPath); // expand the tree down to the deep-linked file
     readProjectFile(qProject, qPath)
       .then(({ data }) => {
         setSelectedFile({ path: qPath, name: qPath.split('/').pop() });
@@ -626,6 +651,7 @@ export default function ProjectEditor() {
                 selectedPath={selectedFile?.path}
                 dirtyPath={dirty ? selectedFile?.path : null}
                 refreshKey={treeKey}
+                expandToPath={expandToPath}
               />
             </div>
 

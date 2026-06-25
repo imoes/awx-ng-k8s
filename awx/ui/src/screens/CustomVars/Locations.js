@@ -104,7 +104,7 @@ function Locations() {
     <>
       <ScreenHeader
         streamType="none"
-        breadcrumbConfig={{ '/locations': 'Locations' }}
+        breadcrumbConfig={{ '/locations': 'Sites' }}
       />
       <PageSection>
         <Card>
@@ -124,7 +124,7 @@ function Locations() {
                 </ToolbarItem>
                 <ToolbarItem>
                   <Button variant="primary" onClick={() => setCreateOpen(true)}>
-                    Add location
+                    Add site
                   </Button>
                 </ToolbarItem>
                 <ToolbarItem>
@@ -193,7 +193,7 @@ function Locations() {
       </PageSection>
 
       <Modal
-        title="Add location"
+        title="Add site"
         isOpen={isCreateOpen}
         variant="small"
         onClose={() => setCreateOpen(false)}

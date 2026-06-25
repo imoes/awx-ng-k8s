@@ -32,9 +32,7 @@ import { VariablesField } from 'components/CodeEditor';
 import { required, combine, maxLength } from 'util/validators';
 import { JobTemplate } from 'types';
 import {
-  InventoryLookup,
   InstanceGroupsLookup,
-  ProjectLookup,
   MultiCredentialsLookup,
 } from 'components/Lookup';
 import Popover from 'components/Popover';
@@ -44,6 +42,8 @@ import useIsMounted from 'hooks/useIsMounted';
 import LabelSelect from 'components/LabelSelect';
 import { VerbositySelectField } from 'components/VerbositySelectField';
 import PlaybookSelect from './PlaybookSelect';
+import InventorySelect from './InventorySelect';
+import ProjectSelect from './ProjectSelect';
 import WebhookSubForm from './WebhookSubForm';
 import getHelpText from './JobTemplate.helptext';
 // awx-ng: host/group picker that fills the limit field
@@ -77,9 +77,25 @@ function JobTemplateForm({
     name: 'job_type',
     validate: required(null),
   });
-  const [inventoryField, inventoryMeta, inventoryHelpers] =
-    useField('inventory');
-  const [projectField, projectMeta, projectHelpers] = useField('project');
+  const [inventoryField, inventoryMeta, inventoryHelpers] = useField({
+    name: 'inventory',
+    validate: (inventory) =>
+      !inventory && !askInventoryOnLaunchField.value
+        ? t`Please select an Inventory or check the Prompt on Launch option`
+        : undefined,
+  });
+  const [projectField, projectMeta, projectHelpers] = useField({
+    name: 'project',
+    validate: (project) => {
+      if (!project) {
+        return t`This field must not be blank`;
+      }
+      if (project?.status === 'never updated') {
+        return t`This Project needs to be updated`;
+      }
+      return undefined;
+    },
+  });
   const [scmField, , scmHelpers] = useField('scm_branch');
   const [playbookField, playbookMeta, playbookHelpers] = useField({
     name: 'playbook',
@@ -191,16 +207,6 @@ function JobTemplateForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enableWebhooks]);
 
-  const handleProjectValidation = (project) => {
-    if (!project) {
-      return t`This field must not be blank`;
-    }
-    if (project?.status === 'never updated') {
-      return t`This Project needs to be updated`;
-    }
-    return undefined;
-  };
-
   const handleProjectUpdate = useCallback(
     (value) => {
       setFieldValue('project', value);
@@ -210,13 +216,6 @@ function JobTemplateForm({
     },
     [setFieldValue, setFieldTouched]
   );
-
-  const handleInventoryValidation = (inventory) => {
-    if (!inventory && !askInventoryOnLaunchField.value) {
-      return t`Please select an Inventory or check the Prompt on Launch option`;
-    }
-    return undefined;
-  };
 
   const handleInventoryUpdate = useCallback(
     (value) => {
@@ -302,48 +301,57 @@ function JobTemplateForm({
             }}
           />
         </FieldWithPrompt>
-        <FormGroup
+        <FieldWithPrompt
           fieldId="template-inventory"
+          label={t`Inventory`}
+          promptId="template-ask-inventory-on-launch"
+          promptName="ask_inventory_on_launch"
+          isRequired={!askInventoryOnLaunchField.value}
+          tooltip={helpText.inventory}
+        >
+          <FormGroup
+            fieldId="template-inventory"
+            validated={
+              !(inventoryMeta.touched || askInventoryOnLaunchField.value) ||
+              !inventoryMeta.error
+                ? 'default'
+                : 'error'
+            }
+            helperTextInvalid={inventoryMeta.error}
+          >
+            <InventorySelect
+              value={inventoryField.value}
+              onChange={handleInventoryUpdate}
+              onBlur={() => inventoryHelpers.setTouched()}
+              isValid={
+                !(inventoryMeta.touched || askInventoryOnLaunchField.value) ||
+                !inventoryMeta.error
+              }
+            />
+          </FormGroup>
+        </FieldWithPrompt>
+
+        <FormGroup
+          fieldId="template-project"
+          label={t`Project`}
+          labelIcon={<Popover content={helpText.project} />}
+          isRequired
           validated={
-            !(inventoryMeta.touched || askInventoryOnLaunchField.value) ||
-            !inventoryMeta.error
+            !projectMeta.touched || (!projectMeta.error && projectField.value)
               ? 'default'
               : 'error'
           }
-          helperTextInvalid={inventoryMeta.error}
-          isRequired={!askInventoryOnLaunchField.value}
+          helperTextInvalid={projectMeta.error}
         >
-          <InventoryLookup
-            fieldId="template-inventory"
-            value={inventoryField.value}
-            promptId="template-ask-inventory-on-launch"
-            promptName="ask_inventory_on_launch"
-            isPromptableField
-            tooltip={helpText.inventory}
-            onBlur={() => inventoryHelpers.setTouched()}
-            onChange={handleInventoryUpdate}
-            required={!askInventoryOnLaunchField.value}
-            touched={inventoryMeta.touched}
-            error={inventoryMeta.error}
-            isOverrideDisabled={isOverrideDisabledLookup}
-            validate={handleInventoryValidation}
+          <ProjectSelect
+            value={projectField.value}
+            onChange={handleProjectUpdate}
+            onBlur={() => projectHelpers.setTouched()}
+            isValid={Boolean(
+              !projectMeta.touched || (!projectMeta.error && projectField.value)
+            )}
           />
         </FormGroup>
-
-        <ProjectLookup
-          value={projectField.value}
-          onBlur={() => projectHelpers.setTouched()}
-          tooltip={helpText.project}
-          isValid={Boolean(
-            !projectMeta.touched || (!projectMeta.error && projectField.value)
-          )}
-          helperTextInvalid={projectMeta.error}
-          onChange={handleProjectUpdate}
-          required
-          autoPopulate={!template?.id}
-          isOverrideDisabled={isOverrideDisabledLookup}
-          validate={handleProjectValidation}
-        />
 
         {/* awx-ng: Location / Site picker — replaces Execution Environment (unused with isolation disabled) */}
         <FormGroup fieldId="template-location" label={t`Site / Runner`}>
