@@ -35,6 +35,8 @@ import {
   FolderIcon,
   FolderOpenIcon,
   SaveAltIcon,
+  SearchIcon,
+  TimesIcon,
   UploadIcon,
 } from '@patternfly/react-icons';
 import { useLocation } from 'react-router-dom';
@@ -47,6 +49,7 @@ import {
   readProjects,
   renameProjectFile,
   saveProjectFile,
+  searchProjectFiles,
   uploadProjectFile,
 } from './api';
 
@@ -167,6 +170,44 @@ function FileTreeNode({ projectId, entry, depth = 0, onSelect, onContextMenu, se
           dirtyPath={dirtyPath}
           expandToPath={expandToPath}
         />
+      ))}
+    </div>
+  );
+}
+
+function SearchResults({ results, onSelect, selectedPath, isLoading }) {
+  if (isLoading) return <Spinner size="md" style={{ margin: 12 }} />;
+  if (results.length === 0) return (
+    <p style={{ color: '#6a6e73', padding: '8px 12px', fontSize: 12 }}>Keine Ergebnisse.</p>
+  );
+  return (
+    <div style={{ overflowY: 'auto', height: '100%' }}>
+      {results.map((entry) => (
+        <div
+          key={entry.path}
+          onClick={() => onSelect(entry)}
+          style={{
+            padding: '3px 8px',
+            cursor: 'pointer',
+            background: selectedPath === entry.path ? '#e8f1fb' : 'transparent',
+            borderRadius: 3,
+            userSelect: 'none',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <FileIcon suffix={entry.suffix} />
+            <span style={{
+              fontSize: 13,
+              color: selectedPath === entry.path ? '#0066cc' : '#151515',
+              fontWeight: 500,
+            }}>
+              {entry.name}
+            </span>
+          </div>
+          <div style={{ fontSize: 11, color: '#6a6e73', paddingLeft: 16, fontFamily: 'monospace' }}>
+            {entry.path}
+          </div>
+        </div>
       ))}
     </div>
   );
@@ -327,6 +368,12 @@ export default function ProjectEditor() {
   const [contextMenu, setContextMenu] = useState(null); // { x, y, entry }
   const [opModal, setOpModal] = useState(null); // { type: 'rename'|'newfile'|'newfolder'|'duplicate', entry, value }
   const [treeKey, setTreeKey] = useState(0); // increment to force tree reload
+
+  // File search
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchTimer = useRef(null);
 
   // Upload modal state
   const [uploadModal, setUploadModal] = useState(false);
@@ -530,6 +577,28 @@ export default function ProjectEditor() {
     }
   };
 
+  // Debounced live file search
+  useEffect(() => {
+    clearTimeout(searchTimer.current);
+    if (!searchQuery.trim() || !projectId) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      return;
+    }
+    setSearchLoading(true);
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const { data } = await searchProjectFiles(projectId, searchQuery.trim());
+        setSearchResults(data.entries || []);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(searchTimer.current);
+  }, [searchQuery, projectId]);
+
   // Browser-Tab schließen warnen bei ungespeicherten Änderungen
   useEffect(() => {
     const handler = (e) => {
@@ -630,29 +699,72 @@ export default function ProjectEditor() {
               minHeight: 0,
             }}
           >
-            {/* File Tree */}
+            {/* File Tree + Search */}
             <div
               style={{
                 width: 260,
                 flexShrink: 0,
                 borderRight: '1px solid #d2d2d2',
                 background: '#fafafa',
-                overflowY: 'auto',
-                padding: '8px 4px',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
               }}
             >
-              <Title headingLevel="h4" size="sm" style={{ padding: '0 8px 6px', color: '#6a6e73' }}>
-                Files
-              </Title>
-              <FileTree
-                projectId={projectId}
-                onSelect={openFile}
-                onContextMenu={handleContextMenu}
-                selectedPath={selectedFile?.path}
-                dirtyPath={dirty ? selectedFile?.path : null}
-                refreshKey={treeKey}
-                expandToPath={expandToPath}
-              />
+              {/* Search input */}
+              <div style={{ padding: '8px 8px 4px', flexShrink: 0 }}>
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <SearchIcon style={{
+                    position: 'absolute', left: 8, color: '#6a6e73', fontSize: 13, pointerEvents: 'none',
+                  }} />
+                  <input
+                    type="text"
+                    placeholder="Search files…"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '4px 28px 4px 28px',
+                      fontSize: 12,
+                      border: '1px solid #d2d2d2',
+                      borderRadius: 4,
+                      background: '#fff',
+                      outline: 'none',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                  {searchQuery && (
+                    <TimesIcon
+                      onClick={() => setSearchQuery('')}
+                      style={{
+                        position: 'absolute', right: 8, color: '#6a6e73', fontSize: 11, cursor: 'pointer',
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* Tree or search results */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: searchQuery ? '4px 4px' : '0 4px' }}>
+                {searchQuery ? (
+                  <SearchResults
+                    results={searchResults}
+                    onSelect={openFile}
+                    selectedPath={selectedFile?.path}
+                    isLoading={searchLoading}
+                  />
+                ) : (
+                  <FileTree
+                    projectId={projectId}
+                    onSelect={openFile}
+                    onContextMenu={handleContextMenu}
+                    selectedPath={selectedFile?.path}
+                    dirtyPath={dirty ? selectedFile?.path : null}
+                    refreshKey={treeKey}
+                    expandToPath={expandToPath}
+                  />
+                )}
+              </div>
             </div>
 
             {/* Editor + LintPanel */}

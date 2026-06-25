@@ -193,6 +193,11 @@ export function listProjectFiles(projectId, path = '') {
     params: path ? { path } : {},
   });
 }
+export function searchProjectFiles(projectId, query) {
+  return LocationsAPI.http.get(`/api/v2/projects/${projectId}/files/`, {
+    params: { search: query },
+  });
+}
 export function readProjectFile(projectId, path) {
   return LocationsAPI.http.get(`/api/v2/projects/${projectId}/files/content/`, {
     params: { path },

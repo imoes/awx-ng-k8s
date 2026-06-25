@@ -1388,11 +1388,29 @@ def _refresh_playbook_cache(pk):
 
 class ProjectFilesListView(APIView):
     """
-    GET /api/v2/projects/{pk}/files/?path=roles/img_docker
-    Returns a directory listing (one level).
+    GET /api/v2/projects/{pk}/files/?path=roles/img_docker  — one-level directory listing
+    GET /api/v2/projects/{pk}/files/?search=docker          — recursive flat search (filename contains)
     """
     def get(self, request, pk, **kwargs):
         project_path = _get_project_path(pk)
+        search = request.query_params.get('search', '').strip().lower()
+
+        if search:
+            matches = []
+            for item in sorted(project_path.rglob('*'), key=lambda p: str(p)):
+                if item.name.startswith('.') or not item.is_file():
+                    continue
+                rel = str(item.relative_to(project_path))
+                if search in item.name.lower() or search in rel.lower():
+                    matches.append({
+                        'name': item.name,
+                        'type': 'file',
+                        'path': rel,
+                        'size': item.stat().st_size,
+                        'suffix': item.suffix,
+                    })
+            return Response({'search': search, 'entries': matches})
+
         rel = request.query_params.get('path', '')
         target = _safe_resolve(project_path, rel) if rel else project_path.resolve()
 
