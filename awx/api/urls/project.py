@@ -19,6 +19,7 @@ from awx.customvars.api import (
     ProjectPlaysView,
     ProjectVariableUsagesView,
     ProjectLaunchView,
+    ProjectGitView,
 )
 
 from awx.api.views import (
@@ -88,6 +89,8 @@ urls = [
     re_path(r'^(?P<pk>[0-9]+)/variable_usages/$', ProjectVariableUsagesView.as_view(), name='project_variable_usages'),
     # awx-ng: launch a job template that belongs to this project with optional limit
     re_path(r'^(?P<pk>[0-9]+)/launch/$', ProjectLaunchView.as_view(), name='project_launch'),
+    # awx-ng: git status / commit / push for projects that are git repos
+    re_path(r'^(?P<pk>[0-9]+)/git/$', ProjectGitView.as_view(), name='project_git'),
 ]
 
 __all__ = ['urls']

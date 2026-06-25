@@ -22,6 +22,7 @@ import {
   PageSection,
   Spinner,
   Text,
+  TextArea,
   TextInput,
   TextVariants,
   Title,
@@ -34,6 +35,7 @@ import {
   ExclamationTriangleIcon,
   FolderIcon,
   FolderOpenIcon,
+  PlusCircleIcon,
   SaveAltIcon,
   SearchIcon,
   TimesIcon,
@@ -41,8 +43,11 @@ import {
 } from '@patternfly/react-icons';
 import { useLocation } from 'react-router-dom';
 import ScreenHeader from 'components/ScreenHeader/ScreenHeader';
+import { OrganizationsAPI, ProjectsAPI } from 'api';
 import {
   deleteProjectFile,
+  gitProjectAction,
+  gitProjectStatus,
   listProjectFiles,
   lintProjectFile,
   readProjectFile,
@@ -381,6 +386,19 @@ export default function ProjectEditor() {
   const [uploadFile, setUploadFile] = useState(null);
   const [uploading, setUploading] = useState(false);
 
+  // Mountpoint project creation
+  const [mountModal, setMountModal] = useState(false);
+  const [mountForm, setMountForm] = useState({ name: '', local_path: '' });
+  const [mountBusy, setMountBusy] = useState(false);
+  const [mountError, setMountError] = useState(null);
+
+  // Git panel
+  const [gitStatus, setGitStatus] = useState(null);
+  const [gitPanel, setGitPanel] = useState(false);
+  const [commitMsg, setCommitMsg] = useState('');
+  const [gitBusy, setGitBusy] = useState(false);
+  const [gitOutput, setGitOutput] = useState(null); // {stdout, stderr, returncode}
+
   const location = useLocation();
   const lintTimer = useRef(null);
   const deeplinkDone = useRef(false);
@@ -416,6 +434,83 @@ export default function ProjectEditor() {
       })
       .catch(() => {});
   }, [location.search]);
+
+  // Reload git status whenever project changes
+  useEffect(() => {
+    setGitStatus(null);
+    if (!projectId) return;
+    gitProjectStatus(projectId)
+      .then(({ data }) => setGitStatus(data))
+      .catch(() => setGitStatus({ is_git_repo: false }));
+  }, [projectId]);
+
+  // ── Mountpoint project creation ──────────────────────────────────────────────
+  const createMountpoint = async () => {
+    setMountBusy(true);
+    setMountError(null);
+    try {
+      const { data: orgs } = await OrganizationsAPI.read({ page_size: 1 });
+      const orgId = orgs.results?.[0]?.id ?? 1;
+      const { data } = await ProjectsAPI.create({
+        name: mountForm.name,
+        scm_type: '',
+        local_path: mountForm.local_path,
+        organization: orgId,
+      });
+      setMountModal(false);
+      setMountForm({ name: '', local_path: '' });
+      const { data: refreshed } = await readProjects({ page_size: 200, order_by: 'name' });
+      setProjects(refreshed.results || []);
+      setProjectId(String(data.id));
+    } catch (e) {
+      setMountError(e?.response?.data || e.message);
+    } finally {
+      setMountBusy(false);
+    }
+  };
+
+  // ── Git operations ────────────────────────────────────────────────────────────
+  const reloadGitStatus = async () => {
+    if (!projectId) return;
+    try {
+      const { data } = await gitProjectStatus(projectId);
+      setGitStatus(data);
+    } catch (_) {
+      setGitStatus({ is_git_repo: false });
+    }
+  };
+
+  const doGitCommit = async () => {
+    setGitBusy(true);
+    setGitOutput(null);
+    try {
+      const { data } = await gitProjectAction(projectId, {
+        action: 'commit',
+        message: commitMsg || undefined,
+      });
+      setGitOutput(data);
+      setCommitMsg('');
+      await reloadGitStatus();
+    } catch (e) {
+      setGitOutput({ stderr: e?.response?.data?.detail || e.message, returncode: 1 });
+    } finally {
+      setGitBusy(false);
+    }
+  };
+
+  const doGitPush = async () => {
+    setGitBusy(true);
+    setGitOutput(null);
+    try {
+      const { data } = await gitProjectAction(projectId, { action: 'push' });
+      setGitOutput(data);
+      await reloadGitStatus();
+    } catch (e) {
+      setGitOutput({ stderr: e?.response?.data?.detail || e.message, returncode: 1 });
+    } finally {
+      setGitBusy(false);
+    }
+  };
 
   // Datei öffnen
   const openFile = useCallback(
@@ -627,7 +722,7 @@ export default function ProjectEditor() {
               flexShrink: 0,
             }}
           >
-            <FormGroup fieldId="pe-project" style={{ margin: 0 }}>
+            <FormGroup fieldId="pe-project" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
               <FormSelect
                 id="pe-project"
                 value={projectId}
@@ -644,6 +739,14 @@ export default function ProjectEditor() {
                   <FormSelectOption key={p.id} value={String(p.id)} label={p.name} />
                 ))}
               </FormSelect>
+              <Button
+                variant="plain"
+                onClick={() => { setMountModal(true); setMountError(null); }}
+                title="Add mountpoint project (bind-mounted directory)"
+                style={{ padding: '4px 6px', color: '#0066cc' }}
+              >
+                <PlusCircleIcon />
+              </Button>
             </FormGroup>
 
             {selectedFile && (
@@ -660,7 +763,7 @@ export default function ProjectEditor() {
               </Text>
             )}
 
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
               <Button
                 variant="secondary"
                 icon={<UploadIcon />}
@@ -669,6 +772,24 @@ export default function ProjectEditor() {
               >
                 Upload
               </Button>
+              {gitStatus?.is_git_repo && (
+                <Button
+                  variant="secondary"
+                  onClick={() => { setGitPanel(true); setGitOutput(null); }}
+                >
+                  Git: {gitStatus.branch}
+                  {gitStatus.ahead > 0 && (
+                    <Label isCompact color="blue" style={{ marginLeft: 6 }}>
+                      {gitStatus.ahead} ahead
+                    </Label>
+                  )}
+                  {gitStatus.status && (
+                    <Label isCompact color="orange" style={{ marginLeft: 6 }}>
+                      dirty
+                    </Label>
+                  )}
+                </Button>
+              )}
               <Button
                 variant="primary"
                 icon={<SaveAltIcon />}
@@ -952,6 +1073,170 @@ export default function ProjectEditor() {
                 </div>
               )}
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Add Mountpoint Project modal ── */}
+      {mountModal && (
+        <Modal
+          title="Add mountpoint project"
+          isOpen
+          variant="small"
+          onClose={() => { setMountModal(false); setMountForm({ name: '', local_path: '' }); }}
+          actions={[
+            <Button
+              key="create"
+              variant="primary"
+              isDisabled={!mountForm.name.trim() || !mountForm.local_path.trim() || mountBusy}
+              isLoading={mountBusy}
+              onClick={createMountpoint}
+            >
+              Create
+            </Button>,
+            <Button key="cancel" variant="link" onClick={() => setMountModal(false)}>
+              Cancel
+            </Button>,
+          ]}
+        >
+          {mountError && (
+            <Alert variant="danger" title="Error" isInline style={{ marginBottom: 12 }}>
+              <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>
+                {typeof mountError === 'string' ? mountError : JSON.stringify(mountError, null, 2)}
+              </pre>
+            </Alert>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>
+                Project name
+              </label>
+              <TextInput
+                autoFocus
+                value={mountForm.name}
+                onChange={(v) => setMountForm((p) => ({ ...p, name: typeof v === 'string' ? v : v?.target?.value ?? '' }))}
+                placeholder="My Ansible repo"
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>
+                Container directory
+              </label>
+              <TextInput
+                value={mountForm.local_path}
+                onChange={(v) => setMountForm((p) => ({ ...p, local_path: typeof v === 'string' ? v : v?.target?.value ?? '' }))}
+                placeholder="ansible03"
+              />
+              <div style={{ marginTop: 4, fontSize: 12, color: '#6a6e73' }}>
+                Name of the directory under <code>/var/lib/awx/projects/</code> inside the container.
+                Must exist as a bind mount before creating.
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Git panel ── */}
+      {gitPanel && gitStatus?.is_git_repo && (
+        <Modal
+          title={`Git — ${gitStatus.branch}${gitStatus.remote ? ` → ${gitStatus.remote}` : ''}`}
+          isOpen
+          variant="large"
+          onClose={() => setGitPanel(false)}
+          actions={[
+            <Button key="close" variant="link" onClick={() => setGitPanel(false)}>
+              Close
+            </Button>,
+          ]}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Status */}
+            {gitStatus.status ? (
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>Working tree changes</div>
+                <pre style={{
+                  background: '#f4f4f4', padding: 8, borderRadius: 4,
+                  fontFamily: 'monospace', fontSize: 12, whiteSpace: 'pre-wrap',
+                  margin: 0,
+                }}>
+                  {gitStatus.status}
+                </pre>
+              </div>
+            ) : (
+              <Alert variant="success" title="Working tree is clean" isInline isPlain />
+            )}
+
+            {/* Commit */}
+            <div>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>Commit all changes</div>
+              <TextArea
+                value={commitMsg}
+                onChange={(v) => setCommitMsg(typeof v === 'string' ? v : v?.target?.value ?? '')}
+                placeholder="Commit message (leave empty for auto-message)"
+                rows={2}
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
+              />
+              <Button
+                variant="primary"
+                style={{ marginTop: 8 }}
+                isDisabled={gitBusy}
+                isLoading={gitBusy}
+                onClick={doGitCommit}
+              >
+                Commit all
+              </Button>
+            </div>
+
+            {/* Push */}
+            {gitStatus.has_remote && (
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  Push to origin
+                  {gitStatus.ahead != null && (
+                    <Label isCompact color={gitStatus.ahead > 0 ? 'blue' : 'grey'} style={{ marginLeft: 8 }}>
+                      {gitStatus.ahead} commit{gitStatus.ahead !== 1 ? 's' : ''} ahead
+                    </Label>
+                  )}
+                </div>
+                <Button
+                  variant="secondary"
+                  isDisabled={gitBusy}
+                  isLoading={gitBusy}
+                  onClick={doGitPush}
+                >
+                  Push
+                </Button>
+              </div>
+            )}
+
+            {/* Output */}
+            {gitOutput && (
+              <Alert
+                variant={gitOutput.returncode === 0 ? 'success' : 'danger'}
+                title={gitOutput.returncode === 0 ? 'Done' : 'Error (exit code ' + gitOutput.returncode + ')'}
+                isInline
+              >
+                {(gitOutput.stdout || gitOutput.stderr) && (
+                  <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, margin: 0 }}>
+                    {[gitOutput.stdout, gitOutput.stderr].filter(Boolean).join('\n')}
+                  </pre>
+                )}
+              </Alert>
+            )}
+
+            {/* Recent commits */}
+            {gitStatus.log && (
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>Recent commits</div>
+                <pre style={{
+                  background: '#f4f4f4', padding: 8, borderRadius: 4,
+                  fontFamily: 'monospace', fontSize: 12, whiteSpace: 'pre-wrap',
+                  margin: 0,
+                }}>
+                  {gitStatus.log}
+                </pre>
+              </div>
+            )}
           </div>
         </Modal>
       )}

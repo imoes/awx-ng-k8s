@@ -231,6 +231,14 @@ export function uploadProjectFile(projectId, targetPath, file) {
   );
 }
 
+// ── Git operations for projects that are git repos ────────────────────────────
+export function gitProjectStatus(projectId) {
+  return LocationsAPI.http.get(`/api/v2/projects/${projectId}/git/`);
+}
+export function gitProjectAction(projectId, payload) {
+  return LocationsAPI.http.post(`/api/v2/projects/${projectId}/git/`, payload);
+}
+
 // ── Personal OAuth2 tokens (work for both /api/v2/ and /mcp) ─────────────────
 export function listMyTokens() {
   return LocationsAPI.http.get('/api/v2/tokens/');

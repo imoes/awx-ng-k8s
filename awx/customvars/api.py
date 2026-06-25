@@ -2111,6 +2111,61 @@ class ProjectVariableUsagesView(APIView):
         })
 
 
+class ProjectGitView(APIView):
+    """
+    GET  /api/v2/projects/{pk}/git/
+         Returns {is_git_repo, branch, status, log, has_remote, remote, ahead}
+    POST /api/v2/projects/{pk}/git/
+         Body: {action: "commit"|"push", message?: str}
+    """
+
+    def _run(self, args, cwd):
+        r = subprocess.run(args, cwd=str(cwd), capture_output=True, text=True, timeout=30)
+        return r.stdout.strip(), r.stderr.strip(), r.returncode
+
+    def get(self, request, pk, **kwargs):
+        project_path = _get_project_path(pk)
+        if not (project_path / '.git').exists():
+            return Response({'is_git_repo': False})
+
+        branch, _, _ = self._run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], project_path)
+        git_status, _, _ = self._run(['git', 'status', '--short'], project_path)
+        log, _, _ = self._run(['git', 'log', '--oneline', '-10'], project_path)
+        remote, _, remote_rc = self._run(['git', 'remote', 'get-url', 'origin'], project_path)
+        ahead_str, _, _ = self._run(
+            ['git', 'rev-list', '--count', 'HEAD@{u}..HEAD'], project_path
+        )
+        return Response({
+            'is_git_repo': True,
+            'branch': branch,
+            'status': git_status,
+            'log': log,
+            'has_remote': remote_rc == 0,
+            'remote': remote if remote_rc == 0 else None,
+            'ahead': int(ahead_str) if ahead_str.isdigit() else None,
+        })
+
+    def post(self, request, pk, **kwargs):
+        project_path = _get_project_path(pk)
+        if not (project_path / '.git').exists():
+            return Response({'detail': 'Not a git repository.'}, status=400)
+
+        action = request.data.get('action')
+        if action == 'commit':
+            message = request.data.get('message') or 'awx-ng editor: manual commit'
+            author = f'{request.user.username} <awx-ng@localhost>'
+            self._run(['git', 'add', '-A'], project_path)
+            out, err, rc = self._run(
+                ['git', 'commit', '-m', message, '--author', author],
+                project_path,
+            )
+            return Response({'stdout': out, 'stderr': err, 'returncode': rc})
+        if action == 'push':
+            out, err, rc = self._run(['git', 'push'], project_path)
+            return Response({'stdout': out, 'stderr': err, 'returncode': rc})
+        return Response({'detail': 'Unknown action. Use commit or push.'}, status=400)
+
+
 class ProjectLaunchView(APIView):
     """
     POST /api/v2/projects/{pk}/launch/
