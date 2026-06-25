@@ -446,16 +446,16 @@ function RunnerSites() {
               </FormSelect>
             </FormGroup>
             <FormGroup
-              label="Machine credential"
+              label="Machine credential — override (optional)"
               fieldId="rs-cred"
-              helperText="Used when the job template has no machine credential of its own (template wins)."
+              helperText="Leave empty to use the site's credential. Set only to override it for this runner."
             >
               <FormSelect
                 id="rs-cred"
                 value={editing.form.ssh_credential_id}
                 onChange={upd('ssh_credential_id')}
               >
-                <FormSelectOption value="" label="— none —" />
+                <FormSelectOption value="" label="— use site default —" />
                 {credentials.map((c) => (
                   <FormSelectOption
                     key={c.id}
@@ -466,9 +466,9 @@ function RunnerSites() {
               </FormSelect>
             </FormGroup>
             <FormGroup
-              label="Environment variables"
+              label="Environment variables — override (optional)"
               fieldId="rs-env"
-              helperText="KEY=VALUE per line — injected into every job that runs on this runner (e.g. https_proxy=http://proxy:80)"
+              helperText="Leave empty to use the site's environment. KEY=VALUE per line; if set, overrides the site default for this runner."
             >
               <TextArea
                 id="rs-env"
@@ -477,16 +477,21 @@ function RunnerSites() {
                 rows={4}
                 resizeOrientation="vertical"
                 style={{ fontFamily: 'monospace', fontSize: 12 }}
-                placeholder={'https_proxy=http://proxy.example.com:80\nhttp_proxy=http://proxy.example.com:80'}
+                placeholder={'(empty = use site default)'}
               />
             </FormGroup>
-            <FormGroup label="ansible.cfg (for this site)" fieldId="rs-cfg">
+            <FormGroup
+              label="ansible.cfg — override (optional)"
+              fieldId="rs-cfg"
+              helperText="Leave empty to use the site's ansible.cfg."
+            >
               <TextArea
                 id="rs-cfg"
                 value={editing.form.ansible_cfg}
                 onChange={upd('ansible_cfg')}
                 rows={8}
                 resizeOrientation="vertical"
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
               />
             </FormGroup>
           </Form>

@@ -34,11 +34,13 @@ function NavExpandableGroup(props) {
       ouiaId={groupId}
       title={groupTitle}
     >
-      {routes.map(({ path, title }) => (
-        <NavItem groupId={groupId} isActive={isActivePath(path)} key={path}>
-          <Link to={path}>{title}</Link>
-        </NavItem>
-      ))}
+      {routes
+        .filter(({ hideNav }) => !hideNav)
+        .map(({ path, title }) => (
+          <NavItem groupId={groupId} isActive={isActivePath(path)} key={path}>
+            <Link to={path}>{title}</Link>
+          </NavItem>
+        ))}
     </NavExpandable>
   );
 }

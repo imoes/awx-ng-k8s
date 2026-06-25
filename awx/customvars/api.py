@@ -109,6 +109,7 @@ class LocationSerializer(drf_serializers.ModelSerializer):
         model = Location
         fields = [
             'id', 'name', 'description', 'instance_group_id',
+            'ssh_credential_id', 'ansible_cfg', 'environment',
             'netbox_site_id', 'netbox_site_slug',
             'source', 'last_synced_at',
             'created_at', 'updated_at',
@@ -282,6 +283,39 @@ class ProjectRolesListView(APIView):
         })
 
 
+# AWX system instance groups that must never be created/renamed/deleted as Sites.
+_SYSTEM_INSTANCE_GROUPS = {'controlplane', 'default'}
+
+
+def _sync_location_instance_group(location, old_name=None):
+    """Keep an AWX InstanceGroup in 1:1 sync with a Site (Location).
+
+    Site name == InstanceGroup name. Creating a Site creates the IG; renaming a
+    Site renames the IG (preserving runner membership). Runner membership itself
+    is maintained by _sync_runner_instance_group.
+    """
+    from awx.main.models import InstanceGroup
+    if (old_name and old_name != location.name
+            and old_name not in _SYSTEM_INSTANCE_GROUPS):
+        ig = InstanceGroup.objects.filter(name=old_name).first()
+        if ig:
+            ig.name = location.name
+            ig.save(update_fields=['name'])
+            return
+    if location.name not in _SYSTEM_INSTANCE_GROUPS:
+        InstanceGroup.objects.get_or_create(name=location.name)
+
+
+def _delete_location_instance_group(location):
+    """Delete the IG backing a Site, unless it is a system group."""
+    from awx.main.models import InstanceGroup
+    if location.name in _SYSTEM_INSTANCE_GROUPS:
+        return
+    ig = InstanceGroup.objects.filter(name=location.name).first()
+    if ig:
+        ig.delete()
+
+
 class LocationListView(generics.ListCreateAPIView):
     """GET/POST /api/v2/locations/"""
     serializer_class = LocationSerializer
@@ -289,11 +323,24 @@ class LocationListView(generics.ListCreateAPIView):
     filter_backends = [filters.SearchFilter]
     search_fields = ['name', 'description', 'netbox_site_slug']
 
+    def perform_create(self, serializer):
+        loc = serializer.save()
+        _sync_location_instance_group(loc)
+
 
 class LocationDetailView(generics.RetrieveUpdateDestroyAPIView):
     """GET/PATCH/DELETE /api/v2/locations/{id}/"""
     serializer_class = LocationSerializer
     queryset = Location.objects.all()
+
+    def perform_update(self, serializer):
+        old_name = serializer.instance.name
+        loc = serializer.save()
+        _sync_location_instance_group(loc, old_name=old_name)
+
+    def perform_destroy(self, instance):
+        _delete_location_instance_group(instance)
+        instance.delete()
 
 
 # ── Survey-Generierung ────────────────────────────────────────────────────────
@@ -984,22 +1031,40 @@ def _resolve_location_instance_group(location_id):
     return InstanceGroup.objects.filter(name=loc.name).first()
 
 
-def _resolve_location_credential(location_id):
-    """Return the Machine-Credential of a runner at this Location, or None.
+def _effective_setting(enl, field):
+    """Effective connection setting for a runner: per-runner override wins, Site is fallback.
 
-    Used as a fallback at launch time: when a Job Template has no machine
-    credential of its own, the site's runner credential is injected. The
-    template always wins when it carries its own machine credential.
+    `enl` is an ExecutionNodeLocation (the runner). For `field` in
+    {ssh_credential_id, ansible_cfg, environment}, return the runner's own value
+    when set (truthy), otherwise the value from its Site (Location).
+    """
+    runner_val = getattr(enl, field, None)
+    if runner_val:
+        return runner_val
+    loc = enl.location
+    return getattr(loc, field, None) if loc else None
+
+
+def _resolve_location_credential(location_id):
+    """Return the Machine-Credential for a Location, or None.
+
+    Used at launch time (before AWX has picked a specific runner), so it resolves
+    at Site level: the Site's own credential first, else any runner in that Site
+    that carries one. The job template always wins when it has its own credential.
     """
     if not location_id:
         return None
     from awx.main.models import Credential
-    enl = (ExecutionNodeLocation.objects
-           .filter(location_id=location_id, ssh_credential_id__isnull=False)
-           .first())
-    if not enl:
+    loc = Location.objects.filter(pk=location_id).first()
+    cred_id = loc.ssh_credential_id if loc else None
+    if not cred_id:
+        enl = (ExecutionNodeLocation.objects
+               .filter(location_id=location_id, ssh_credential_id__isnull=False)
+               .first())
+        cred_id = enl.ssh_credential_id if enl else None
+    if not cred_id:
         return None
-    return Credential.objects.filter(pk=enl.ssh_credential_id).first()
+    return Credential.objects.filter(pk=cred_id).first()
 
 
 def _inject_runner_credential(job, location_id):
@@ -1038,16 +1103,16 @@ def inject_runner_credential_for_job(job_pk):
         if execution_node:
             enl = ExecutionNodeLocation.objects.filter(instance_hostname=execution_node).first()
         if enl is None:
-            runners = ExecutionNodeLocation.objects.exclude(
-                ssh_credential_id__isnull=True, environment=''
-            )
+            runners = ExecutionNodeLocation.objects.all()
             if runners.count() == 1:
                 enl = runners.first()
         if enl is None:
             return
 
-        if job.machine_credential is None and enl.ssh_credential_id:
-            cred = Credential.objects.filter(pk=enl.ssh_credential_id).first()
+        # Per-runner credential wins, Site credential is the fallback.
+        cred_id = _effective_setting(enl, 'ssh_credential_id')
+        if job.machine_credential is None and cred_id:
+            cred = Credential.objects.filter(pk=cred_id).first()
             if cred is not None:
                 job.credentials.add(cred)
                 log.info('auto-injected runner credential %s into job %s', cred.name, job_pk)

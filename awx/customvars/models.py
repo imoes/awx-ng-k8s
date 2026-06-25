@@ -147,6 +147,12 @@ class Location(models.Model):
     netbox_site_slug = models.CharField(max_length=100, blank=True)
     source = models.CharField(max_length=15, choices=SOURCE_CHOICES, default=SOURCE_LOCAL)
     last_synced_at = models.DateTimeField(null=True, blank=True)
+    # ── Site-weite Ansible-Verbindungs-Defaults ─────────────────────────────
+    # Gelten für alle Runner dieser Site (= Instance Group). Ein einzelner Runner
+    # kann sie per ExecutionNodeLocation überschreiben (Runner-Override gewinnt).
+    ssh_credential_id = models.IntegerField(null=True, blank=True)  # AWX Credential pk (Machine/SSH)
+    ansible_cfg = models.TextField(blank=True)                       # roher ansible.cfg-Inhalt
+    environment = models.TextField(blank=True)                       # KEY=VALUE per line, injected into job env
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

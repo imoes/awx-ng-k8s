@@ -1,5 +1,7 @@
 /* eslint-disable i18next/no-literal-string */
-// awx-ng: Locations (sites) — searchable list with NetBox reconcile.
+// awx-ng: Sites — a Site is a named group of runners and maps 1:1 to an AWX
+// Instance Group. Site-level SSH credential / ansible.cfg / environment apply to
+// all runners of the site; a single runner may override them (runner wins).
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Button,
@@ -9,7 +11,10 @@ import {
   Modal,
   Form,
   FormGroup,
+  FormSelect,
+  FormSelectOption,
   TextInput,
+  TextArea,
   Alert,
   Spinner,
   Toolbar,
@@ -31,33 +36,46 @@ import useRequest from 'hooks/useRequest';
 import {
   LocationsAPI,
   reconcileLocations,
+  listMachineCredentials,
 } from './api';
 
+const EMPTY_FORM = {
+  name: '',
+  description: '',
+  ssh_credential_id: '',
+  ansible_cfg: '',
+  environment: '',
+};
+
 function Locations() {
-  const [isCreateOpen, setCreateOpen] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newDesc, setNewDesc] = useState('');
+  const [editing, setEditing] = useState(null); // { id?, ...form } or null
   const [reconcileResult, setReconcileResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState(null);
   const [search, setSearch] = useState('');
 
   const {
-    result: locations,
+    result: { locations, credentials },
     isLoading,
     error,
-    request: fetchLocations,
+    request: fetchAll,
   } = useRequest(
     useCallback(async () => {
-      const { data } = await LocationsAPI.read({ page_size: 1000 });
-      return data.results;
+      const [l, c] = await Promise.all([
+        LocationsAPI.read({ page_size: 1000 }),
+        listMachineCredentials(),
+      ]);
+      return {
+        locations: l.data.results,
+        credentials: c.data.results,
+      };
     }, []),
-    []
+    { locations: [], credentials: [] }
   );
 
   useEffect(() => {
-    fetchLocations();
-  }, [fetchLocations]);
+    fetchAll();
+  }, [fetchAll]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -70,19 +88,67 @@ function Locations() {
     );
   }, [locations, search]);
 
-  const handleCreate = async () => {
+  const openCreate = () => {
+    setEditing({ ...EMPTY_FORM });
+    setActionError(null);
+  };
+
+  const openEdit = (loc) => {
+    setEditing({
+      id: loc.id,
+      name: loc.name || '',
+      description: loc.description || '',
+      ssh_credential_id: loc.ssh_credential_id ?? '',
+      ansible_cfg: loc.ansible_cfg || '',
+      environment: loc.environment || '',
+    });
+    setActionError(null);
+  };
+
+  const upd = (field) => (v) =>
+    setEditing((p) => ({ ...p, [field]: v }));
+
+  const handleSave = async () => {
     setBusy(true);
     setActionError(null);
+    const payload = {
+      name: editing.name,
+      description: editing.description,
+      ssh_credential_id: editing.ssh_credential_id
+        ? Number(editing.ssh_credential_id)
+        : null,
+      ansible_cfg: editing.ansible_cfg,
+      environment: editing.environment,
+    };
     try {
-      await LocationsAPI.create({ name: newName, description: newDesc });
-      setCreateOpen(false);
-      setNewName('');
-      setNewDesc('');
-      fetchLocations();
+      if (editing.id) {
+        await LocationsAPI.update(editing.id, payload);
+      } else {
+        await LocationsAPI.create(payload);
+      }
+      setEditing(null);
+      fetchAll();
     } catch (e) {
       setActionError(e?.response?.data || e.message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleDelete = async (loc) => {
+    // eslint-disable-next-line no-alert
+    if (
+      !window.confirm(
+        `Delete site "${loc.name}"? This also removes its instance group.`
+      )
+    )
+      return;
+    setActionError(null);
+    try {
+      await LocationsAPI.destroy(loc.id);
+      fetchAll();
+    } catch (e) {
+      setActionError(e?.response?.data || e.message);
     }
   };
 
@@ -92,7 +158,7 @@ function Locations() {
     try {
       const { data } = await reconcileLocations();
       setReconcileResult(data);
-      fetchLocations();
+      fetchAll();
     } catch (e) {
       setActionError(e?.response?.data || e.message);
     } finally {
@@ -123,7 +189,7 @@ function Locations() {
                   />
                 </ToolbarItem>
                 <ToolbarItem>
-                  <Button variant="primary" onClick={() => setCreateOpen(true)}>
+                  <Button variant="primary" onClick={openCreate}>
                     Add site
                   </Button>
                 </ToolbarItem>
@@ -165,13 +231,14 @@ function Locations() {
             ) : error ? (
               <Alert variant="danger" title="Failed to load" isInline />
             ) : (
-              <TableComposable aria-label="Locations" variant="compact">
+              <TableComposable aria-label="Sites" variant="compact">
                 <Thead>
                   <Tr>
                     <Th>Name</Th>
                     <Th>Description</Th>
                     <Th>Source</Th>
                     <Th>NetBox slug</Th>
+                    <Th>Actions</Th>
                   </Tr>
                 </Thead>
                 <Tbody>
@@ -183,6 +250,24 @@ function Locations() {
                         <Label isCompact>{loc.source}</Label>
                       </Td>
                       <Td dataLabel="NetBox slug">{loc.netbox_site_slug}</Td>
+                      <Td dataLabel="Actions">
+                        <Button
+                          variant="link"
+                          isInline
+                          onClick={() => openEdit(loc)}
+                        >
+                          edit
+                        </Button>
+                        {' · '}
+                        <Button
+                          variant="link"
+                          isInline
+                          isDanger
+                          onClick={() => handleDelete(loc)}
+                        >
+                          delete
+                        </Button>
+                      </Td>
                     </Tr>
                   ))}
                 </Tbody>
@@ -192,42 +277,92 @@ function Locations() {
         </Card>
       </PageSection>
 
-      <Modal
-        title="Add site"
-        isOpen={isCreateOpen}
-        variant="small"
-        onClose={() => setCreateOpen(false)}
-        actions={[
-          <Button
-            key="create"
-            variant="primary"
-            onClick={handleCreate}
-            isDisabled={!newName || busy}
-          >
-            Add
-          </Button>,
-          <Button key="cancel" variant="link" onClick={() => setCreateOpen(false)}>
-            Cancel
-          </Button>,
-        ]}
-      >
-        <Form>
-          <FormGroup label="Name" isRequired fieldId="loc-name">
-            <TextInput
-              id="loc-name"
-              value={newName}
-              onChange={(v) => setNewName(v)}
-            />
-          </FormGroup>
-          <FormGroup label="Description" fieldId="loc-desc">
-            <TextInput
-              id="loc-desc"
-              value={newDesc}
-              onChange={(v) => setNewDesc(v)}
-            />
-          </FormGroup>
-        </Form>
-      </Modal>
+      {editing && (
+        <Modal
+          title={editing.id ? `Edit site — ${editing.name}` : 'Add site'}
+          isOpen
+          variant="medium"
+          onClose={() => setEditing(null)}
+          actions={[
+            <Button
+              key="save"
+              variant="primary"
+              onClick={handleSave}
+              isDisabled={!editing.name || busy}
+            >
+              Save
+            </Button>,
+            <Button key="cancel" variant="link" onClick={() => setEditing(null)}>
+              Cancel
+            </Button>,
+          ]}
+        >
+          <Form>
+            <FormGroup label="Name" isRequired fieldId="loc-name">
+              <TextInput
+                id="loc-name"
+                value={editing.name}
+                onChange={upd('name')}
+              />
+            </FormGroup>
+            <FormGroup label="Description" fieldId="loc-desc">
+              <TextInput
+                id="loc-desc"
+                value={editing.description}
+                onChange={upd('description')}
+              />
+            </FormGroup>
+            <FormGroup
+              label="Machine credential (site default)"
+              fieldId="loc-cred"
+              helperText="Used by all runners of this site unless a runner overrides it; and when the job template has no machine credential of its own."
+            >
+              <FormSelect
+                id="loc-cred"
+                value={editing.ssh_credential_id}
+                onChange={upd('ssh_credential_id')}
+              >
+                <FormSelectOption value="" label="— none —" />
+                {credentials.map((c) => (
+                  <FormSelectOption
+                    key={c.id}
+                    value={c.id}
+                    label={`${c.name} (#${c.id})`}
+                  />
+                ))}
+              </FormSelect>
+            </FormGroup>
+            <FormGroup
+              label="Environment variables (site default)"
+              fieldId="loc-env"
+              helperText="KEY=VALUE per line — injected into every job that runs on this site (e.g. https_proxy=http://proxy:80). A runner can override."
+            >
+              <TextArea
+                id="loc-env"
+                value={editing.environment}
+                onChange={upd('environment')}
+                rows={4}
+                resizeOrientation="vertical"
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
+                placeholder={'https_proxy=http://proxy.example.com:80\nhttp_proxy=http://proxy.example.com:80'}
+              />
+            </FormGroup>
+            <FormGroup
+              label="ansible.cfg (site default)"
+              fieldId="loc-cfg"
+            >
+              <TextArea
+                id="loc-cfg"
+                value={editing.ansible_cfg}
+                onChange={upd('ansible_cfg')}
+                rows={6}
+                resizeOrientation="vertical"
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
+              />
+            </FormGroup>
+          </Form>
+        </Modal>
+      )}
     </>
   );
 }

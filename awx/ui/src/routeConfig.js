@@ -173,14 +173,19 @@ function getRouteConfig(userProfile = {}) {
           screen: ManagementJobs,
         },
         {
+          // awx-ng: replaced in the nav by "Sites"; route kept for deep-links
+          // (e.g. instance-group links from job details). hideNav hides it.
           title: <Trans>Instance Groups</Trans>,
           path: '/instance_groups',
           screen: InstanceGroups,
+          hideNav: true,
         },
         {
+          // awx-ng: replaced in the nav by "Runners"; route kept for deep-links.
           title: <Trans>Instances</Trans>,
           path: '/instances',
           screen: Instances,
+          hideNav: true,
         },
         {
           title: <Trans>Applications</Trans>,
