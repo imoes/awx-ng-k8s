@@ -161,15 +161,14 @@ function JobTemplateForm({
   // awx-ng: when the template already has instanceGroups, pre-select the matching location
   useEffect(() => {
     if (instanceGroupsField.value?.length === 1 && locations.length > 0) {
-      const match = locations.find(
-        (l) => l.name === instanceGroupsField.value[0].name
-      );
+      const igName = instanceGroupsField.value[0].name;
+      const match = locations.find((l) => l.location_name === igName);
       if (match && !selectedLocation) setSelectedLocation(match);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locations, instanceGroupsField.value]);
 
-  // awx-ng: when a location is selected, look up the IG with that name and wire it in
+  // awx-ng: when a location is selected, look up the IG by execution node hostname and wire it in
   const handleLocationChange = useCallback(
     async (location) => {
       setSelectedLocation(location);
@@ -178,7 +177,9 @@ function JobTemplateForm({
         return;
       }
       try {
-        const { data } = await InstanceGroupsAPI.read({ name: location.name });
+        const { data } = await InstanceGroupsAPI.read({
+          instances__hostname: location.instance_hostname,
+        });
         if (data.results?.length > 0) {
           instanceGroupsHelpers.setValue([data.results[0]]);
         } else {
@@ -363,7 +364,7 @@ function JobTemplateForm({
               ...locations.map((l) => ({
                 value: l.id,
                 key: l.id,
-                label: l.name,
+                label: l.location_name || l.instance_hostname,
                 isDisabled: false,
               })),
             ]}
@@ -371,7 +372,7 @@ function JobTemplateForm({
               if (!value) {
                 handleLocationChange(null);
               } else {
-                const loc = locations.find((l) => l.id === parseInt(value, 10));
+                const loc = locations.find((l) => l.id === value);
                 handleLocationChange(loc || null);
               }
             }}
