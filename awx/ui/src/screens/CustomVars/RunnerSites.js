@@ -45,6 +45,10 @@ import {
   listMachineCredentials,
 } from './api';
 
+function deleteExecNodeLocation(id) {
+  return ExecNodeLocationsAPI.destroy(id);
+}
+
 const STATE_COLORS = {
   ready: 'green',
   installed: 'blue',
@@ -102,6 +106,7 @@ function RunnerSites() {
         location: a?.location || '',
         ssh_credential_id: a?.ssh_credential_id ?? '',
         ansible_cfg: a?.ansible_cfg || '',
+        environment: a?.environment || '',
       },
     });
     setActionError(null);
@@ -121,9 +126,27 @@ function RunnerSites() {
         ? Number(form.ssh_credential_id)
         : null,
       ansible_cfg: form.ansible_cfg,
+      environment: form.environment,
     };
     try {
       await upsertExecNodeLocation(assignment, payload);
+      setEditing(null);
+      fetchAll();
+    } catch (e) {
+      setActionError(e?.response?.data || e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteAssignment = async () => {
+    const { assignment } = editing;
+    if (!assignment?.id) return;
+    // eslint-disable-next-line no-alert
+    if (!window.confirm('Remove site assignment for this runner?')) return;
+    setBusy(true);
+    try {
+      await deleteExecNodeLocation(assignment.id);
       setEditing(null);
       fetchAll();
     } catch (e) {
@@ -397,6 +420,11 @@ function RunnerSites() {
             <Button key="cancel" variant="link" onClick={() => setEditing(null)}>
               Cancel
             </Button>,
+            ...(editing.assignment?.id ? [
+              <Button key="delete" variant="link" isDanger onClick={deleteAssignment} isDisabled={busy} style={{ marginLeft: 'auto' }}>
+                Remove assignment
+              </Button>,
+            ] : []),
           ]}
         >
           {actionError && (
@@ -437,12 +465,27 @@ function RunnerSites() {
                 ))}
               </FormSelect>
             </FormGroup>
+            <FormGroup
+              label="Environment variables"
+              fieldId="rs-env"
+              helperText="KEY=VALUE per line — injected into every job that runs on this runner (e.g. https_proxy=http://proxy:80)"
+            >
+              <TextArea
+                id="rs-env"
+                value={editing.form.environment}
+                onChange={upd('environment')}
+                rows={4}
+                resizeOrientation="vertical"
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
+                placeholder={'https_proxy=http://proxy.example.com:80\nhttp_proxy=http://proxy.example.com:80'}
+              />
+            </FormGroup>
             <FormGroup label="ansible.cfg (for this site)" fieldId="rs-cfg">
               <TextArea
                 id="rs-cfg"
                 value={editing.form.ansible_cfg}
                 onChange={upd('ansible_cfg')}
-                rows={12}
+                rows={8}
                 resizeOrientation="vertical"
               />
             </FormGroup>

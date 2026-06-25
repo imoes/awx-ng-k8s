@@ -74,7 +74,7 @@ class ExecutionNodeLocationSerializer(drf_serializers.ModelSerializer):
         model = ExecutionNodeLocation
         fields = [
             'id', 'instance_hostname', 'location', 'location_name',
-            'ssh_credential_id', 'ansible_cfg',
+            'ssh_credential_id', 'ansible_cfg', 'environment',
             'description', 'created_at', 'updated_at',
         ]
 
@@ -1011,8 +1011,20 @@ def _inject_runner_credential(job, location_id):
         job.credentials.add(cred)
 
 
+def _parse_env_text(text):
+    """Parse KEY=VALUE lines into a dict. Ignores blank lines and # comments."""
+    result = {}
+    for line in (text or '').splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, _, value = line.partition('=')
+        result[key.strip()] = value.strip()
+    return result
+
+
 def inject_runner_credential_for_job(job_pk):
-    """Inject the runner credential for a job started via native AWX UI.
+    """Inject the runner credential and environment variables for a job.
 
     Called via post_save signal (on_commit) so template credentials are already
     copied before we check machine_credential. Matches runner by execution_node
@@ -1021,24 +1033,26 @@ def inject_runner_credential_for_job(job_pk):
     try:
         from awx.main.models import Job, Credential
         job = Job.objects.get(pk=job_pk)
-        if job.machine_credential is not None:
-            return
         enl = None
         execution_node = job.execution_node or job.controller_node
         if execution_node:
-            enl = (ExecutionNodeLocation.objects
-                   .filter(instance_hostname=execution_node, ssh_credential_id__isnull=False)
-                   .first())
+            enl = ExecutionNodeLocation.objects.filter(instance_hostname=execution_node).first()
         if enl is None:
-            runners = ExecutionNodeLocation.objects.filter(ssh_credential_id__isnull=False)
+            runners = ExecutionNodeLocation.objects.exclude(
+                ssh_credential_id__isnull=True, environment=''
+            )
             if runners.count() == 1:
                 enl = runners.first()
         if enl is None:
             return
-        cred = Credential.objects.filter(pk=enl.ssh_credential_id).first()
-        if cred is not None:
-            job.credentials.add(cred)
-            log.info('auto-injected runner credential %s into job %s', cred.name, job_pk)
+
+        if job.machine_credential is None and enl.ssh_credential_id:
+            cred = Credential.objects.filter(pk=enl.ssh_credential_id).first()
+            if cred is not None:
+                job.credentials.add(cred)
+                log.info('auto-injected runner credential %s into job %s', cred.name, job_pk)
+
+        # Environment variables are injected at build_env() time in jobs.py
     except Exception:
         log.exception('inject_runner_credential_for_job failed for job %s', job_pk)
 

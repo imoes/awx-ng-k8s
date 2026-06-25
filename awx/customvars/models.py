@@ -182,6 +182,7 @@ class ExecutionNodeLocation(models.Model):
     # ── Site-spezifische Ansible-Verbindungsparameter ──────────────────────
     ssh_credential_id = models.IntegerField(null=True, blank=True)  # AWX Credential pk (Machine/SSH)
     ansible_cfg = models.TextField(blank=True)                       # roher ansible.cfg-Inhalt
+    environment = models.TextField(blank=True)                       # KEY=VALUE per line, injected into job env
     description = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
