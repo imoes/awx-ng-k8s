@@ -178,17 +178,22 @@ Ohne `**kwargs`: `TypeError: got an unexpected keyword argument 'version'` — A
 
 **`_ansible_vault_encrypt()` Algorithmus** (Vault 1.2 Format):
 - PBKDF2-SHA256: salt=32B, 10000 Iterations, dklen=80 → key1 (32B AES) + key2 (32B HMAC) + iv (16B)
-- AES-256-CTR mit exakt 16-Byte-Nonce (`key_material[64:80]`, NICHT 20 Bytes!)
+- **PKCS7-Padding auf 16-Byte-Blockgröße VOR der Verschlüsselung** (Ansible macht das auch bei CTR!)
+- AES-256-CTR mit exakt 16-Byte-Nonce (`key_material[64:80]`)
 - HMAC-SHA256 über Ciphertext
 - Header: `$ANSIBLE_VAULT;1.2;AES256;{vault_id}`, Body als 80-Zeichen-Hex-Zeilen
+- Ohne PKCS7-Padding: Entschlüsselung schlägt mit `Invalid padding bytes` fehl
 
 **Auto-Injection**: `inject_runner_credential_for_job()` injiziert alle Vault-Credentials beim Job-Start automatisch.
 
 **Playbook-Verwendung**:
 ```yaml
 vars_files:
-  - vault-meine-vault.yml   # per POST /api/v2/vaults/{id}/generate/ erzeugt
-```
+  - vault-freeipa_client.yml   # Pfad relativ zum Playbook! → bei playbooks/docker.yml liegt
+```                             # die Vault-Datei unter playbooks/vault-freeipa_client.yml
+
+**Workflow**: Vault anlegen → Variablen setzen → "Generate" → Datei in Projektpfad schreiben →
+`vars_files` im Playbook (Pfad relativ zum Playbook-Verzeichnis!)
 
 ### Playbook-Cache
 `project.playbook_files` (JSONField) wird nur beim Project-Sync aktualisiert.  
