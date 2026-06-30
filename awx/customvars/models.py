@@ -179,7 +179,8 @@ class AnsibleVault(models.Model):
     description = models.TextField(blank=True)
     vault_password = models.CharField(max_length=64)   # auto-generated, stored plaintext
     awx_credential_id = models.IntegerField(null=True, blank=True)
-    variables = models.JSONField(default=dict)           # {key: value, ...} plaintext
+    variables = models.JSONField(default=dict)                # {key: value, ...} plaintext
+    linked_job_template_ids = models.JSONField(default=list)  # [job_template_id, ...]
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

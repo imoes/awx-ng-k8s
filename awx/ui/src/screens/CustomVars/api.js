@@ -276,3 +276,6 @@ export function generateVaultFile(id, projectId) {
     projectId ? { project_id: projectId } : {}
   );
 }
+export function listJobTemplates() {
+  return LocationsAPI.http.get('/api/v2/job_templates/?page_size=200&order_by=name');
+}

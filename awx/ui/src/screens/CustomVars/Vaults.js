@@ -1,6 +1,5 @@
 /* eslint-disable i18next/no-literal-string */
-// awx-ng: Ansible Vault Store — manage named vaults with key-value variables.
-// Vault files are generated via ansible-vault encrypt and injected at job runtime.
+// awx-ng: Ansible Vault Store — link vaults to job templates; variables are injected automatically.
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
@@ -40,9 +39,10 @@ import {
   deleteVault,
   generateVaultFile,
   readProjects,
+  listJobTemplates,
 } from './api';
 
-const EMPTY_FORM = { name: '', description: '', variables: {} };
+const EMPTY_FORM = { name: '', description: '', variables: {}, linkedTemplateIds: [] };
 
 function VaultVariableEditor({ variables, onChange }) {
   const [entries, setEntries] = useState(() =>
@@ -116,6 +116,7 @@ function Vaults() {
   const [generateTarget, setGenerateTarget] = useState(null);
   const [generateResult, setGenerateResult] = useState(null);
   const [projects, setProjects] = useState([]);
+  const [jobTemplates, setJobTemplates] = useState([]);
   const [generateProjectId, setGenerateProjectId] = useState('');
   const [generateBusy, setGenerateBusy] = useState(false);
   const [generateError, setGenerateError] = useState(null);
@@ -133,6 +134,9 @@ function Vaults() {
     readProjects({ page_size: 200, order_by: 'name' }).then(({ data }) =>
       setProjects(data.results || [])
     ).catch(() => {});
+    listJobTemplates().then(({ data }) =>
+      setJobTemplates(data.results || [])
+    ).catch(() => {});
   }, [fetchVaults]);
 
   const filtered = vaults.filter(
@@ -144,7 +148,13 @@ function Vaults() {
 
   const openCreate = () => setEditing({ ...EMPTY_FORM });
   const openEdit = (v) =>
-    setEditing({ id: v.id, name: v.name, description: v.description, variables: v.variables || {} });
+    setEditing({
+      id: v.id,
+      name: v.name,
+      description: v.description,
+      variables: v.variables || {},
+      linkedTemplateIds: v.linked_job_template_ids || [],
+    });
 
   const save = async () => {
     setBusy(true);
@@ -154,6 +164,7 @@ function Vaults() {
         const { data } = await updateVault(editing.id, {
           description: editing.description,
           variables: editing.variables,
+          linked_job_template_ids: editing.linkedTemplateIds,
         });
         setVaults((prev) => prev.map((v) => (v.id === editing.id ? { ...v, ...data } : v)));
       } else {
@@ -161,6 +172,7 @@ function Vaults() {
           name: editing.name,
           description: editing.description,
           variables: editing.variables,
+          linked_job_template_ids: editing.linkedTemplateIds,
         });
         setVaults((prev) => [...prev, data]);
       }
@@ -250,7 +262,7 @@ function Vaults() {
                   <Tr>
                     <Th>Name / Vault-ID</Th>
                     <Th>Variables</Th>
-                    <Th>Description</Th>
+                    <Th>Linked Job Templates</Th>
                     <Th>Actions</Th>
                   </Tr>
                 </Thead>
@@ -268,11 +280,28 @@ function Vaults() {
                         <span style={{ fontSize: 11, color: '#666' }}>vault-id: {v.vault_id}</span>
                       </Td>
                       <Td>{v.variable_count ?? Object.keys(v.variables || {}).length}</Td>
-                      <Td>{v.description}</Td>
+                      <Td>
+                        {(v.linked_job_template_ids || []).length === 0 ? (
+                          <span style={{ color: '#888', fontSize: 12 }}>none</span>
+                        ) : (
+                          (v.linked_job_template_ids || []).map((id) => {
+                            const jt = jobTemplates.find((t) => t.id === id);
+                            return (
+                              <span key={id} style={{
+                                display: 'inline-block', background: '#e7f3ff',
+                                border: '1px solid #b0d4f1', borderRadius: 3,
+                                padding: '1px 6px', marginRight: 4, fontSize: 11,
+                              }}>
+                                {jt ? jt.name : `#${id}`}
+                              </span>
+                            );
+                          })
+                        )}
+                      </Td>
                       <Td>
                         <Button variant="link" onClick={() => openEdit(v)}>Edit</Button>
                         {' '}
-                        <Button variant="link" onClick={() => openGenerate(v)}>Generate</Button>
+                        <Button variant="link" onClick={() => openGenerate(v)}>Generate file</Button>
                         {' '}
                         <Button variant="link" isDanger onClick={() => remove(v.id)}>Delete</Button>
                       </Td>
@@ -303,20 +332,14 @@ function Vaults() {
           <Alert
             variant="info"
             isInline
-            title="Usage"
+            title="How it works"
             style={{ marginBottom: 16 }}
           >
-            After saving, click <strong>Generate</strong> to write the encrypted vault file into
-            your project. Then reference it in your playbook:
-            <pre style={{ margin: '8px 0 4px', fontSize: 12 }}>
-              {'vars_files:\n  - vault-' + (editing.name || '<name>') + '.yml'}
-            </pre>
-            <strong>Important:</strong> the path in <code>vars_files</code> is relative to the
-            playbook file. If your playbook is in <code>playbooks/</code>, the vault file must
-            also be placed in <code>playbooks/vault-{editing.name || '<name>'}.yml</code>.
+            Link this vault to one or more job templates below. When a linked job runs,
+            the vault variables are <strong>automatically injected as extra vars</strong> —
+            no <code>vars_files</code>, no vault file placement needed.
             <br />
-            The vault password is auto-generated and injected automatically at job runtime.
-            Re-run <strong>Generate</strong> whenever variables change.
+            The vault password is auto-generated and managed entirely by awx-ng.
           </Alert>
           <Form>
             <FormGroup label="Vault name (= vault-id)" isRequired>
@@ -334,6 +357,31 @@ function Vaults() {
                 onChange={(v) => setEditing((s) => ({ ...s, description: v }))}
                 rows={2}
               />
+            </FormGroup>
+            <FormGroup
+              label="Linked Job Templates"
+              helperText="Variables are auto-injected into every run of these templates."
+            >
+              <select
+                multiple
+                size={Math.min(8, Math.max(3, jobTemplates.length))}
+                value={(editing.linkedTemplateIds || []).map(String)}
+                onChange={(e) => {
+                  const selected = Array.from(e.target.selectedOptions).map((o) => Number(o.value));
+                  setEditing((s) => ({ ...s, linkedTemplateIds: selected }));
+                }}
+                style={{
+                  width: '100%', border: '1px solid #ddd', borderRadius: 4,
+                  padding: '4px', fontFamily: 'inherit', fontSize: 14,
+                }}
+              >
+                {jobTemplates.map((jt) => (
+                  <option key={jt.id} value={jt.id}>{jt.name}</option>
+                ))}
+              </select>
+              {jobTemplates.length === 0 && (
+                <span style={{ fontSize: 12, color: '#888' }}>Loading job templates…</span>
+              )}
             </FormGroup>
             <FormGroup label="Variables">
               <VaultVariableEditor

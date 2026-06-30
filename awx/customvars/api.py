@@ -1134,14 +1134,24 @@ def inject_runner_credential_for_job(job_pk):
 
         # Environment variables are injected at build_env() time in jobs.py
 
-        # Inject all vault credentials so ansible can decrypt vault-encrypted files
+        # Inject variables from vaults linked to this job template into extra_vars
         try:
-            vault_cred_ids = list(AnsibleVault.objects.values_list('awx_credential_id', flat=True))
-            for cred in Credential.objects.filter(pk__in=vault_cred_ids):
-                job.credentials.add(cred)
-                log.info('auto-injected vault credential %s into job %s', cred.name, job_pk)
+            import json as _json
+            template_id = job.unified_job_template_id
+            if template_id:
+                linked = AnsibleVault.objects.filter(
+                    linked_job_template_ids__contains=[template_id]
+                )
+                if linked.exists():
+                    existing = _json.loads(job.extra_vars) if job.extra_vars else {}
+                    for vault in linked:
+                        existing.update(vault.variables)
+                        log.info('injected vault "%s" variables into job %s extra_vars',
+                                 vault.name, job_pk)
+                    job.extra_vars = _json.dumps(existing)
+                    job.save(update_fields=['extra_vars'])
         except Exception:
-            log.exception('vault credential injection failed for job %s', job_pk)
+            log.exception('vault variable injection failed for job %s', job_pk)
 
     except Exception:
         log.exception('inject_runner_credential_for_job failed for job %s', job_pk)
@@ -2237,6 +2247,7 @@ def _vault_repr(vault):
         'variable_count': len(vault.variables),
         'awx_credential_id': vault.awx_credential_id,
         'variables': vault.variables,
+        'linked_job_template_ids': vault.linked_job_template_ids,
         'created_at': vault.created_at.isoformat(),
         'updated_at': vault.updated_at.isoformat(),
     }
@@ -2353,7 +2364,7 @@ class VaultDetailView(APIView):
 
     def patch(self, request, pk, **kwargs):
         vault = self._get(pk)
-        for field in ('description', 'variables'):
+        for field in ('description', 'variables', 'linked_job_template_ids'):
             if field in request.data:
                 setattr(vault, field, request.data[field])
         vault.save()
