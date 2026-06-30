@@ -2262,10 +2262,15 @@ def _ansible_vault_encrypt(plaintext: str, password: str, vault_id: str) -> str:
     key2 = key_material[32:64] # HMAC-SHA256 key
     iv   = key_material[64:]   # 16-byte IV
 
+    # Ansible vault applies PKCS7 padding before CTR encryption (unconventional but required)
+    b_plain = plaintext.encode('utf-8')
+    pad_len = 16 - (len(b_plain) % 16)
+    b_plain += bytes([pad_len] * pad_len)
+
     # AES-256-CTR encryption (CTR requires exactly 16-byte nonce = AES block size)
     cipher = Cipher(algorithms.AES(key1), modes.CTR(iv), backend=default_backend())
     enc = cipher.encryptor()
-    ciphertext = enc.update(plaintext.encode('utf-8')) + enc.finalize()
+    ciphertext = enc.update(b_plain) + enc.finalize()
 
     # HMAC-SHA256 of ciphertext
     h = _hmac.new(key2, ciphertext, hashlib.sha256)
