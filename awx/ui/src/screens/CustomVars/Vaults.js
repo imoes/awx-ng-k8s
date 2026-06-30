@@ -307,11 +307,16 @@ function Vaults() {
             style={{ marginBottom: 16 }}
           >
             After saving, click <strong>Generate</strong> to write the encrypted vault file into
-            your project. Then add to your playbook:
-            <pre style={{ margin: '8px 0 0', fontSize: 12 }}>
+            your project. Then reference it in your playbook:
+            <pre style={{ margin: '8px 0 4px', fontSize: 12 }}>
               {'vars_files:\n  - vault-' + (editing.name || '<name>') + '.yml'}
             </pre>
+            <strong>Important:</strong> the path in <code>vars_files</code> is relative to the
+            playbook file. If your playbook is in <code>playbooks/</code>, the vault file must
+            also be placed in <code>playbooks/vault-{editing.name || '<name>'}.yml</code>.
+            <br />
             The vault password is auto-generated and injected automatically at job runtime.
+            Re-run <strong>Generate</strong> whenever variables change.
           </Alert>
           <Form>
             <FormGroup label="Vault name (= vault-id)" isRequired>
@@ -370,9 +375,14 @@ function Vaults() {
           {!generateResult && (
             <Form>
               <Alert variant="info" isInline title="How this works">
-                awx-ng encrypts the vault variables with <code>ansible-vault</code> using a
-                generated password. The vault file is saved to the selected project directory.
-                AWX injects the vault credential automatically when a job runs.
+                awx-ng encrypts the vault variables and saves the file to the selected project
+                directory. AWX injects the vault password automatically at job runtime.
+                <br /><br />
+                <strong>Path matters:</strong> <code>vars_files</code> paths are relative to the
+                playbook file. If your playbook is at <code>playbooks/site.yml</code>, select the
+                project and make sure the vault file ends up at{' '}
+                <code>playbooks/vault-{generateTarget.name}.yml</code> — or download it and place
+                it manually in the correct subdirectory.
               </Alert>
               <FormGroup label="Write to project directory (optional)">
                 <select
