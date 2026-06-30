@@ -87,13 +87,16 @@ Mount in alle drei Services nötig (`awx_web` schreibt, `awx_task` refresht Cach
 
 | Pfad | Screen | Beschreibung |
 |------|--------|-------------|
+**Resources:**
 | `/editor` | ProjectEditor | Playbook-Editor mit Dateibaum (Monaco + YAML-Linting + Git) |
 | `/playbooks` | Playbooks | Playbook-Übersicht mit Vars/Plays |
 | `/roles` | Roles | Rollen mit Variablen, Tags, Handlers |
-| `/tokens` | UserTokens | Persönliche OAuth2-Token (Bearer-Auth für MCP) |
+| `/vaults` | Vaults | Ansible Vault Store (Key-Value → verschlüsselte YAML, Auto-Inject beim Job) |
+
+**Administration:**
 | `/locations` | Sites | Site-Verwaltung (= AWX Instance Groups) |
 | `/runner_sites` | Runners | Execution Nodes registrieren und Sites zuweisen |
-| `/vaults` | Vaults | Ansible Vault Store (Key-Value → verschlüsselte YAML, Auto-Inject beim Job) |
+| `/tokens` | UserTokens | Persönliche OAuth2-Token (Bearer-Auth für MCP) |
 
 ## Custom API-Endpoints
 

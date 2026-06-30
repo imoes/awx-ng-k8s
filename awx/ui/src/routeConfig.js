@@ -127,9 +127,10 @@ function getRouteConfig(userProfile = {}) {
           screen: NgProjectEditor,
         },
         {
-          title: <Trans>API Tokens</Trans>,
-          path: '/tokens',
-          screen: NgUserTokens,
+          // awx-ng: Ansible Vault Store
+          title: <Trans>Vaults</Trans>,
+          path: '/vaults',
+          screen: NgVaults,
         },
       ],
     },
@@ -210,10 +211,9 @@ function getRouteConfig(userProfile = {}) {
           screen: NgLocations,
         },
         {
-          // awx-ng: Ansible Vault Store
-          title: <Trans>Vaults</Trans>,
-          path: '/vaults',
-          screen: NgVaults,
+          title: <Trans>API Tokens</Trans>,
+          path: '/tokens',
+          screen: NgUserTokens,
         },
       ],
     },
