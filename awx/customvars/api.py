@@ -41,7 +41,7 @@ from awx.main.models import Project, JobTemplate, Host, Instance
 
 from .models import (
     RoleVariable, RoleTag, RoleHandler, RoleScan,
-    Location, ExecutionNodeLocation,
+    Location, ExecutionNodeLocation, AnsibleVault,
 )
 
 
@@ -1118,6 +1118,16 @@ def inject_runner_credential_for_job(job_pk):
                 log.info('auto-injected runner credential %s into job %s', cred.name, job_pk)
 
         # Environment variables are injected at build_env() time in jobs.py
+
+        # Inject all vault credentials so ansible can decrypt vault-encrypted files
+        try:
+            vault_cred_ids = list(AnsibleVault.objects.values_list('awx_credential_id', flat=True))
+            for cred in Credential.objects.filter(pk__in=vault_cred_ids):
+                job.credentials.add(cred)
+                log.info('auto-injected vault credential %s into job %s', cred.name, job_pk)
+        except Exception:
+            log.exception('vault credential injection failed for job %s', job_pk)
+
     except Exception:
         log.exception('inject_runner_credential_for_job failed for job %s', job_pk)
 
@@ -2198,3 +2208,183 @@ class ProjectLaunchView(APIView):
             {'job_id': job.id, 'job_url': f'/api/v2/jobs/{job.id}/'},
             status=status.HTTP_201_CREATED,
         )
+
+
+# ── Ansible Vault Store ───────────────────────────────────────────────────────
+
+def _vault_repr(vault):
+    """Serialise an AnsibleVault without exposing the password."""
+    return {
+        'id': str(vault.id),
+        'name': vault.name,
+        'description': vault.description,
+        'vault_id': vault.name,
+        'variable_count': len(vault.variables),
+        'awx_credential_id': vault.awx_credential_id,
+        'variables': vault.variables,
+        'created_at': vault.created_at.isoformat(),
+        'updated_at': vault.updated_at.isoformat(),
+    }
+
+
+def _ansible_vault_encrypt(plaintext: str, password: str, vault_id: str) -> str:
+    """Encrypt plaintext using Ansible Vault 1.2 format (pure Python, no CLI needed).
+
+    Compatible with: $ANSIBLE_VAULT;1.2;AES256;<vault_id>
+    Uses: PBKDF2-SHA256 key derivation → AES-256-CTR encryption → HMAC-SHA256 auth.
+    """
+    import hashlib, hmac as _hmac, os as _os, struct
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives import padding as _pad
+    from cryptography.hazmat.backends import default_backend
+
+    salt = _os.urandom(32)
+    iterations = 10000
+    key_len = 80  # 32 AES key + 32 HMAC key + 16 IV
+
+    key_material = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, iterations, dklen=key_len)
+    key1 = key_material[:32]   # AES-256 key
+    key2 = key_material[32:64] # HMAC-SHA256 key
+    iv   = key_material[64:]   # 16-byte IV
+
+    # AES-256-CTR encryption (CTR requires exactly 16-byte nonce = AES block size)
+    cipher = Cipher(algorithms.AES(key1), modes.CTR(iv), backend=default_backend())
+    enc = cipher.encryptor()
+    ciphertext = enc.update(plaintext.encode('utf-8')) + enc.finalize()
+
+    # HMAC-SHA256 of ciphertext
+    h = _hmac.new(key2, ciphertext, hashlib.sha256)
+    digest = h.digest()
+
+    # Payload: hex(salt) + newline + hex(hmac) + newline + hex(ciphertext)
+    body = b'\n'.join([salt.hex().encode(), digest.hex().encode(), ciphertext.hex().encode()])
+
+    # Split payload into 80-char lines (Ansible convention)
+    hex_body = body.hex()
+    lines = [hex_body[i:i+80] for i in range(0, len(hex_body), 80)]
+
+    header = f'$ANSIBLE_VAULT;1.2;AES256;{vault_id}'
+    return header + '\n' + '\n'.join(lines) + '\n'
+
+
+def _generate_vault_file(vault):
+    """Return ansible-vault 1.2 encrypted YAML for vault.variables."""
+    import yaml as _yaml
+
+    plaintext = _yaml.dump(vault.variables, default_flow_style=False, allow_unicode=True)
+    return _ansible_vault_encrypt(plaintext, vault.vault_password, vault.name)
+
+
+class VaultListView(APIView):
+    """
+    GET  /api/v2/vaults/  — list all vaults (never exposes passwords)
+    POST /api/v2/vaults/  — create vault, auto-generate password + AWX credential
+    """
+
+    def get(self, request, **kwargs):
+        vaults = AnsibleVault.objects.all()
+        return Response({'count': vaults.count(), 'results': [_vault_repr(v) for v in vaults]})
+
+    def post(self, request, **kwargs):
+        name = request.data.get('name', '').strip()
+        if not name:
+            return Response({'detail': 'name required.'}, status=400)
+        if not re.match(r'^[\w-]+$', name):
+            return Response({'detail': 'name may only contain letters, digits, _ and -.'}, status=400)
+        if AnsibleVault.objects.filter(name=name).exists():
+            return Response({'detail': f'Vault "{name}" already exists.'}, status=400)
+
+        import secrets as _sec
+        password = _sec.token_urlsafe(32)
+
+        from awx.main.models import Credential, CredentialType
+        ct = CredentialType.objects.get(kind='vault')
+        cred = Credential(
+            name=f'awx-ng-vault:{name}',
+            credential_type=ct,
+            created_by=request.user,
+            modified_by=request.user,
+        )
+        cred.inputs = {'vault_password': password, 'vault_id': name}
+        cred.save()
+
+        vault = AnsibleVault.objects.create(
+            name=name,
+            description=request.data.get('description', ''),
+            vault_password=password,
+            awx_credential_id=cred.pk,
+            variables=request.data.get('variables') or {},
+        )
+        return Response(_vault_repr(vault), status=201)
+
+
+class VaultDetailView(APIView):
+    """
+    GET    /api/v2/vaults/{pk}/
+    PATCH  /api/v2/vaults/{pk}/  — update description and/or variables
+    DELETE /api/v2/vaults/{pk}/  — delete vault + AWX credential
+    """
+
+    def _get(self, pk):
+        return get_object_or_404(AnsibleVault, pk=pk)
+
+    def get(self, request, pk, **kwargs):
+        return Response(_vault_repr(self._get(pk)))
+
+    def patch(self, request, pk, **kwargs):
+        vault = self._get(pk)
+        for field in ('description', 'variables'):
+            if field in request.data:
+                setattr(vault, field, request.data[field])
+        vault.save()
+        return Response(_vault_repr(vault))
+
+    def delete(self, request, pk, **kwargs):
+        vault = self._get(pk)
+        from awx.main.models import Credential
+        Credential.objects.filter(pk=vault.awx_credential_id).delete()
+        vault.delete()
+        return Response(status=204)
+
+
+class VaultGenerateView(APIView):
+    """
+    POST /api/v2/vaults/{pk}/generate/
+    Body (optional): {"project_id": N}
+
+    Generates an ansible-vault encrypted YAML file from the vault's variables.
+    If project_id is given, the file is written to the project directory.
+    Always returns the encrypted content in the response.
+    """
+
+    def post(self, request, pk, **kwargs):
+        vault = get_object_or_404(AnsibleVault, pk=pk)
+        if not vault.variables:
+            return Response({'detail': 'Vault has no variables. Add variables before generating.'}, status=400)
+        try:
+            content = _generate_vault_file(vault)
+        except Exception as exc:
+            return Response({'detail': f'Vault file generation failed: {exc}'}, status=500)
+
+        filename = f'vault-{vault.name}.yml'
+        project_id = request.data.get('project_id')
+        written_to = None
+
+        if project_id:
+            from awx.main.models import Project
+            from django.conf import settings as _settings
+            project = get_object_or_404(Project, pk=project_id)
+            project_path = pathlib.Path(_settings.PROJECTS_ROOT) / project.local_path
+            if project_path.is_dir():
+                dest = project_path / filename
+                dest.write_text(content)
+                written_to = str(dest)
+                log.info('vault %s written to %s', vault.name, written_to)
+
+        return Response({
+            'filename': filename,
+            'content': content,
+            'written_to': written_to,
+            'vault_id': vault.name,
+            'usage': f'vars_files:\n  - {filename}',
+        })

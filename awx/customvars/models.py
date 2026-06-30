@@ -164,7 +164,34 @@ class Location(models.Model):
         return self.name
 
 
-# ── 3. Proxy ↔ Location-Zuordnung ────────────────────────────────────────────
+# ── 3. Ansible Vault Store ───────────────────────────────────────────────────
+
+class AnsibleVault(models.Model):
+    """
+    Named ansible-vault store.
+
+    Variables are kept plaintext in DB; the Generate endpoint encrypts them into
+    a proper vault file using the auto-generated vault_password. The same password
+    is stored in an AWX Credential (kind=vault) that is auto-injected at job start.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100, unique=True, db_index=True)  # = vault-id in ansible
+    description = models.TextField(blank=True)
+    vault_password = models.CharField(max_length=64)   # auto-generated, stored plaintext
+    awx_credential_id = models.IntegerField(null=True, blank=True)
+    variables = models.JSONField(default=dict)           # {key: value, ...} plaintext
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name = 'Ansible Vault'
+
+    def __str__(self):
+        return self.name
+
+
+# ── 4. Proxy ↔ Location-Zuordnung ────────────────────────────────────────────
 
 class ExecutionNodeLocation(models.Model):
     """

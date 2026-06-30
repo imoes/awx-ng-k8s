@@ -92,6 +92,7 @@ from awx.customvars.api import (
     HashPasswordView, LocationReconcileView,
     ExecutionNodeLocationListView, ExecutionNodeLocationDetailView,
     RunnerRegisterView, RunnerDeprovisionView,
+    VaultListView, VaultDetailView, VaultGenerateView,
 )
 
 v2_urls = [
@@ -174,6 +175,10 @@ v2_urls = [
     re_path(r'^runners/deprovision/$', RunnerDeprovisionView.as_view(), name='runner_deprovision'),
     # awx-ng: Tools
     re_path(r'^tools/hash_password/$', HashPasswordView.as_view(), name='tools_hash_password'),
+    # awx-ng: Ansible Vault Store
+    re_path(r'^vaults/$', VaultListView.as_view(), name='vault_list'),
+    re_path(r'^vaults/(?P<pk>[0-9a-f-]+)/$', VaultDetailView.as_view(), name='vault_detail'),
+    re_path(r'^vaults/(?P<pk>[0-9a-f-]+)/generate/$', VaultGenerateView.as_view(), name='vault_generate'),
 ]
 
 

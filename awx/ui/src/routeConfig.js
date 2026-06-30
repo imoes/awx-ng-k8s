@@ -33,6 +33,7 @@ import {
   Playbooks as NgPlaybooks,
   ProjectEditor as NgProjectEditor,
   UserTokens as NgUserTokens,
+  Vaults as NgVaults,
 } from 'screens/CustomVars';
 
 function getRouteConfig(userProfile = {}) {
@@ -207,6 +208,12 @@ function getRouteConfig(userProfile = {}) {
           title: <Trans>Sites</Trans>,
           path: '/locations',
           screen: NgLocations,
+        },
+        {
+          // awx-ng: Ansible Vault Store
+          title: <Trans>Vaults</Trans>,
+          path: '/vaults',
+          screen: NgVaults,
         },
       ],
     },

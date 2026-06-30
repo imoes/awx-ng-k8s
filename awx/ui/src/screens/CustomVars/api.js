@@ -252,3 +252,27 @@ export function deleteToken(tokenId) {
 export function readMe() {
   return LocationsAPI.http.get('/api/v2/me/');
 }
+
+// ── Ansible Vault Store ───────────────────────────────────────────────────────
+
+export function listVaults() {
+  return LocationsAPI.http.get('/api/v2/vaults/');
+}
+export function getVault(id) {
+  return LocationsAPI.http.get(`/api/v2/vaults/${id}/`);
+}
+export function createVault(data) {
+  return LocationsAPI.http.post('/api/v2/vaults/', data);
+}
+export function updateVault(id, data) {
+  return LocationsAPI.http.patch(`/api/v2/vaults/${id}/`, data);
+}
+export function deleteVault(id) {
+  return LocationsAPI.http.delete(`/api/v2/vaults/${id}/`);
+}
+export function generateVaultFile(id, projectId) {
+  return LocationsAPI.http.post(
+    `/api/v2/vaults/${id}/generate/`,
+    projectId ? { project_id: projectId } : {}
+  );
+}
