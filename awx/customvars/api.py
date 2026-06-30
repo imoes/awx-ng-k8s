@@ -1092,20 +1092,35 @@ def inject_runner_credential_for_job(job_pk):
     """Inject the runner credential and environment variables for a job.
 
     Called via post_save signal (on_commit) so template credentials are already
-    copied before we check machine_credential. Matches runner by execution_node
-    hostname; falls back to the single configured runner if only one exists.
+    copied before we check machine_credential.
+
+    Lookup order:
+    1. execution_node hostname — set when job is already dispatched (e.g. relaunch)
+    2. instance_group name — reliable at job-creation time for fresh launches
+    3. single runner with a credential — fallback when only one site is configured
     """
     try:
         from awx.main.models import Job, Credential
         job = Job.objects.get(pk=job_pk)
         enl = None
-        execution_node = job.execution_node or job.controller_node
-        if execution_node:
-            enl = ExecutionNodeLocation.objects.filter(instance_hostname=execution_node).first()
+
+        # 1. Direct hostname match (reliable for relaunches / already-dispatched jobs)
+        if job.execution_node:
+            enl = ExecutionNodeLocation.objects.filter(instance_hostname=job.execution_node).first()
+
+        # 2. Instance-group name match (reliable for fresh launches from templates)
+        if enl is None and job.instance_group_id:
+            from awx.main.models import InstanceGroup
+            ig = InstanceGroup.objects.filter(pk=job.instance_group_id).first()
+            if ig:
+                enl = ExecutionNodeLocation.objects.filter(location_name=ig.name).first()
+
+        # 3. Single-runner fallback (only if exactly one runner has a credential)
         if enl is None:
-            runners = ExecutionNodeLocation.objects.all()
+            runners = ExecutionNodeLocation.objects.exclude(ssh_credential_id=None)
             if runners.count() == 1:
                 enl = runners.first()
+
         if enl is None:
             return
 
