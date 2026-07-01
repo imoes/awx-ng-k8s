@@ -4,11 +4,8 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { Redirect, useHistory } from 'react-router-dom';
 
 import {
-  Alert,
-  Button,
   Divider,
   FormGroup,
-  Spinner,
   Title,
 } from '@patternfly/react-core';
 import { JobTemplate } from 'types';
@@ -21,64 +18,19 @@ import JobTemplateForm from '../shared/JobTemplateForm';
 import VaultSelect from '../shared/VaultSelect';
 import { listTemplateVaults, setTemplateVaults } from '../../CustomVars/api';
 
-function VaultSection({ templateId }) {
-  const [selectedIds, setSelectedIds] = useState([]);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState(null);
-  const [saved, setSaved] = useState(false);
-
-  const { request: loadLinked } = useRequest(
-    useCallback(async () => {
-      const { data } = await listTemplateVaults(templateId);
-      setSelectedIds((data.results || []).map((v) => v.id));
-    }, [templateId])
-  );
-
-  useEffect(() => { loadLinked(); }, [loadLinked]);
-
-  const save = async () => {
-    setSaving(true);
-    setSaveError(null);
-    setSaved(false);
-    try {
-      await setTemplateVaults(templateId, selectedIds);
-      setSaved(true);
-    } catch (e) {
-      setSaveError(e?.response?.data?.detail || e.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
+function VaultSection({ selectedIds, onChange }) {
   return (
     <div style={{ marginTop: 32 }}>
       <Divider style={{ marginBottom: 24 }} />
       <Title headingLevel="h2" size="xl" style={{ marginBottom: 16 }}>
         Linked Vaults
       </Title>
-      {saveError && (
-        <Alert variant="danger" title={saveError} isInline style={{ marginBottom: 8 }} />
-      )}
-      {saved && (
-        <Alert variant="success" title="Vault assignments saved." isInline style={{ marginBottom: 8 }} />
-      )}
       <FormGroup
         label="Vaults"
         helperText="Variables are automatically injected as extra vars when this template runs."
       >
-        <VaultSelect
-          selections={selectedIds}
-          onChange={(ids) => { setSelectedIds(ids); setSaved(false); }}
-        />
+        <VaultSelect selections={selectedIds} onChange={onChange} />
       </FormGroup>
-      <Button
-        variant="secondary"
-        onClick={save}
-        isDisabled={saving}
-        style={{ marginTop: 16 }}
-      >
-        {saving ? <Spinner size="sm" /> : 'Save vault assignments'}
-      </Button>
     </div>
   );
 }
@@ -88,6 +40,7 @@ function JobTemplateEdit({ template, reloadTemplate }) {
   const [formSubmitError, setFormSubmitError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isDisabled, setIsDisabled] = useState(false);
+  const [vaultIds, setVaultIds] = useState([]);
 
   const detailsUrl = `/templates/${template.type}/${template.id}/details`;
 
@@ -97,9 +50,17 @@ function JobTemplateEdit({ template, reloadTemplate }) {
     }, [template.project])
   );
 
+  const { request: fetchVaults } = useRequest(
+    useCallback(async () => {
+      const { data } = await listTemplateVaults(template.id);
+      setVaultIds((data.results || []).map((v) => v.id));
+    }, [template.id])
+  );
+
   useEffect(() => {
     fetchProject();
-  }, [fetchProject]);
+    fetchVaults();
+  }, [fetchProject, fetchVaults]);
 
   useEffect(() => {
     if (fetchProjectError) {
@@ -140,6 +101,7 @@ function JobTemplateEdit({ template, reloadTemplate }) {
           instanceGroups,
           initialInstanceGroups
         ),
+        setTemplateVaults(template.id, vaultIds),
       ]);
       reloadTemplate();
       history.push(detailsUrl);
@@ -206,7 +168,7 @@ function JobTemplateEdit({ template, reloadTemplate }) {
         submitError={formSubmitError}
         isOverrideDisabledLookup={!isDisabled}
       />
-      <VaultSection templateId={template.id} />
+      <VaultSection selectedIds={vaultIds} onChange={setVaultIds} />
     </CardBody>
   );
 }
