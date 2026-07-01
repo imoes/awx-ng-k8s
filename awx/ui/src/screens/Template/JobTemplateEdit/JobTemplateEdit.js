@@ -6,8 +6,8 @@ import { Redirect, useHistory } from 'react-router-dom';
 import {
   Alert,
   Button,
-  Checkbox,
   Divider,
+  FormGroup,
   Spinner,
   Title,
 } from '@patternfly/react-core';
@@ -18,43 +18,30 @@ import useRequest from 'hooks/useRequest';
 import ContentLoading from 'components/ContentLoading';
 import { CardBody } from 'components/Card';
 import JobTemplateForm from '../shared/JobTemplateForm';
-import { listVaults, listTemplateVaults, setTemplateVaults } from '../../CustomVars/api';
+import VaultSelect from '../shared/VaultSelect';
+import { listTemplateVaults, setTemplateVaults } from '../../CustomVars/api';
 
 function VaultSection({ templateId }) {
-  const [allVaults, setAllVaults] = useState([]);
-  const [linkedIds, setLinkedIds] = useState(new Set());
+  const [selectedIds, setSelectedIds] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [saved, setSaved] = useState(false);
 
-  const { isLoading: vaultsLoading, request: loadVaults } = useRequest(
+  const { request: loadLinked } = useRequest(
     useCallback(async () => {
-      const [allRes, linkedRes] = await Promise.all([
-        listVaults(),
-        listTemplateVaults(templateId),
-      ]);
-      setAllVaults(allRes.data.results || []);
-      setLinkedIds(new Set((linkedRes.data.results || []).map((v) => v.id)));
+      const { data } = await listTemplateVaults(templateId);
+      setSelectedIds((data.results || []).map((v) => v.id));
     }, [templateId])
   );
 
-  useEffect(() => { loadVaults(); }, [loadVaults]);
-
-  const toggle = (id) => {
-    setLinkedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-    setSaved(false);
-  };
+  useEffect(() => { loadLinked(); }, [loadLinked]);
 
   const save = async () => {
     setSaving(true);
     setSaveError(null);
+    setSaved(false);
     try {
-      await setTemplateVaults(templateId, Array.from(linkedIds));
+      await setTemplateVaults(templateId, selectedIds);
       setSaved(true);
     } catch (e) {
       setSaveError(e?.response?.data?.detail || e.message);
@@ -66,57 +53,32 @@ function VaultSection({ templateId }) {
   return (
     <div style={{ marginTop: 32 }}>
       <Divider style={{ marginBottom: 24 }} />
-      <Title headingLevel="h2" size="xl" style={{ marginBottom: 8 }}>
+      <Title headingLevel="h2" size="xl" style={{ marginBottom: 16 }}>
         Linked Vaults
       </Title>
-      <p style={{ color: '#666', marginBottom: 16, fontSize: 14 }}>
-        Variables from linked vaults are automatically injected as extra vars when this template runs.
-      </p>
-      {vaultsLoading && <Spinner size="md" />}
       {saveError && (
         <Alert variant="danger" title={saveError} isInline style={{ marginBottom: 8 }} />
       )}
       {saved && (
         <Alert variant="success" title="Vault assignments saved." isInline style={{ marginBottom: 8 }} />
       )}
-      {!vaultsLoading && allVaults.length === 0 && (
-        <p style={{ color: '#999', fontSize: 13 }}>
-          No vaults configured yet. Go to <strong>Resources → Vaults</strong> to create one.
-        </p>
-      )}
-      {!vaultsLoading && allVaults.map((v) => (
-        <div key={v.id} style={{ marginBottom: 10 }}>
-          <Checkbox
-            id={`vault-edit-${v.id}`}
-            label={
-              <span>
-                <strong>{v.name}</strong>
-                {v.description && (
-                  <span style={{ color: '#666', marginLeft: 6 }}>— {v.description}</span>
-                )}
-                <span style={{
-                  marginLeft: 8, fontSize: 11,
-                  background: '#f0f0f0', borderRadius: 3, padding: '1px 5px',
-                }}>
-                  {v.variable_count ?? 0} var{v.variable_count !== 1 ? 's' : ''}
-                </span>
-              </span>
-            }
-            isChecked={linkedIds.has(v.id)}
-            onChange={() => toggle(v.id)}
-          />
-        </div>
-      ))}
-      {!vaultsLoading && allVaults.length > 0 && (
-        <Button
-          variant="secondary"
-          onClick={save}
-          isDisabled={saving}
-          style={{ marginTop: 8 }}
-        >
-          {saving ? <Spinner size="sm" /> : 'Save vault assignments'}
-        </Button>
-      )}
+      <FormGroup
+        label="Vaults"
+        helperText="Variables are automatically injected as extra vars when this template runs."
+      >
+        <VaultSelect
+          selections={selectedIds}
+          onChange={(ids) => { setSelectedIds(ids); setSaved(false); }}
+        />
+      </FormGroup>
+      <Button
+        variant="secondary"
+        onClick={save}
+        isDisabled={saving}
+        style={{ marginTop: 16 }}
+      >
+        {saving ? <Spinner size="sm" /> : 'Save vault assignments'}
+      </Button>
     </div>
   );
 }
