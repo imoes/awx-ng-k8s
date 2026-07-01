@@ -20,6 +20,9 @@ function BlocklyWorkspace({ toolbox, initialState, onChange, style }) {
       media: `${process.env.PUBLIC_URL || ''}/static/blockly-media/`,
     });
     workspaceRef.current = workspace;
+    // Test-only hook (e.g. Playwright E2E checks) — harmless read/write
+    // reference to the live workspace, namespaced to avoid collisions.
+    window.__pbWorkspace = workspace;
 
     if (initialState) {
       Blockly.serialization.workspaces.load(initialState, workspace);
