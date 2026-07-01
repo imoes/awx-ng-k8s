@@ -3,11 +3,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Redirect, useHistory } from 'react-router-dom';
 
-import {
-  Divider,
-  FormGroup,
-  Title,
-} from '@patternfly/react-core';
 import { JobTemplate } from 'types';
 import { JobTemplatesAPI, ProjectsAPI } from 'api';
 import { getAddedAndRemoved } from 'util/lists';
@@ -15,25 +10,7 @@ import useRequest from 'hooks/useRequest';
 import ContentLoading from 'components/ContentLoading';
 import { CardBody } from 'components/Card';
 import JobTemplateForm from '../shared/JobTemplateForm';
-import VaultSelect from '../shared/VaultSelect';
 import { listTemplateVaults, setTemplateVaults } from '../../CustomVars/api';
-
-function VaultSection({ selectedIds, onChange }) {
-  return (
-    <div style={{ marginTop: 32 }}>
-      <Divider style={{ marginBottom: 24 }} />
-      <Title headingLevel="h2" size="xl" style={{ marginBottom: 16 }}>
-        Linked Vaults
-      </Title>
-      <FormGroup
-        label="Vaults"
-        helperText="Variables are automatically injected as extra vars when this template runs."
-      >
-        <VaultSelect selections={selectedIds} onChange={onChange} />
-      </FormGroup>
-    </div>
-  );
-}
 
 function JobTemplateEdit({ template, reloadTemplate }) {
   const history = useHistory();
@@ -167,8 +144,9 @@ function JobTemplateEdit({ template, reloadTemplate }) {
         handleSubmit={handleSubmit}
         submitError={formSubmitError}
         isOverrideDisabledLookup={!isDisabled}
+        vaultIds={vaultIds}
+        onVaultChange={setVaultIds}
       />
-      <VaultSection selectedIds={vaultIds} onChange={setVaultIds} />
     </CardBody>
   );
 }

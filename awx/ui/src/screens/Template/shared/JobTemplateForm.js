@@ -44,6 +44,7 @@ import { VerbositySelectField } from 'components/VerbositySelectField';
 import PlaybookSelect from './PlaybookSelect';
 import InventorySelect from './InventorySelect';
 import ProjectSelect from './ProjectSelect';
+import VaultSelect from './VaultSelect';
 import WebhookSubForm from './WebhookSubForm';
 import getHelpText from './JobTemplate.helptext';
 // awx-ng: host/group picker that fills the limit field
@@ -60,6 +61,8 @@ function JobTemplateForm({
   submitError,
   validateField,
   isOverrideDisabledLookup, // TODO: this is a confusing variable name
+  vaultIds,
+  onVaultChange,
 }) {
   const helpText = getHelpText();
   const [contentError, setContentError] = useState(false);
@@ -453,6 +456,12 @@ function JobTemplateForm({
             promptId="template-ask-variables-on-launch"
             tooltip={helpText.variables}
           />
+          {/* awx-ng: vault selector — injected as extra vars at job runtime */}
+          {onVaultChange && (
+            <FormGroup label="Linked Vaults" helperText="Variables are injected automatically as extra vars when this template runs.">
+              <VaultSelect selections={vaultIds || []} onChange={onVaultChange} />
+            </FormGroup>
+          )}
           <FormColumnLayout>
             <FieldWithPrompt
               fieldId="template-forks"

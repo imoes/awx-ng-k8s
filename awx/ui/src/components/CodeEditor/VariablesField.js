@@ -68,9 +68,7 @@ function VariablesField({
     [shouldValidate, validators]
   );
   const [field, meta, helpers] = useField({ name, validate });
-  const [mode, setMode] = useState(() =>
-    isJsonString(field.value) ? JSON_MODE : initialMode || YAML_MODE
-  );
+  const [mode, setMode] = useState(initialMode || YAML_MODE);
 
   useEffect(
     () => {
