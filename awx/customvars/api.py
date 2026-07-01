@@ -2378,6 +2378,40 @@ class VaultDetailView(APIView):
         return Response(status=204)
 
 
+class JobTemplateVaultsView(APIView):
+    """
+    GET  /api/v2/job_templates/{pk}/vaults/  — list vaults linked to this template
+    POST /api/v2/job_templates/{pk}/vaults/  — replace linked vaults (body: {"vault_ids": [...]})
+    """
+
+    def get(self, request, pk, **kwargs):
+        get_object_or_404(JobTemplate, pk=pk)
+        template_id = int(pk)
+        vaults = AnsibleVault.objects.filter(linked_job_template_ids__contains=[template_id])
+        return Response({'count': vaults.count(), 'results': [_vault_repr(v) for v in vaults]})
+
+    def post(self, request, pk, **kwargs):
+        get_object_or_404(JobTemplate, pk=pk)
+        template_id = int(pk)
+        new_vault_ids = set(str(v) for v in request.data.get('vault_ids', []))
+
+        for vault in AnsibleVault.objects.all():
+            ids = list(vault.linked_job_template_ids or [])
+            currently_linked = template_id in ids
+            should_link = str(vault.id) in new_vault_ids
+            if currently_linked and not should_link:
+                ids.remove(template_id)
+                vault.linked_job_template_ids = ids
+                vault.save(update_fields=['linked_job_template_ids'])
+            elif not currently_linked and should_link:
+                ids.append(template_id)
+                vault.linked_job_template_ids = ids
+                vault.save(update_fields=['linked_job_template_ids'])
+
+        vaults = AnsibleVault.objects.filter(linked_job_template_ids__contains=[template_id])
+        return Response({'count': vaults.count(), 'results': [_vault_repr(v) for v in vaults]})
+
+
 class VaultGenerateView(APIView):
     """
     POST /api/v2/vaults/{pk}/generate/

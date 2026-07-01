@@ -93,6 +93,7 @@ from awx.customvars.api import (
     ExecutionNodeLocationListView, ExecutionNodeLocationDetailView,
     RunnerRegisterView, RunnerDeprovisionView,
     VaultListView, VaultDetailView, VaultGenerateView,
+    JobTemplateVaultsView,
 )
 
 v2_urls = [
@@ -179,6 +180,7 @@ v2_urls = [
     re_path(r'^vaults/$', VaultListView.as_view(), name='vault_list'),
     re_path(r'^vaults/(?P<pk>[0-9a-f-]+)/$', VaultDetailView.as_view(), name='vault_detail'),
     re_path(r'^vaults/(?P<pk>[0-9a-f-]+)/generate/$', VaultGenerateView.as_view(), name='vault_generate'),
+    re_path(r'^job_templates/(?P<pk>[0-9]+)/vaults/$', JobTemplateVaultsView.as_view(), name='job_template_vaults'),
 ]
 
 

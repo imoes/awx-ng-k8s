@@ -24,6 +24,7 @@ import { JobTemplatesAPI, OrganizationsAPI } from 'api';
 import JobTemplateDetail from './JobTemplateDetail';
 import JobTemplateEdit from './JobTemplateEdit';
 import TemplateSurvey from './TemplateSurvey';
+import TemplateVaults from './TemplateVaults';
 
 function Template({ setBreadcrumb }) {
   const match = useRouteMatch();
@@ -158,6 +159,10 @@ function Template({ setBreadcrumb }) {
     {
       name: canAddAndEditSurvey ? t`Survey` : t`View Survey`,
       link: `${match.url}/survey`,
+    },
+    {
+      name: 'Vaults',
+      link: `${match.url}/vaults`,
     }
   );
 
@@ -249,6 +254,9 @@ function Template({ setBreadcrumb }) {
                 template={template}
                 canEdit={canAddAndEditSurvey}
               />
+            </Route>
+            <Route path="/templates/:templateType/:id/vaults">
+              <TemplateVaults />
             </Route>
             {!isLoading && (
               <Route key="not-found" path="*">

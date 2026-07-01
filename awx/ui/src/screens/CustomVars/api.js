@@ -279,3 +279,13 @@ export function generateVaultFile(id, projectId) {
 export function listJobTemplates() {
   return LocationsAPI.http.get('/api/v2/job_templates/?page_size=200&order_by=name');
 }
+
+// Vaults linked to a specific job template
+export function listTemplateVaults(templateId) {
+  return LocationsAPI.http.get(`/api/v2/job_templates/${templateId}/vaults/`);
+}
+
+// Replace the vault assignments for a job template
+export function setTemplateVaults(templateId, vaultIds) {
+  return LocationsAPI.http.post(`/api/v2/job_templates/${templateId}/vaults/`, { vault_ids: vaultIds });
+}

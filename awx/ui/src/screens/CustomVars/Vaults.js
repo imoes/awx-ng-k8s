@@ -42,7 +42,7 @@ import {
   listJobTemplates,
 } from './api';
 
-const EMPTY_FORM = { name: '', description: '', variables: {}, linkedTemplateIds: [] };
+const EMPTY_FORM = { name: '', description: '', variables: {} };
 
 function VaultVariableEditor({ variables, onChange }) {
   const [entries, setEntries] = useState(() =>
@@ -153,7 +153,6 @@ function Vaults() {
       name: v.name,
       description: v.description,
       variables: v.variables || {},
-      linkedTemplateIds: v.linked_job_template_ids || [],
     });
 
   const save = async () => {
@@ -164,7 +163,6 @@ function Vaults() {
         const { data } = await updateVault(editing.id, {
           description: editing.description,
           variables: editing.variables,
-          linked_job_template_ids: editing.linkedTemplateIds,
         });
         setVaults((prev) => prev.map((v) => (v.id === editing.id ? { ...v, ...data } : v)));
       } else {
@@ -172,7 +170,6 @@ function Vaults() {
           name: editing.name,
           description: editing.description,
           variables: editing.variables,
-          linked_job_template_ids: editing.linkedTemplateIds,
         });
         setVaults((prev) => [...prev, data]);
       }
@@ -335,11 +332,12 @@ function Vaults() {
             title="How it works"
             style={{ marginBottom: 16 }}
           >
-            Link this vault to one or more job templates below. When a linked job runs,
-            the vault variables are <strong>automatically injected as extra vars</strong> —
-            no <code>vars_files</code>, no vault file placement needed.
+            Vault variables are <strong>automatically injected as extra vars</strong> when
+            a linked job template runs — no <code>vars_files</code> needed.
+            The vault password is auto-generated and managed by awx-ng.
             <br />
-            The vault password is auto-generated and managed entirely by awx-ng.
+            To link this vault to job templates, open the template and go to its{' '}
+            <strong>Vaults</strong> tab.
           </Alert>
           <Form>
             <FormGroup label="Vault name (= vault-id)" isRequired>
@@ -357,31 +355,6 @@ function Vaults() {
                 onChange={(v) => setEditing((s) => ({ ...s, description: v }))}
                 rows={2}
               />
-            </FormGroup>
-            <FormGroup
-              label="Linked Job Templates"
-              helperText="Variables are auto-injected into every run of these templates."
-            >
-              <select
-                multiple
-                size={Math.min(8, Math.max(3, jobTemplates.length))}
-                value={(editing.linkedTemplateIds || []).map(String)}
-                onChange={(e) => {
-                  const selected = Array.from(e.target.selectedOptions).map((o) => Number(o.value));
-                  setEditing((s) => ({ ...s, linkedTemplateIds: selected }));
-                }}
-                style={{
-                  width: '100%', border: '1px solid #ddd', borderRadius: 4,
-                  padding: '4px', fontFamily: 'inherit', fontSize: 14,
-                }}
-              >
-                {jobTemplates.map((jt) => (
-                  <option key={jt.id} value={jt.id}>{jt.name}</option>
-                ))}
-              </select>
-              {jobTemplates.length === 0 && (
-                <span style={{ fontSize: 12, color: '#888' }}>Loading job templates…</span>
-              )}
             </FormGroup>
             <FormGroup label="Variables">
               <VaultVariableEditor
