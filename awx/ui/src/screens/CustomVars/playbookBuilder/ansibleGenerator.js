@@ -77,6 +77,7 @@ function blockToPlayObject(playBlock) {
   const name = fieldValue(playBlock, 'NAME');
   const hosts = fieldValue(playBlock, 'HOSTS');
   const become = fieldValue(playBlock, 'BECOME');
+  const extra = fieldValue(playBlock, 'EXTRA');
 
   const tasks = [];
   let taskBlock = playBlock.getInputTargetBlock('TASKS');
@@ -89,6 +90,9 @@ function blockToPlayObject(playBlock) {
 
   const play = { name, hosts };
   if (become) play.become = true;
+  // Play-level keys without a dedicated block yet (roles:, environment:,
+  // vars:, ...) round-trip verbatim through this field — see blocks.js.
+  if (extra) Object.assign(play, yaml.load(extra));
   play.tasks = tasks;
   return play;
 }

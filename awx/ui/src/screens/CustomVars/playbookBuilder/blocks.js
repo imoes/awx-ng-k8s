@@ -60,10 +60,17 @@ function defineStaticBlocks() {
       this.appendDummyInput()
         .appendField('become')
         .appendField(new Blockly.FieldCheckbox('FALSE'), 'BECOME');
+      this.appendDummyInput()
+        .appendField('extra (roles, vars, environment, …):')
+        .appendField(new Blockly.FieldTextInput(''), 'EXTRA');
       this.appendStatementInput('TASKS').setCheck('Task').appendField('tasks');
       this.setColour(120);
       this.setDeletable(true);
-      this.setTooltip('An Ansible play — a set of tasks run against a group of hosts.');
+      this.setTooltip(
+        'An Ansible play — a set of tasks run against a group of hosts. ' +
+        'The "extra" field preserves any play-level keys without a ' +
+        'dedicated block yet (e.g. roles:, environment:, vars:) as raw YAML.'
+      );
     },
   };
 

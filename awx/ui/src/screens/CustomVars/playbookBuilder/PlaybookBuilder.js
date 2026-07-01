@@ -20,6 +20,7 @@ import BlocklyWorkspace from './BlocklyWorkspace';
 import { registerBlocks } from './blocks';
 import { buildToolbox } from './toolbox';
 import { workspaceToPlaybook } from './ansibleGenerator';
+import { importPlaybookYaml } from './playbookImporter';
 import { sidecarPathFor } from './sidecarPath';
 import { readProjects, readProjectFile, saveProjectFile, lintProjectFile } from '../api';
 
@@ -35,6 +36,8 @@ function PlaybookBuilder() {
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadMessage, setLoadMessage] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState(null);
   const workspaceRef = useRef(null);
 
   // Block definitions must be registered before Blockly.inject runs; do it
@@ -106,6 +109,26 @@ function PlaybookBuilder() {
     }
   };
 
+  const handleImportYaml = async () => {
+    setImporting(true);
+    setImportMessage(null);
+    setSaveError(null);
+    try {
+      const { data } = await readProjectFile(projectId, targetPath);
+      const count = importPlaybookYaml(data.content, workspaceRef.current);
+      handleChange(workspaceRef.current);
+      setImportMessage({ variant: 'success', text: `Imported ${count} play(s) from ${targetPath}.` });
+    } catch (e) {
+      if (e?.response?.status === 404) {
+        setImportMessage({ variant: 'info', text: 'File not found at this path.' });
+      } else {
+        setImportMessage({ variant: 'danger', text: e?.response?.data?.detail || e.message });
+      }
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <>
       <ScreenHeader
@@ -156,6 +179,14 @@ function PlaybookBuilder() {
               >
                 {loading ? <Spinner size="sm" /> : 'Load layout'}
               </Button>
+              <Button
+                variant="secondary"
+                onClick={handleImportYaml}
+                isDisabled={importing || !projectId}
+                data-testid="pb-import-button"
+              >
+                {importing ? <Spinner size="sm" /> : 'Import from YAML'}
+              </Button>
             </div>
 
             {saveError && <Alert variant="danger" title={saveError} isInline style={{ marginBottom: 12 }} />}
@@ -167,6 +198,15 @@ function PlaybookBuilder() {
                 isInline
                 style={{ marginBottom: 12 }}
                 data-testid="pb-load-message"
+              />
+            )}
+            {importMessage && (
+              <Alert
+                variant={importMessage.variant}
+                title={importMessage.text}
+                isInline
+                style={{ marginBottom: 12 }}
+                data-testid="pb-import-message"
               />
             )}
             {lintErrors.length > 0 && (
