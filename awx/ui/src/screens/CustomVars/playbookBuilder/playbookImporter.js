@@ -9,7 +9,7 @@ import * as Blockly from 'blockly';
 import yaml from 'js-yaml';
 import { moduleBlockType, MODULE_NAMES } from './blocks';
 
-const KNOWN_PLAY_KEYS = new Set(['name', 'hosts', 'become', 'tasks']);
+const KNOWN_PLAY_KEYS = new Set(['name', 'hosts', 'become', 'tasks', 'roles']);
 const KNOWN_TASK_KEYS = new Set(['name', 'when', 'tags', 'notify']);
 const MODULE_NAME_SET = new Set(MODULE_NAMES);
 
@@ -86,6 +86,23 @@ function importTask(workspace, taskObj) {
   return taskBlock;
 }
 
+// A `roles:` entry is either a plain role name string, or an object
+// `{role: name, ...vars}` — the inverse of ansibleGenerator's
+// blockToRoleObject().
+function importRole(workspace, roleEntry) {
+  const roleBlock = newBlock(workspace, 'role_use');
+  if (typeof roleEntry === 'string') {
+    setField(roleBlock, 'ROLE_NAME', roleEntry);
+  } else if (roleEntry && typeof roleEntry === 'object') {
+    const { role, ...roleVars } = roleEntry;
+    setField(roleBlock, 'ROLE_NAME', role);
+    if (Object.keys(roleVars).length) {
+      setField(roleBlock, 'VARS', yaml.dump(roleVars).trim());
+    }
+  }
+  return roleBlock;
+}
+
 function importPlay(workspace, playObj) {
   const playBlock = newBlock(workspace, 'play');
   if (playObj.name) setField(playBlock, 'NAME', playObj.name);
@@ -98,6 +115,17 @@ function importPlay(workspace, playObj) {
     extraKeys.forEach((k) => { extra[k] = playObj[k]; });
     setField(playBlock, 'EXTRA', yaml.dump(extra).trim());
   }
+
+  let previousRole = null;
+  (playObj.roles || []).forEach((roleEntry) => {
+    const roleBlock = importRole(workspace, roleEntry);
+    if (previousRole) {
+      previousRole.nextConnection.connect(roleBlock.previousConnection);
+    } else {
+      playBlock.getInput('ROLES').connection.connect(roleBlock.previousConnection);
+    }
+    previousRole = roleBlock;
+  });
 
   let previousTask = null;
   (playObj.tasks || []).forEach((taskObj) => {

@@ -13,7 +13,26 @@ function moduleCategory() {
   };
 }
 
-export function buildToolbox() {
+// Roles are per-project (unlike the static ansible.builtin catalog), so the
+// caller passes the current project's role names; each becomes a `role_use`
+// flyout entry pre-filled with that role's name via the toolbox JSON's
+// `fields` override, letting the user drag out an already-labeled block.
+function rolesCategory(roleNames) {
+  return {
+    kind: 'category',
+    name: 'Roles',
+    colour: '290',
+    contents: roleNames.length
+      ? [...roleNames].sort().map((name) => ({
+          kind: 'block',
+          type: 'role_use',
+          fields: { ROLE_NAME: name },
+        }))
+      : [{ kind: 'block', type: 'role_use' }],
+  };
+}
+
+export function buildToolbox(roleNames = []) {
   return {
     kind: 'categoryToolbox',
     contents: [
@@ -30,6 +49,7 @@ export function buildToolbox() {
         contents: [{ kind: 'block', type: 'task' }],
       },
       moduleCategory(),
+      rolesCategory(roleNames),
       {
         kind: 'category',
         name: 'Raw / Fallback',

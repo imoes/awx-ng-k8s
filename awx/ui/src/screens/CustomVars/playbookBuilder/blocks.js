@@ -61,15 +61,34 @@ function defineStaticBlocks() {
         .appendField('become')
         .appendField(new Blockly.FieldCheckbox('FALSE'), 'BECOME');
       this.appendDummyInput()
-        .appendField('extra (roles, vars, environment, …):')
+        .appendField('extra (vars, environment, …):')
         .appendField(new Blockly.FieldTextInput(''), 'EXTRA');
+      this.appendStatementInput('ROLES').setCheck('Role').appendField('roles');
       this.appendStatementInput('TASKS').setCheck('Task').appendField('tasks');
       this.setColour(120);
       this.setDeletable(true);
       this.setTooltip(
-        'An Ansible play — a set of tasks run against a group of hosts. ' +
-        'The "extra" field preserves any play-level keys without a ' +
-        'dedicated block yet (e.g. roles:, environment:, vars:) as raw YAML.'
+        'An Ansible play — a set of tasks (and/or roles) run against a group ' +
+        'of hosts. The "extra" field preserves any play-level keys without a ' +
+        'dedicated block yet (e.g. vars:, environment:) as raw YAML.'
+      );
+    },
+  };
+
+  Blockly.Blocks.role_use = {
+    init() {
+      this.appendDummyInput()
+        .appendField('role:')
+        .appendField(new Blockly.FieldTextInput('role name'), 'ROLE_NAME');
+      this.appendDummyInput()
+        .appendField('vars (optional):')
+        .appendField(new Blockly.FieldTextInput(''), 'VARS');
+      this.setPreviousStatement(true, 'Role');
+      this.setNextStatement(true, 'Role');
+      this.setColour(290);
+      this.setTooltip(
+        'Applies a project role to this play (equivalent to an entry in ' +
+        'the roles: list). "vars" holds optional role variables as inline YAML.'
       );
     },
   };

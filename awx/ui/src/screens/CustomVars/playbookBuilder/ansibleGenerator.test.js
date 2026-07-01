@@ -54,6 +54,30 @@ describe('ansibleGenerator', () => {
     expect(outputYaml.trim()).toBe('---');
   });
 
+  it('emits a correct roles: list from two role_use blocks (one with vars)', () => {
+    const play = workspace.newBlock('play');
+    play.setFieldValue('provision', 'NAME');
+    play.setFieldValue('webservers', 'HOSTS');
+
+    const role1 = workspace.newBlock('role_use');
+    role1.setFieldValue('img_common', 'ROLE_NAME');
+
+    const role2 = workspace.newBlock('role_use');
+    role2.setFieldValue('img_docker', 'ROLE_NAME');
+    role2.setFieldValue('docker_version: "24.0"', 'VARS');
+
+    play.getInput('ROLES').connection.connect(role1.previousConnection);
+    role1.nextConnection.connect(role2.previousConnection);
+
+    const outputYaml = workspaceToPlaybook(workspace);
+    const parsed = yaml.load(outputYaml);
+
+    expect(parsed[0].roles).toEqual([
+      'img_common',
+      { role: 'img_docker', docker_version: '24.0' },
+    ]);
+  });
+
   it('serializes a raw_task fallback block verbatim (round-trip safety)', () => {
     const play = workspace.newBlock('play');
     play.setFieldValue('web', 'NAME');

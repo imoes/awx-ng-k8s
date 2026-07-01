@@ -22,7 +22,7 @@ import { buildToolbox } from './toolbox';
 import { workspaceToPlaybook } from './ansibleGenerator';
 import { importPlaybookYaml } from './playbookImporter';
 import { sidecarPathFor } from './sidecarPath';
-import { readProjects, readProjectFile, saveProjectFile, lintProjectFile } from '../api';
+import { readProjects, readProjectRoles, readProjectFile, saveProjectFile, lintProjectFile } from '../api';
 
 function PlaybookBuilder() {
   const [blockCount, setBlockCount] = useState(0);
@@ -41,10 +41,12 @@ function PlaybookBuilder() {
   const workspaceRef = useRef(null);
 
   // Block definitions must be registered before Blockly.inject runs; do it
-  // once per mount, not on every render.
+  // once per mount, not on every render. The Roles category starts empty —
+  // it's populated once a project is selected (see loadRoles below), via
+  // workspace.updateToolbox(), since roles are per-project.
   const toolbox = useMemo(() => {
     registerBlocks();
-    return buildToolbox();
+    return buildToolbox([]);
   }, []);
 
   const { request: loadProjects } = useRequest(
@@ -55,6 +57,16 @@ function PlaybookBuilder() {
     }, [])
   );
   useEffect(() => { loadProjects(); }, [loadProjects]);
+
+  const { request: loadRoles } = useRequest(
+    useCallback(async () => {
+      if (!projectId) return;
+      const { data } = await readProjectRoles(projectId);
+      const roleNames = (data.results || []).map((r) => r.role_name);
+      workspaceRef.current?.updateToolbox(buildToolbox(roleNames));
+    }, [projectId])
+  );
+  useEffect(() => { loadRoles(); }, [loadRoles]);
 
   const handleChange = (workspace) => {
     setBlockCount(workspace.getAllBlocks(false).length);

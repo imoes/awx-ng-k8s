@@ -73,11 +73,27 @@ function blockToTaskObject(taskBlock) {
   return ordered;
 }
 
+function blockToRoleObject(roleBlock) {
+  const name = fieldValue(roleBlock, 'ROLE_NAME');
+  const roleVars = fieldValue(roleBlock, 'VARS');
+  if (!roleVars) return name;
+  return { role: name, ...yaml.load(roleVars) };
+}
+
 function blockToPlayObject(playBlock) {
   const name = fieldValue(playBlock, 'NAME');
   const hosts = fieldValue(playBlock, 'HOSTS');
   const become = fieldValue(playBlock, 'BECOME');
   const extra = fieldValue(playBlock, 'EXTRA');
+
+  const roles = [];
+  let roleBlock = playBlock.getInputTargetBlock('ROLES');
+  while (roleBlock) {
+    if (roleBlock.isEnabled()) {
+      roles.push(blockToRoleObject(roleBlock));
+    }
+    roleBlock = roleBlock.getNextBlock();
+  }
 
   const tasks = [];
   let taskBlock = playBlock.getInputTargetBlock('TASKS');
@@ -90,9 +106,11 @@ function blockToPlayObject(playBlock) {
 
   const play = { name, hosts };
   if (become) play.become = true;
-  // Play-level keys without a dedicated block yet (roles:, environment:,
-  // vars:, ...) round-trip verbatim through this field — see blocks.js.
+  // Play-level keys without a dedicated block yet (environment:, vars:,
+  // ...) round-trip verbatim through this field — see blocks.js. `roles:`
+  // has its own typed role_use blocks (below), not part of EXTRA.
   if (extra) Object.assign(play, yaml.load(extra));
+  if (roles.length) play.roles = roles;
   play.tasks = tasks;
   return play;
 }
