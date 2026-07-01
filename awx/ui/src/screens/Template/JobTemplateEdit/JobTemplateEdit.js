@@ -1,7 +1,16 @@
 /* eslint react/no-unused-state: 0 */
+/* eslint-disable i18next/no-literal-string */
 import React, { useState, useCallback, useEffect } from 'react';
 import { Redirect, useHistory } from 'react-router-dom';
 
+import {
+  Alert,
+  Button,
+  Checkbox,
+  Divider,
+  Spinner,
+  Title,
+} from '@patternfly/react-core';
 import { JobTemplate } from 'types';
 import { JobTemplatesAPI, ProjectsAPI } from 'api';
 import { getAddedAndRemoved } from 'util/lists';
@@ -9,6 +18,108 @@ import useRequest from 'hooks/useRequest';
 import ContentLoading from 'components/ContentLoading';
 import { CardBody } from 'components/Card';
 import JobTemplateForm from '../shared/JobTemplateForm';
+import { listVaults, listTemplateVaults, setTemplateVaults } from '../../CustomVars/api';
+
+function VaultSection({ templateId }) {
+  const [allVaults, setAllVaults] = useState([]);
+  const [linkedIds, setLinkedIds] = useState(new Set());
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [saved, setSaved] = useState(false);
+
+  const { isLoading: vaultsLoading, request: loadVaults } = useRequest(
+    useCallback(async () => {
+      const [allRes, linkedRes] = await Promise.all([
+        listVaults(),
+        listTemplateVaults(templateId),
+      ]);
+      setAllVaults(allRes.data.results || []);
+      setLinkedIds(new Set((linkedRes.data.results || []).map((v) => v.id)));
+    }, [templateId])
+  );
+
+  useEffect(() => { loadVaults(); }, [loadVaults]);
+
+  const toggle = (id) => {
+    setLinkedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    setSaved(false);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await setTemplateVaults(templateId, Array.from(linkedIds));
+      setSaved(true);
+    } catch (e) {
+      setSaveError(e?.response?.data?.detail || e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 32 }}>
+      <Divider style={{ marginBottom: 24 }} />
+      <Title headingLevel="h2" size="xl" style={{ marginBottom: 8 }}>
+        Linked Vaults
+      </Title>
+      <p style={{ color: '#666', marginBottom: 16, fontSize: 14 }}>
+        Variables from linked vaults are automatically injected as extra vars when this template runs.
+      </p>
+      {vaultsLoading && <Spinner size="md" />}
+      {saveError && (
+        <Alert variant="danger" title={saveError} isInline style={{ marginBottom: 8 }} />
+      )}
+      {saved && (
+        <Alert variant="success" title="Vault assignments saved." isInline style={{ marginBottom: 8 }} />
+      )}
+      {!vaultsLoading && allVaults.length === 0 && (
+        <p style={{ color: '#999', fontSize: 13 }}>
+          No vaults configured yet. Go to <strong>Resources → Vaults</strong> to create one.
+        </p>
+      )}
+      {!vaultsLoading && allVaults.map((v) => (
+        <div key={v.id} style={{ marginBottom: 10 }}>
+          <Checkbox
+            id={`vault-edit-${v.id}`}
+            label={
+              <span>
+                <strong>{v.name}</strong>
+                {v.description && (
+                  <span style={{ color: '#666', marginLeft: 6 }}>— {v.description}</span>
+                )}
+                <span style={{
+                  marginLeft: 8, fontSize: 11,
+                  background: '#f0f0f0', borderRadius: 3, padding: '1px 5px',
+                }}>
+                  {v.variable_count ?? 0} var{v.variable_count !== 1 ? 's' : ''}
+                </span>
+              </span>
+            }
+            isChecked={linkedIds.has(v.id)}
+            onChange={() => toggle(v.id)}
+          />
+        </div>
+      ))}
+      {!vaultsLoading && allVaults.length > 0 && (
+        <Button
+          variant="secondary"
+          onClick={save}
+          isDisabled={saving}
+          style={{ marginTop: 8 }}
+        >
+          {saving ? <Spinner size="sm" /> : 'Save vault assignments'}
+        </Button>
+      )}
+    </div>
+  );
+}
 
 function JobTemplateEdit({ template, reloadTemplate }) {
   const history = useHistory();
@@ -133,6 +244,7 @@ function JobTemplateEdit({ template, reloadTemplate }) {
         submitError={formSubmitError}
         isOverrideDisabledLookup={!isDisabled}
       />
+      <VaultSection templateId={template.id} />
     </CardBody>
   );
 }
