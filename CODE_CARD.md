@@ -206,15 +206,19 @@ Projekt-Rollen, Rollen-Variablen, Vaults). Einzige Backend-Änderung: `.json` zu
 | Datei | Zweck |
 |-------|-------|
 | `BlocklyWorkspace.js` | React-Wrapper um `Blockly.inject` (kein `react-blockly` — React-18-Peer-Dependency-Konflikt; dieses UI läuft auf React 17) |
-| `blocks.js` | Blockdefinitionen: `play`, `task`, `role_use`, `raw_task`/`raw_yaml` (Fallback), + 1 Block pro Katalog-Modul |
+| `blocks.js` | Blockdefinitionen: `play`, `task`, `role_use`, `raw_task`/`raw_yaml` (Fallback), + 1 Block pro Katalog-Modul. Modul-Blöcke zeigen nur Pflicht+Primär-Params, Rest via „add parameter…"-Dropdown (dynamische Inputs, `saveExtraState`/`loadExtraState`) |
 | `moduleCatalog.generated.json` | Auto-generierter Katalog **aller 71 `ansible.builtin`-Module** (`tools/gen-module-catalog.py`, läuft via `ansible-doc -j` in `awx_ee`) |
-| `toolbox.js` | Kategorien Play/Task/Modules/Roles/Raw; Roles-Kategorie wird pro Projekt via `workspace.updateToolbox()` neu aufgebaut |
+| `toolbox.js` | Kategorien: **🔍 Search** (Live-Filter, `@blockly/toolbox-search`) + Play/Task/Modules/Roles/Raw; Roles-Kategorie wird pro Projekt via `workspace.updateToolbox()` neu aufgebaut |
 | `ansibleGenerator.js` | Blöcke → `plays[]`-Objektbaum → `jsonToYaml()` (bestehendes Util, kein Blockly-eigener String-Generator) |
 | `playbookImporter.js` | Inverse: YAML → Blöcke; `importPlaybookYaml` (Plays) + `importTasksYaml` (Rollen-Task-Liste); unbekannte Module/Konstrukte als `raw_task`/`raw_yaml` verlustfrei |
-| `VariablesPanel.js` + `varInsertion.js` | Rechte Variablen-Palette, **nur für die Rollen des aktuellen Dokuments** (+ Vault-Variablen); Drag&Drop fügt `{{ name }}` in ein Wertefeld ein |
+| `VariablesPanel.js` + `varInsertion.js` | Rechte Variablen-Palette, **nur für die Rollen des aktuellen Dokuments** (+ Vault-Variablen); zeigt je Variable den Wert/Default; Drag&Drop fügt `{{ name }}` in ein Wertefeld ein |
 | `sidecarPath.js` | `playbooks/site.yml` → `playbooks/site.blockly.json` (Workspace-Layout-Sidecar) |
 
-**Öffnen-Dialog & Doc-Mode**: „Open playbook…" listet Playbooks (`/plays/`), „Open role…" listet Rollen (`/roles/`). Beim Öffnen wird zuerst ein vorhandener `.blockly.json`-Sidecar geladen (exaktes Layout), sonst die YAML geparst. **Doc-Mode** `playbook` | `role`: im Rollen-Modus wird `roles/<name>/tasks/main.yml` als **reine Task-Liste** (ohne Play-Wrapper) importiert/generiert (`serializeWorkspace(ws, mode)` / `workspaceToTasks`).
+**Plugins** (Blockly 11 — passende Peer-Versionen!): `@blockly/toolbox-search@2.0.16` (Live-Suche, `kind:'search'`), `@blockly/field-multilineinput@5.0.17` (`registerFieldMultilineInput()`, mehrzeilige Felder für `EXTRA`/`RAW_YAML`/`VARS`). **Nicht** die neuesten Versionen nehmen — v13.x verlangen Blockly ^13.
+
+**New / Öffnen-Dialog & Doc-Mode**: „New playbook"/„New role" leeren die Canvas und setzen einen Start-Block. „Open playbook…" listet Playbooks (`/plays/`), „Open role…" listet Rollen (`/roles/`). Beim Öffnen wird zuerst ein vorhandener `.blockly.json`-Sidecar geladen (exaktes Layout), sonst die YAML geparst. **Doc-Mode** `playbook` | `role`: im Rollen-Modus wird `roles/<name>/tasks/main.yml` als **reine Task-Liste** (ohne Play-Wrapper) importiert/generiert (`serializeWorkspace(ws, mode)` / `workspaceToTasks`).
+
+**Import-Robustheit**: `importModuleSlot` normalisiert die Ansible-Inline-Kurzform (`file: path=/x state=directory`) via `parseInlineArgs` zu einem Mapping → auch diese Tasks werden typisierte Modul-Blöcke (nicht `raw_task`). Optionale Params werden beim Import per `addOptionalParam` nachgerüstet; nicht darstellbare (nicht-skalare Werte / unbekannte Keys) → `raw_yaml`-Fallback (verlustfrei).
 
 **Wichtige Design-Entscheidungen**:
 - Blockly-Sprites/Sounds liegen lokal unter `public/static/blockly-media/` (Original zeigt auf externe `appspot.com`-URL → von der CSP blockiert). Dockerfile kopiert dieses Verzeichnis zusätzlich nach `/var/lib/awx/public/static/blockly-media/`.

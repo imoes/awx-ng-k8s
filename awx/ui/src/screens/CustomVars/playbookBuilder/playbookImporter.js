@@ -34,18 +34,66 @@ function setField(block, fieldName, value) {
   }
 }
 
+// Parses Ansible's inline "key=value" shorthand (e.g.
+// `file: path=/tmp/x state=directory mode=0755`) into a plain object.
+// Values may be quoted. Returns {} if nothing key=value-shaped is found
+// (e.g. a bare free-form command like `command: ls -la`).
+function parseInlineArgs(str) {
+  const result = {};
+  const re = /(\w+)=("[^"]*"|'[^']*'|\S+)/g;
+  let m = re.exec(str);
+  while (m !== null) {
+    let value = m[2];
+    if ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    result[m[1]] = value;
+    m = re.exec(str);
+  }
+  return result;
+}
+
 // Builds the block that plugs into a task's MODULE input: a typed
-// `module_<name>` block if the module is in the ansible.builtin catalog,
-// otherwise a `raw_yaml` fallback holding `{moduleKey: args}` verbatim.
+// `module_<name>` block if the module is in the ansible.builtin catalog AND
+// all its arg keys map to known params; otherwise a `raw_yaml` fallback
+// holding `{moduleKey: args}` verbatim (lossless).
 function importModuleSlot(workspace, moduleKey, args) {
   const shortName = moduleKey.includes('.') ? moduleKey.split('.').pop() : moduleKey;
-  if (MODULE_NAME_SET.has(shortName)) {
-    const moduleBlock = newBlock(workspace, moduleBlockType(shortName));
-    if (args && typeof args === 'object') {
-      Object.entries(args).forEach(([key, value]) => setField(moduleBlock, key, value));
-    }
-    return moduleBlock;
+  // Ansible accepts args as a mapping OR as an inline "key=value" string —
+  // normalize the inline form so those tasks still get a typed module block.
+  let normalizedArgs = args;
+  if (typeof args === 'string') {
+    const inline = parseInlineArgs(args);
+    if (Object.keys(inline).length) normalizedArgs = inline;
   }
+  const argEntries = normalizedArgs && typeof normalizedArgs === 'object' && !Array.isArray(normalizedArgs)
+    ? Object.entries(normalizedArgs)
+    : null;
+
+  if (MODULE_NAME_SET.has(shortName) && (argEntries || args === null || args === undefined)) {
+    const moduleBlock = newBlock(workspace, moduleBlockType(shortName));
+    // Optional params aren't shown by default — add their rows before
+    // setting values. If a key isn't a known param of this module, we can't
+    // represent it faithfully, so fall back to raw_yaml (no data loss).
+    const isScalar = (v) => v === null || v === undefined || typeof v !== 'object';
+    const canRepresent = (argEntries || []).every(([key, value]) => {
+      // Non-scalar values (nested dict/list) can't live in a text field.
+      if (!isScalar(value)) return false;
+      if (moduleBlock.getField(key)) return true;
+      if (typeof moduleBlock.addOptionalParam === 'function') {
+        moduleBlock.addOptionalParam(key);
+        return !!moduleBlock.getField(key);
+      }
+      return false;
+    });
+    if (canRepresent) {
+      (argEntries || []).forEach(([key, value]) => setField(moduleBlock, key, value));
+      return moduleBlock;
+    }
+    moduleBlock.dispose();
+  }
+
   const rawBlock = newBlock(workspace, 'raw_yaml');
   setField(rawBlock, 'RAW_YAML', yaml.dump({ [moduleKey]: args }).trim());
   return rawBlock;

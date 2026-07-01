@@ -11,6 +11,14 @@ import { TextInput } from '@patternfly/react-core';
 import useRequest from 'hooks/useRequest';
 import { readProjectRoleVariables, listVaults, getVault } from '../api';
 
+// Short, single-line preview of a variable's value/default so the user can
+// see what a variable actually holds.
+function previewValue(value) {
+  if (value === null || value === undefined) return '';
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  return text.length > 40 ? `${text.slice(0, 40)}…` : text;
+}
+
 async function loadVariables(projectId, roleNames) {
   if (!projectId) return [];
   const roleSet = new Set(roleNames);
@@ -23,15 +31,20 @@ async function loadVariables(projectId, roleNames) {
   // Only role variables belonging to roles present in the current document.
   const roleVars = (roleVarsRes.data.results || [])
     .filter((v) => roleSet.has(v.role_name))
-    .map((v) => ({ name: v.var_name, source: `role: ${v.role_name}` }));
+    .map((v) => ({
+      name: v.var_name,
+      source: `role: ${v.role_name}`,
+      preview: previewValue(v.default_value),
+    }));
 
   const vaultDetails = await Promise.all(
     (vaultsRes.data.results || []).map((v) => getVault(v.id))
   );
   const vaultVars = vaultDetails.flatMap((res) =>
-    Object.keys(res.data.variables || {}).map((name) => ({
+    Object.entries(res.data.variables || {}).map(([name, value]) => ({
       name,
       source: `vault: ${res.data.name}`,
+      preview: previewValue(value),
     }))
   );
 
@@ -110,6 +123,11 @@ function VariablesPanel({ projectId, roleNames }) {
             }}
           >
             <strong>{v.name}</strong>
+            {v.preview !== '' && (
+              <div style={{ color: '#444', fontSize: 11, fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                = {v.preview}
+              </div>
+            )}
             <div style={{ color: '#888', fontSize: 10 }}>{v.source}</div>
           </div>
         ))}

@@ -98,6 +98,40 @@ describe('playbookImporter', () => {
     expect(() => importPlaybookYaml('foo: bar', workspace)).toThrow(/list of plays/);
   });
 
+  it('imports a module with a non-default (optional) param by adding its row', () => {
+    // debug.verbosity is optional (hidden by default) — importer must add it.
+    const original = `
+- name: p
+  hosts: all
+  tasks:
+    - name: noisy
+      debug:
+        msg: hi
+        verbosity: '2'
+`;
+    importPlaybookYaml(original, workspace);
+    const regenerated = workspaceToPlaybook(workspace);
+    expect(yaml.load(regenerated)).toEqual(yaml.load(original));
+  });
+
+  it('imports a module written in inline key=value shorthand as a typed block', () => {
+    // Ansible's inline form, incl. FQCN — must NOT become a raw_task.
+    const original = `
+- name: p
+  hosts: all
+  tasks:
+    - name: mkdir
+      ansible.builtin.file: path=/tmp/x state=directory mode=0755
+`;
+    importPlaybookYaml(original, workspace);
+    const types = workspace.getAllBlocks(false).map((b) => b.type);
+    expect(types).toContain('module_file');
+    expect(types).not.toContain('raw_task');
+
+    const parsed = yaml.load(workspaceToPlaybook(workspace));
+    expect(parsed[0].tasks[0].file).toEqual({ path: '/tmp/x', state: 'directory', mode: '0755' });
+  });
+
   it('round-trips a role tasks/main.yml (bare task list) with no data loss', () => {
     const original = `
 - name: install nginx

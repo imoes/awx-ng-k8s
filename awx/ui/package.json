@@ -6,6 +6,8 @@
     "node": ">=16.13.1"
   },
   "dependencies": {
+    "@blockly/field-multilineinput": "^5.0.17",
+    "@blockly/toolbox-search": "^2.0.16",
     "@lingui/react": "3.14.0",
     "@monaco-editor/react": "^4.7.0",
     "@patternfly/patternfly": "4.224.2",

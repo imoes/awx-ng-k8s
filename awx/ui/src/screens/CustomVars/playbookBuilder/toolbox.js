@@ -1,4 +1,7 @@
 // awx-ng: builds the Blockly toolbox (palette) for the playbook builder.
+// Importing the plugin registers the `kind: 'search'` toolbox category, which
+// adds a live search box that filters blocks (modules, roles, …) as you type.
+import '@blockly/toolbox-search';
 import moduleCatalog from './moduleCatalog.generated.json';
 import { moduleBlockType } from './blocks';
 
@@ -36,6 +39,12 @@ export function buildToolbox(roleNames = []) {
   return {
     kind: 'categoryToolbox',
     contents: [
+      {
+        // Live search across all catalogued blocks (modules, roles, …).
+        kind: 'search',
+        name: '🔍 Search',
+        contents: [],
+      },
       {
         kind: 'category',
         name: 'Play',

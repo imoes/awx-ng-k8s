@@ -176,6 +176,25 @@ function PlaybookBuilder() {
     workspaceRef.current = ws;
   };
 
+  const handleNew = (mode) => {
+    const ws = workspaceRef.current;
+    if (!ws) return;
+    ws.clear();
+    const seed = ws.newBlock(mode === 'role' ? 'task' : 'play');
+    seed.initSvg();
+    seed.render();
+    seed.moveBy(30, 30);
+    setDocMode(mode);
+    docModeRef.current = mode;
+    setOpenedRole(null);
+    openedRoleRef.current = null;
+    setTargetPath(mode === 'role' ? 'roles/new-role/tasks/main.yml' : 'playbooks/new-playbook.yml');
+    setLoadMessage(null);
+    setLintErrors([]);
+    setSaved(false);
+    refreshFromWorkspace(ws);
+  };
+
   const handleSave = async () => {
     setSaving(true);
     setSaveError(null);
@@ -287,6 +306,20 @@ function PlaybookBuilder() {
                   ))}
                 </select>
               </FormGroup>
+              <Button
+                variant="secondary"
+                onClick={() => handleNew('playbook')}
+                data-testid="pb-new-playbook-button"
+              >
+                New playbook
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => handleNew('role')}
+                data-testid="pb-new-role-button"
+              >
+                New role
+              </Button>
               <Button
                 variant="secondary"
                 onClick={() => openBrowseDialog('playbook')}

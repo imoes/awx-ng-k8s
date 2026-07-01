@@ -40,7 +40,8 @@ function blockToModuleArgs(moduleBlock) {
   const args = {};
   moduleBlock.inputList.forEach((input) => {
     input.fieldRow.forEach((field) => {
-      if (!field.name || field.name === 'MODULE_LABEL') return;
+      // MODULE_LABEL is the header; ADD_PARAM is the "add parameter…" dropdown.
+      if (!field.name || field.name === 'MODULE_LABEL' || field.name === 'ADD_PARAM') return;
       const value = fieldValue(moduleBlock, field.name);
       // Blank text fields and unchecked checkboxes mean "the user didn't
       // set this" — there's no separate UI affordance (yet) to distinguish
