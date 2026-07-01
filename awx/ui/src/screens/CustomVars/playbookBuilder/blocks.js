@@ -11,16 +11,18 @@ function moduleBlockType(shortName) {
 }
 
 function fieldForParam(param) {
+  // Deliberately start every field blank/unchecked, ignoring the catalog's
+  // `default` — pre-filling with defaults would cause the generator
+  // (Section D) to always emit them, even for params the user never
+  // touched, silently bloating every generated task.
   if (param.choices && param.choices.length) {
     const options = param.choices.map((c) => [String(c), String(c)]);
     return new Blockly.FieldDropdown(options);
   }
   if (param.type === 'bool') {
-    return new Blockly.FieldCheckbox(param.default === true ? 'TRUE' : 'FALSE');
+    return new Blockly.FieldCheckbox('FALSE');
   }
-  return new Blockly.FieldTextInput(
-    param.default !== null && param.default !== undefined ? String(param.default) : ''
-  );
+  return new Blockly.FieldTextInput('');
 }
 
 function defineModuleBlocks() {
