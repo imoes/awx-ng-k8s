@@ -16,7 +16,11 @@ function fieldForParam(param) {
   // (Section D) to always emit them, even for params the user never
   // touched, silently bloating every generated task.
   if (param.choices && param.choices.length) {
-    const options = param.choices.map((c) => [String(c), String(c)]);
+    // Lead with a blank "(unset)" option (value '') so an untouched dropdown
+    // emits nothing — a FieldDropdown always holds a value, so without this
+    // the generator would output the first choice for every module even when
+    // the user never picked it (e.g. apt would always add `upgrade: dist`).
+    const options = [['(unset)', ''], ...param.choices.map((c) => [String(c), String(c)])];
     return new Blockly.FieldDropdown(options);
   }
   if (param.type === 'bool') {

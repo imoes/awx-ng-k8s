@@ -1,24 +1,30 @@
 /* eslint-disable i18next/no-literal-string */
 // awx-ng: right-side list of variables the user can drag onto a text field
-// on the Blockly canvas to insert a {{ name }} Jinja reference. Sourced from
-// the selected project's scanned role variables and any Ansible Vault
-// variable names (both are already the "real" injectable variable pool for
-// a job — see customvars/api.py's role scan + vault extra_vars injection).
+// on the Blockly canvas to insert a {{ name }} Jinja reference.
+//
+// Scope: only variables relevant to the *currently open* document —
+// role variables for the roles actually used in this playbook (or the role
+// being edited), plus Ansible Vault variable names. NOT every role in the
+// project (that was the original, confusing behaviour).
 import React, { useCallback, useEffect, useState } from 'react';
 import { TextInput } from '@patternfly/react-core';
 import useRequest from 'hooks/useRequest';
 import { readProjectRoleVariables, listVaults, getVault } from '../api';
 
-async function loadVariables(projectId) {
+async function loadVariables(projectId, roleNames) {
   if (!projectId) return [];
+  const roleSet = new Set(roleNames);
+
   const [roleVarsRes, vaultsRes] = await Promise.all([
-    readProjectRoleVariables(projectId),
+    roleSet.size ? readProjectRoleVariables(projectId) : Promise.resolve({ data: { results: [] } }),
     listVaults(),
   ]);
-  const roleVars = (roleVarsRes.data.results || []).map((v) => ({
-    name: v.var_name,
-    source: `role: ${v.role_name}`,
-  }));
+
+  // Only role variables belonging to roles present in the current document.
+  const roleVars = (roleVarsRes.data.results || [])
+    .filter((v) => roleSet.has(v.role_name))
+    .map((v) => ({ name: v.var_name, source: `role: ${v.role_name}` }));
+
   const vaultDetails = await Promise.all(
     (vaultsRes.data.results || []).map((v) => getVault(v.id))
   );
@@ -28,6 +34,7 @@ async function loadVariables(projectId) {
       source: `vault: ${res.data.name}`,
     }))
   );
+
   const seen = new Set();
   return [...roleVars, ...vaultVars].filter((v) => {
     if (seen.has(v.name)) return false;
@@ -36,14 +43,17 @@ async function loadVariables(projectId) {
   });
 }
 
-function VariablesPanel({ projectId }) {
+function VariablesPanel({ projectId, roleNames }) {
   const [search, setSearch] = useState('');
   const [vars, setVars] = useState([]);
+  // Stable primitive dependency so the effect re-runs only when the actual
+  // set of relevant roles changes, not on every parent re-render.
+  const roleKey = [...roleNames].sort().join(',');
 
   const { request: reload } = useRequest(
     useCallback(async () => {
-      setVars(await loadVariables(projectId));
-    }, [projectId])
+      setVars(await loadVariables(projectId, roleKey ? roleKey.split(',') : []));
+    }, [projectId, roleKey])
   );
   useEffect(() => { reload(); }, [reload]);
 
@@ -75,7 +85,10 @@ function VariablesPanel({ projectId }) {
       />
       <div style={{ maxHeight: 480, overflowY: 'auto' }}>
         {filtered.length === 0 && (
-          <p style={{ color: '#888', fontSize: 12 }}>No variables found for this project.</p>
+          <p style={{ color: '#888', fontSize: 12 }}>
+            No variables for the current playbook/role. Add a role, or open a
+            playbook/role that uses roles with variables.
+          </p>
         )}
         {filtered.map((v) => (
           <div

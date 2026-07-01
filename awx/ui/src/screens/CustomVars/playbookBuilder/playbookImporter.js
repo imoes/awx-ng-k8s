@@ -161,3 +161,26 @@ export function importPlaybookYaml(content, workspace) {
   });
   return plays.length;
 }
+
+// Role-tasks document mode: a role's tasks/main.yml is a bare list of tasks.
+// Rebuilds it as a single top-level stack of task/raw_task blocks (no play
+// wrapper), the inverse of ansibleGenerator's workspaceToTasks().
+export function importTasksYaml(content, workspace) {
+  const tasks = yaml.load(content);
+  if (!Array.isArray(tasks)) {
+    throw new Error('Expected a YAML list of tasks at the top level.');
+  }
+  workspace.clear();
+  let previousTask = null;
+  tasks.forEach((taskObj, index) => {
+    const taskBlock = importTask(workspace, taskObj);
+    if (previousTask) {
+      previousTask.nextConnection.connect(taskBlock.previousConnection);
+    } else if (typeof taskBlock.moveBy === 'function') {
+      taskBlock.moveBy(20, 20);
+    }
+    previousTask = taskBlock;
+    return index;
+  });
+  return tasks.length;
+}

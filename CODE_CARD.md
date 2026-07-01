@@ -210,16 +210,20 @@ Projekt-Rollen, Rollen-Variablen, Vaults). Einzige Backend-Änderung: `.json` zu
 | `moduleCatalog.generated.json` | Auto-generierter Katalog **aller 71 `ansible.builtin`-Module** (`tools/gen-module-catalog.py`, läuft via `ansible-doc -j` in `awx_ee`) |
 | `toolbox.js` | Kategorien Play/Task/Modules/Roles/Raw; Roles-Kategorie wird pro Projekt via `workspace.updateToolbox()` neu aufgebaut |
 | `ansibleGenerator.js` | Blöcke → `plays[]`-Objektbaum → `jsonToYaml()` (bestehendes Util, kein Blockly-eigener String-Generator) |
-| `playbookImporter.js` | Inverse: YAML → Blöcke; unbekannte Module/Konstrukte werden als `raw_task`/`raw_yaml` verlustfrei erhalten |
-| `VariablesPanel.js` + `varInsertion.js` | Rechte Variablen-Palette (Rollen-Variablen + Vault-Variablen), Drag&Drop fügt `{{ name }}` in ein Textfeld ein |
+| `playbookImporter.js` | Inverse: YAML → Blöcke; `importPlaybookYaml` (Plays) + `importTasksYaml` (Rollen-Task-Liste); unbekannte Module/Konstrukte als `raw_task`/`raw_yaml` verlustfrei |
+| `VariablesPanel.js` + `varInsertion.js` | Rechte Variablen-Palette, **nur für die Rollen des aktuellen Dokuments** (+ Vault-Variablen); Drag&Drop fügt `{{ name }}` in ein Wertefeld ein |
 | `sidecarPath.js` | `playbooks/site.yml` → `playbooks/site.blockly.json` (Workspace-Layout-Sidecar) |
+
+**Öffnen-Dialog & Doc-Mode**: „Open playbook…" listet Playbooks (`/plays/`), „Open role…" listet Rollen (`/roles/`). Beim Öffnen wird zuerst ein vorhandener `.blockly.json`-Sidecar geladen (exaktes Layout), sonst die YAML geparst. **Doc-Mode** `playbook` | `role`: im Rollen-Modus wird `roles/<name>/tasks/main.yml` als **reine Task-Liste** (ohne Play-Wrapper) importiert/generiert (`serializeWorkspace(ws, mode)` / `workspaceToTasks`).
 
 **Wichtige Design-Entscheidungen**:
 - Blockly-Sprites/Sounds liegen lokal unter `public/static/blockly-media/` (Original zeigt auf externe `appspot.com`-URL → von der CSP blockiert). Dockerfile kopiert dieses Verzeichnis zusätzlich nach `/var/lib/awx/public/static/blockly-media/`.
-- Modul-Textfelder starten **immer leer** (keine Katalog-Defaults vorbefüllt) — sonst würden ungenutzte Parameter beim Generieren immer mit ausgegeben.
+- **3D-Look wie ioBroker**: `renderer: 'geras'` + `theme: Blockly.Themes.Classic` (bevellte Kanten). Flache Renderer (`thrasos`/`zelos`) haben keinen 3D-Effekt.
+- Modul-Textfelder starten **immer leer**, Dropdowns haben eine führende `(unset)`-Option mit Wert `''` — sonst würden ungenutzte Parameter/Choices beim Generieren immer mit ausgegeben (z.B. `apt` → `upgrade: dist`).
 - Checkbox-Felder: nicht angehakt = Parameter wird weggelassen (kein UI-Weg, "explizit false" von "nicht gesetzt" zu unterscheiden).
-- `play`-Block hat ein `EXTRA`-Textfeld für Play-Level-Keys ohne eigenen Block (`environment:`, `vars:`, …) — verlustfrei als Inline-YAML.
+- `play`-Block hat ein `EXTRA`-Textfeld für Play-Level-Keys ohne eigenen Block (`environment:`, `vars:`, …) — verlustfrei als Inline-YAML. **YAML-Felder** (`EXTRA`/`RAW_YAML`/`VARS`) sind **keine** Variablen-Drop-Ziele, und der Generator merged EXTRA/VARS nur, wenn `yaml.load()` ein Mapping ergibt (sonst würde ein bloßer String in Zeichen-Keys `{0:'c',…}` zerlegt).
 - `roles:` hat einen eigenen typisierten Block (`role_use`, separates `ROLES`-Statement-Input neben `TASKS`), andere Extra-Keys bleiben im `EXTRA`-Feld.
+- Variablen-Drop läuft über einen **Document-Capture-`drop`-Listener** (nicht nur SVG-Root), damit er auch das offene Blockly-Inline-HTML-`<input>` abfängt und das rohe Einfügen (ohne `{{ }}`) verhindert.
 - Rollen-Katalog ist projektspezifisch → Toolbox wird bei Projektwechsel per `workspace.updateToolbox()` neu aufgebaut, nicht bei App-Start fixiert wie die Module-Kategorie.
 
 **Katalog neu generieren** (z.B. nach ansible-core-Upgrade):

@@ -1,8 +1,8 @@
 import * as Blockly from 'blockly';
 import yaml from 'js-yaml';
 import { registerBlocks } from './blocks';
-import { importPlaybookYaml } from './playbookImporter';
-import { workspaceToPlaybook } from './ansibleGenerator';
+import { importPlaybookYaml, importTasksYaml } from './playbookImporter';
+import { workspaceToPlaybook, serializeWorkspace } from './ansibleGenerator';
 
 describe('playbookImporter', () => {
   let workspace;
@@ -96,5 +96,22 @@ describe('playbookImporter', () => {
 
   it('throws a clear error for non-playbook YAML (not a top-level list)', () => {
     expect(() => importPlaybookYaml('foo: bar', workspace)).toThrow(/list of plays/);
+  });
+
+  it('round-trips a role tasks/main.yml (bare task list) with no data loss', () => {
+    const original = `
+- name: install nginx
+  apt:
+    name: nginx
+    state: present
+- name: start nginx
+  service:
+    name: nginx
+    state: started
+`;
+    const count = importTasksYaml(original, workspace);
+    expect(count).toBe(2);
+    const regenerated = serializeWorkspace(workspace, 'role');
+    expect(yaml.load(regenerated)).toEqual(yaml.load(original));
   });
 });

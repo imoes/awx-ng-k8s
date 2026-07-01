@@ -1,7 +1,7 @@
 import * as Blockly from 'blockly';
 import yaml from 'js-yaml';
 import { registerBlocks } from './blocks';
-import { workspaceToPlaybook } from './ansibleGenerator';
+import { workspaceToPlaybook, serializeWorkspace } from './ansibleGenerator';
 
 describe('ansibleGenerator', () => {
   let workspace;
@@ -52,6 +52,30 @@ describe('ansibleGenerator', () => {
   it('returns an empty-document YAML for an empty workspace', () => {
     const outputYaml = workspaceToPlaybook(workspace);
     expect(outputYaml.trim()).toBe('---');
+  });
+
+  it('ignores a play EXTRA field that is not a YAML mapping (no char-spread bug)', () => {
+    // Reproduces the reported bug: a bare string in EXTRA (e.g. a variable
+    // name dropped onto it) must NOT be spread into {0:'c',1:'m',...} keys.
+    const play = workspace.newBlock('play');
+    play.setFieldValue('safe', 'NAME');
+    play.setFieldValue('all', 'HOSTS');
+    play.setFieldValue('cmk_hostname', 'EXTRA');
+
+    const parsed = yaml.load(workspaceToPlaybook(workspace));
+    expect(parsed).toEqual([{ name: 'safe', hosts: 'all', tasks: [] }]);
+    expect(Object.keys(parsed[0])).not.toContain('0');
+  });
+
+  it('serializeWorkspace("role") emits a bare task list (no play wrapper)', () => {
+    const task = workspace.newBlock('task');
+    task.setFieldValue('install', 'NAME');
+    const aptModule = workspace.newBlock('module_apt');
+    aptModule.setFieldValue('nginx', 'name');
+    task.getInput('MODULE').connection.connect(aptModule.outputConnection);
+
+    const parsed = yaml.load(serializeWorkspace(workspace, 'role'));
+    expect(parsed).toEqual([{ name: 'install', apt: { name: 'nginx' } }]);
   });
 
   it('emits a correct roles: list from two role_use blocks (one with vars)', () => {

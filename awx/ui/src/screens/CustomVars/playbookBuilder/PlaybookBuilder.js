@@ -6,9 +6,11 @@ import {
   Alert,
   Button,
   FormGroup,
+  Modal,
   PageSection,
   Card,
   CardBody,
+  SearchInput,
   Spinner,
   TextInput,
   Title,
@@ -19,17 +21,28 @@ import useRequest from 'hooks/useRequest';
 import BlocklyWorkspace from './BlocklyWorkspace';
 import { registerBlocks } from './blocks';
 import { buildToolbox } from './toolbox';
-import { workspaceToPlaybook } from './ansibleGenerator';
-import { importPlaybookYaml } from './playbookImporter';
+import { serializeWorkspace } from './ansibleGenerator';
+import { importPlaybookYaml, importTasksYaml } from './playbookImporter';
 import { sidecarPathFor } from './sidecarPath';
 import { insertVariableReference } from './varInsertion';
 import VariablesPanel from './VariablesPanel';
-import { readProjects, readProjectRoles, readProjectFile, saveProjectFile, lintProjectFile } from '../api';
+import {
+  readProjects,
+  readProjectRoles,
+  readProjectPlays,
+  readProjectFile,
+  saveProjectFile,
+  lintProjectFile,
+} from '../api';
 
-// Finds the Blockly text field rendered under the given viewport coordinates
-// — used to resolve where a dragged variable should be inserted. Blockly
-// doesn't expose a ready-made "field at point" API, but every field's SVG
-// group is a real DOM node we can hit-test with getBoundingClientRect().
+// YAML-holding fields (raw blocks + the play EXTRA/role VARS escape hatches).
+// A dragged variable must NOT be dropped here — inserting a bare {{ name }}
+// into a YAML field corrupts it (this was the reported char-spread bug).
+const YAML_FIELD_NAMES = new Set(['EXTRA', 'RAW_YAML', 'VARS']);
+
+// Finds the Blockly *value* text field under the given viewport coordinates
+// (skipping YAML fields). Blockly has no built-in "field at point" API, but
+// each field's SVG group is a real DOM node we can hit-test.
 function findFieldAtPoint(workspace, clientX, clientY) {
   const blocks = workspace.getAllBlocks(false);
   for (let i = 0; i < blocks.length; i += 1) {
@@ -39,6 +52,7 @@ function findFieldAtPoint(workspace, clientX, clientY) {
       for (let k = 0; k < fieldRow.length; k += 1) {
         const field = fieldRow[k];
         if (!(field instanceof Blockly.FieldTextInput)) continue;
+        if (YAML_FIELD_NAMES.has(field.name)) continue;
         const svgRoot = field.getSvgRoot ? field.getSvgRoot() : null;
         if (!svgRoot) continue;
         const rect = svgRoot.getBoundingClientRect();
@@ -51,29 +65,57 @@ function findFieldAtPoint(workspace, clientX, clientY) {
   return null;
 }
 
+function workspaceRoleNames(workspace) {
+  return workspace
+    .getAllBlocks(false)
+    .filter((b) => b.type === 'role_use')
+    .map((b) => b.getFieldValue('ROLE_NAME'))
+    .filter(Boolean);
+}
+
 function PlaybookBuilder() {
   const [blockCount, setBlockCount] = useState(0);
   const [playbookYaml, setPlaybookYaml] = useState('---\n');
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState('');
+  const [docMode, setDocMode] = useState('playbook'); // 'playbook' | 'role'
+  const [openedRole, setOpenedRole] = useState(null);
   const [targetPath, setTargetPath] = useState('playbooks/blockly-test.yml');
+  const [relevantRoles, setRelevantRoles] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [lintErrors, setLintErrors] = useState([]);
   const [saved, setSaved] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [loadMessage, setLoadMessage] = useState(null);
-  const [importing, setImporting] = useState(false);
-  const [importMessage, setImportMessage] = useState(null);
-  const workspaceRef = useRef(null);
 
-  // Block definitions must be registered before Blockly.inject runs; do it
-  // once per mount, not on every render. The Roles category starts empty —
-  // it's populated once a project is selected (see loadRoles below), via
-  // workspace.updateToolbox(), since roles are per-project.
+  // Open-dialog state
+  const [openDialog, setOpenDialog] = useState(false);
+  const [openKind, setOpenKind] = useState('playbook'); // 'playbook' | 'role'
+  const [playbookOptions, setPlaybookOptions] = useState([]);
+  const [roleOptions, setRoleOptions] = useState([]);
+  const [openSearch, setOpenSearch] = useState('');
+  const [opening, setOpening] = useState(false);
+
+  const workspaceRef = useRef(null);
+  // Refs so the (stable) change/drop handlers always see the latest mode.
+  const docModeRef = useRef(docMode);
+  docModeRef.current = docMode;
+  const openedRoleRef = useRef(openedRole);
+  openedRoleRef.current = openedRole;
+
   const toolbox = useMemo(() => {
     registerBlocks();
     return buildToolbox([]);
+  }, []);
+
+  // Stable — reads refs, so it never needs to be recreated and can be used
+  // by the workspace change listener and the document drop listener alike.
+  const refreshFromWorkspace = useCallback((ws) => {
+    setBlockCount(ws.getAllBlocks(false).length);
+    setPlaybookYaml(serializeWorkspace(ws, docModeRef.current));
+    const roles = workspaceRoleNames(ws);
+    if (openedRoleRef.current) roles.push(openedRoleRef.current);
+    setRelevantRoles(roles);
   }, []);
 
   const { request: loadProjects } = useRequest(
@@ -85,38 +127,53 @@ function PlaybookBuilder() {
   );
   useEffect(() => { loadProjects(); }, [loadProjects]);
 
+  // Per-project role list drives both the toolbox Roles category and the
+  // Open dialog's role picker.
   const { request: loadRoles } = useRequest(
     useCallback(async () => {
       if (!projectId) return;
       const { data } = await readProjectRoles(projectId);
-      const roleNames = (data.results || []).map((r) => r.role_name);
-      workspaceRef.current?.updateToolbox(buildToolbox(roleNames));
+      const names = (data.results || []).map((r) => r.role_name);
+      setRoleOptions(names);
+      workspaceRef.current?.updateToolbox(buildToolbox(names));
     }, [projectId])
   );
   useEffect(() => { loadRoles(); }, [loadRoles]);
 
-  const handleChange = (workspace) => {
-    setBlockCount(workspace.getAllBlocks(false).length);
-    setPlaybookYaml(workspaceToPlaybook(workspace));
-  };
+  // Wire document-level drag/drop once. Capture phase so it also intercepts
+  // drops onto Blockly's open inline HTML input (which would otherwise paste
+  // the raw variable name without the {{ }} wrapper).
+  useEffect(() => {
+    const onDragOver = (event) => {
+      const ws = workspaceRef.current;
+      if (ws && findFieldAtPoint(ws, event.clientX, event.clientY)) {
+        event.preventDefault();
+      }
+    };
+    const onDrop = (event) => {
+      const ws = workspaceRef.current;
+      if (!ws) return;
+      const varName = event.dataTransfer?.getData('text/plain');
+      if (!varName) return;
+      const field = findFieldAtPoint(ws, event.clientX, event.clientY);
+      if (!field) return;
+      event.preventDefault();
+      event.stopPropagation();
+      // Close any open inline editor so our value isn't overwritten on blur.
+      try { Blockly.WidgetDiv.hide(); } catch { /* no editor open */ }
+      insertVariableReference(field, varName);
+      refreshFromWorkspace(ws);
+    };
+    document.addEventListener('dragover', onDragOver, true);
+    document.addEventListener('drop', onDrop, true);
+    return () => {
+      document.removeEventListener('dragover', onDragOver, true);
+      document.removeEventListener('drop', onDrop, true);
+    };
+  }, [refreshFromWorkspace]);
 
   const handleWorkspaceReady = (ws) => {
     workspaceRef.current = ws;
-    // Wires the VariablesPanel's HTML5 drag-and-drop onto the Blockly
-    // canvas: dropping a variable chip over a text field inserts a
-    // {{ name }} reference into that field.
-    const svgRoot = ws.getParentSvg();
-    svgRoot.addEventListener('dragover', (event) => event.preventDefault());
-    svgRoot.addEventListener('drop', (event) => {
-      event.preventDefault();
-      const varName = event.dataTransfer.getData('text/plain');
-      if (!varName) return;
-      const field = findFieldAtPoint(ws, event.clientX, event.clientY);
-      if (field) {
-        insertVariableReference(field, varName);
-        handleChange(ws);
-      }
-    });
   };
 
   const handleSave = async () => {
@@ -131,10 +188,8 @@ function PlaybookBuilder() {
         return;
       }
       await saveProjectFile(projectId, targetPath, playbookYaml);
-      // Persist the visual layout alongside the generated YAML so the
-      // builder can be reopened later (Section F) without losing the
-      // block arrangement — regenerating YAML from scratch would work,
-      // but re-editing requires the original block tree.
+      // Persist the visual layout alongside the generated YAML so the builder
+      // can be reopened later without losing the block arrangement.
       const workspaceState = Blockly.serialization.workspaces.save(workspaceRef.current);
       await saveProjectFile(projectId, sidecarPathFor(targetPath), JSON.stringify(workspaceState));
       setSaved(true);
@@ -145,47 +200,65 @@ function PlaybookBuilder() {
     }
   };
 
-  const handleLoad = async () => {
-    setLoading(true);
-    setLoadMessage(null);
-    setSaveError(null);
-    try {
-      const { data } = await readProjectFile(projectId, sidecarPathFor(targetPath));
-      const workspace = workspaceRef.current;
-      workspace.clear();
-      Blockly.serialization.workspaces.load(JSON.parse(data.content), workspace);
-      handleChange(workspace);
-      setLoadMessage({ variant: 'success', text: 'Layout loaded from sidecar.' });
-    } catch (e) {
-      if (e?.response?.status === 404) {
-        setLoadMessage({ variant: 'info', text: 'No saved layout found for this path yet.' });
-      } else {
-        setLoadMessage({ variant: 'danger', text: e?.response?.data?.detail || e.message });
-      }
-    } finally {
-      setLoading(false);
+  // ── Open dialog ──────────────────────────────────────────────────────────
+  const openBrowseDialog = async (kind) => {
+    setOpenKind(kind);
+    setOpenSearch('');
+    setOpenDialog(true);
+    if (kind === 'playbook' && playbookOptions.length === 0) {
+      try {
+        const { data } = await readProjectPlays(projectId);
+        setPlaybookOptions((data.results || []).map((p) => p.playbook));
+      } catch { /* leave empty; dialog shows "none" */ }
     }
   };
 
-  const handleImportYaml = async () => {
-    setImporting(true);
-    setImportMessage(null);
+  const openDocument = async (path, mode, roleName) => {
+    setOpening(true);
+    setLoadMessage(null);
     setSaveError(null);
     try {
-      const { data } = await readProjectFile(projectId, targetPath);
-      const count = importPlaybookYaml(data.content, workspaceRef.current);
-      handleChange(workspaceRef.current);
-      setImportMessage({ variant: 'success', text: `Imported ${count} play(s) from ${targetPath}.` });
-    } catch (e) {
-      if (e?.response?.status === 404) {
-        setImportMessage({ variant: 'info', text: 'File not found at this path.' });
-      } else {
-        setImportMessage({ variant: 'danger', text: e?.response?.data?.detail || e.message });
+      const ws = workspaceRef.current;
+      // Prefer a saved Blockly layout sidecar (exact block arrangement);
+      // fall back to parsing the YAML itself if there's no sidecar.
+      let restoredFromSidecar = false;
+      try {
+        const sidecar = await readProjectFile(projectId, sidecarPathFor(path));
+        ws.clear();
+        Blockly.serialization.workspaces.load(JSON.parse(sidecar.data.content), ws);
+        restoredFromSidecar = true;
+      } catch { /* no sidecar — import from YAML below */ }
+
+      if (!restoredFromSidecar) {
+        const { data } = await readProjectFile(projectId, path);
+        if (mode === 'role') importTasksYaml(data.content, ws);
+        else importPlaybookYaml(data.content, ws);
       }
+
+      setDocMode(mode);
+      docModeRef.current = mode;
+      setOpenedRole(mode === 'role' ? roleName : null);
+      openedRoleRef.current = mode === 'role' ? roleName : null;
+      setTargetPath(path);
+      refreshFromWorkspace(ws);
+      setOpenDialog(false);
+      setLoadMessage({
+        variant: 'success',
+        text: `Opened ${path}${restoredFromSidecar ? ' (from saved layout)' : ''}.`,
+      });
+    } catch (e) {
+      setLoadMessage({ variant: 'danger', text: e?.response?.data?.detail || e.message });
     } finally {
-      setImporting(false);
+      setOpening(false);
     }
   };
+
+  const openList = openKind === 'playbook'
+    ? playbookOptions.map((p) => ({ path: p, label: p, mode: 'playbook' }))
+    : roleOptions.map((r) => ({ path: `roles/${r}/tasks/main.yml`, label: r, mode: 'role', role: r }));
+  const filteredOpenList = openList.filter(
+    (o) => !openSearch || o.label.toLowerCase().includes(openSearch.toLowerCase())
+  );
 
   return (
     <>
@@ -201,8 +274,8 @@ function PlaybookBuilder() {
               Playbook Builder
             </Title>
 
-            <div style={{ display: 'flex', gap: 16, marginBottom: 16, alignItems: 'flex-end' }}>
-              <FormGroup label="Project" style={{ minWidth: 220 }}>
+            <div style={{ display: 'flex', gap: 16, marginBottom: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <FormGroup label="Project" style={{ minWidth: 200 }}>
                 <select
                   value={projectId}
                   onChange={(e) => setProjectId(e.target.value)}
@@ -214,7 +287,23 @@ function PlaybookBuilder() {
                   ))}
                 </select>
               </FormGroup>
-              <FormGroup label="Target path" style={{ minWidth: 300 }}>
+              <Button
+                variant="secondary"
+                onClick={() => openBrowseDialog('playbook')}
+                isDisabled={!projectId}
+                data-testid="pb-open-playbook-button"
+              >
+                Open playbook…
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => openBrowseDialog('role')}
+                isDisabled={!projectId}
+                data-testid="pb-open-role-button"
+              >
+                Open role…
+              </Button>
+              <FormGroup label={docMode === 'role' ? 'Role file' : 'Save to'} style={{ minWidth: 300 }}>
                 <TextInput
                   value={targetPath}
                   onChange={setTargetPath}
@@ -229,22 +318,6 @@ function PlaybookBuilder() {
               >
                 {saving ? <Spinner size="sm" /> : 'Lint & Save'}
               </Button>
-              <Button
-                variant="secondary"
-                onClick={handleLoad}
-                isDisabled={loading || !projectId}
-                data-testid="pb-load-button"
-              >
-                {loading ? <Spinner size="sm" /> : 'Load layout'}
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={handleImportYaml}
-                isDisabled={importing || !projectId}
-                data-testid="pb-import-button"
-              >
-                {importing ? <Spinner size="sm" /> : 'Import from YAML'}
-              </Button>
             </div>
 
             {saveError && <Alert variant="danger" title={saveError} isInline style={{ marginBottom: 12 }} />}
@@ -256,15 +329,6 @@ function PlaybookBuilder() {
                 isInline
                 style={{ marginBottom: 12 }}
                 data-testid="pb-load-message"
-              />
-            )}
-            {importMessage && (
-              <Alert
-                variant={importMessage.variant}
-                title={importMessage.text}
-                isInline
-                style={{ marginBottom: 12 }}
-                data-testid="pb-import-message"
               />
             )}
             {lintErrors.length > 0 && (
@@ -284,7 +348,7 @@ function PlaybookBuilder() {
               <div style={{ flex: '1 1 45%', minWidth: 0 }}>
                 <BlocklyWorkspace
                   toolbox={toolbox}
-                  onChange={handleChange}
+                  onChange={refreshFromWorkspace}
                   onWorkspaceReady={handleWorkspaceReady}
                 />
               </div>
@@ -293,24 +357,63 @@ function PlaybookBuilder() {
                   Generated YAML
                 </Title>
                 <div data-testid="playbook-yaml-preview">
-                  <CodeEditor
-                    value={playbookYaml}
-                    mode="yaml"
-                    readOnly
-                    rows={22}
-                  />
+                  <CodeEditor value={playbookYaml} mode="yaml" readOnly rows={22} />
                 </div>
               </div>
               <div style={{ flex: '0 0 auto' }}>
                 <Title headingLevel="h3" size="sm" style={{ marginBottom: 8 }}>
                   Variables
                 </Title>
-                <VariablesPanel projectId={projectId} />
+                <VariablesPanel projectId={projectId} roleNames={relevantRoles} />
               </div>
             </div>
           </CardBody>
         </Card>
       </PageSection>
+
+      <Modal
+        title={openKind === 'playbook' ? 'Open playbook' : 'Open role'}
+        isOpen={openDialog}
+        variant="small"
+        onClose={() => setOpenDialog(false)}
+        actions={[
+          <Button key="cancel" variant="link" onClick={() => setOpenDialog(false)}>
+            Cancel
+          </Button>,
+        ]}
+      >
+        <SearchInput
+          placeholder={openKind === 'playbook' ? 'Filter playbooks…' : 'Filter roles…'}
+          value={openSearch}
+          onChange={(_e, v) => setOpenSearch(v)}
+          onClear={() => setOpenSearch('')}
+          style={{ marginBottom: 12 }}
+        />
+        {opening && <Spinner size="md" />}
+        <div style={{ maxHeight: 360, overflowY: 'auto' }} data-testid="pb-open-list">
+          {filteredOpenList.length === 0 && (
+            <p style={{ color: '#888', fontSize: 13 }}>
+              {openKind === 'playbook' ? 'No playbooks found in this project.' : 'No roles found in this project.'}
+            </p>
+          )}
+          {filteredOpenList.map((o) => (
+            <button
+              type="button"
+              key={o.path}
+              data-testid="pb-open-item"
+              data-openpath={o.path}
+              onClick={() => openDocument(o.path, o.mode, o.role)}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left',
+                padding: '6px 10px', marginBottom: 4, border: '1px solid #eee',
+                borderRadius: 4, background: '#fff', cursor: 'pointer', fontSize: 13,
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </Modal>
     </>
   );
 }

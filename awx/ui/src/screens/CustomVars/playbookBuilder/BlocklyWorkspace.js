@@ -14,6 +14,12 @@ function BlocklyWorkspace({ toolbox, initialState, onChange, onWorkspaceReady, s
       toolbox,
       trashcan: true,
       zoom: { controls: true, wheel: true, startScale: 1 },
+      grid: { spacing: 24, length: 3, colour: '#e6e6e6', snap: true },
+      // 'geras' renderer + Classic theme give the bevelled, glossy 3D block
+      // look (like ioBroker's Blockly editor) — the flatter 'thrasos'/'zelos'
+      // renderers don't have the raised/3D edges.
+      renderer: 'geras',
+      theme: Blockly.Themes.Classic,
       // Serve Blockly's sprite/sound assets from our own static path — the
       // library's own default points at an external appspot.com URL, which
       // this app's Content-Security-Policy blocks.

@@ -17,6 +17,25 @@ function fieldValue(block, fieldName) {
   return raw;
 }
 
+// Parses a YAML-text field but returns a value only when it's a plain
+// mapping. Guards against e.g. a bare string ("cmk_hostname") whose
+// yaml.load() is a string — spreading/assigning that produces character-
+// indexed junk keys ({0:'c',1:'m',...}). Returns null for anything that
+// isn't a plain object.
+function parseYamlMapping(text) {
+  if (!text) return null;
+  let parsed;
+  try {
+    parsed = yaml.load(text);
+  } catch {
+    return null;
+  }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return parsed;
+  }
+  return null;
+}
+
 function blockToModuleArgs(moduleBlock) {
   const args = {};
   moduleBlock.inputList.forEach((input) => {
@@ -75,9 +94,9 @@ function blockToTaskObject(taskBlock) {
 
 function blockToRoleObject(roleBlock) {
   const name = fieldValue(roleBlock, 'ROLE_NAME');
-  const roleVars = fieldValue(roleBlock, 'VARS');
+  const roleVars = parseYamlMapping(fieldValue(roleBlock, 'VARS'));
   if (!roleVars) return name;
-  return { role: name, ...yaml.load(roleVars) };
+  return { role: name, ...roleVars };
 }
 
 function blockToPlayObject(playBlock) {
@@ -109,7 +128,8 @@ function blockToPlayObject(playBlock) {
   // Play-level keys without a dedicated block yet (environment:, vars:,
   // ...) round-trip verbatim through this field — see blocks.js. `roles:`
   // has its own typed role_use blocks (below), not part of EXTRA.
-  if (extra) Object.assign(play, yaml.load(extra));
+  const extraObj = parseYamlMapping(extra);
+  if (extraObj) Object.assign(play, extraObj);
   if (roles.length) play.roles = roles;
   play.tasks = tasks;
   return play;
@@ -122,7 +142,30 @@ export function workspaceToPlays(workspace) {
     .map(blockToPlayObject);
 }
 
+// Role-tasks document mode: a role's tasks/main.yml is a bare list of tasks
+// (no play wrapper). Collect every top-level task/raw_task stack in order.
+export function workspaceToTasks(workspace) {
+  const tasks = [];
+  workspace.getTopBlocks(true).forEach((top) => {
+    let block = top;
+    while (block) {
+      if (block.isEnabled() && (block.type === 'task' || block.type === 'raw_task')) {
+        tasks.push(blockToTaskObject(block));
+      }
+      block = block.getNextBlock();
+    }
+  });
+  return tasks;
+}
+
 export function workspaceToPlaybook(workspace) {
   const plays = workspaceToPlays(workspace);
   return jsonToYaml(JSON.stringify(plays));
+}
+
+// Serializes the workspace for the active document mode:
+//   'playbook' → list of plays;  'role' → bare list of tasks.
+export function serializeWorkspace(workspace, mode = 'playbook') {
+  const doc = mode === 'role' ? workspaceToTasks(workspace) : workspaceToPlays(workspace);
+  return jsonToYaml(JSON.stringify(doc));
 }
