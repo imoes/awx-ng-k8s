@@ -1442,7 +1442,7 @@ class LocationReconcileView(APIView):
 import pathlib
 import subprocess
 
-_ALLOWED_SUFFIXES = {'.yml', '.yaml', '.j2', '.jinja2', '.conf', '.ini', '.md', '.txt', '.cfg'}
+_ALLOWED_SUFFIXES = {'.yml', '.yaml', '.j2', '.jinja2', '.conf', '.ini', '.md', '.txt', '.cfg', '.json'}
 _MAX_FILE_BYTES = 512 * 1024  # 512 KB
 
 
