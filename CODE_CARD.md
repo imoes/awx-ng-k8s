@@ -92,6 +92,7 @@ Mount in alle drei Services nötig (`awx_web` schreibt, `awx_task` refresht Cach
 | `/playbooks` | Playbooks | Playbook-Übersicht mit Vars/Plays |
 | `/roles` | Roles | Rollen mit Variablen, Tags, Handlers |
 | `/vaults` | Vaults | Ansible Vault Store (Key-Value → verschlüsselte YAML, Auto-Inject beim Job) |
+| `/playbook-builder` | PlaybookBuilder | Visueller Blockly-Playbook-Builder (siehe eigener Abschnitt unten) |
 
 **Administration:**
 | `/locations` | Sites | Site-Verwaltung (= AWX Instance Groups) |
@@ -194,6 +195,38 @@ vars_files:
 
 **Workflow**: Vault anlegen → Variablen setzen → "Generate" → Datei in Projektpfad schreiben →
 `vars_files` im Playbook (Pfad relativ zum Playbook-Verzeichnis!)
+
+### Playbook Builder (Blockly) — `/playbook-builder`
+Visueller Block-Editor für Playbooks (analog ioBroker.javascript-Blockly). Reines
+Frontend-Feature — Backend liefert nur bereits existierende Endpunkte (Dateien lesen/schreiben/linten,
+Projekt-Rollen, Rollen-Variablen, Vaults). Einzige Backend-Änderung: `.json` zu
+`_ALLOWED_SUFFIXES` (`customvars/api.py`) für den Blockly-Sidecar.
+
+**Frontend-Dateien**: `awx/ui/src/screens/CustomVars/playbookBuilder/`
+| Datei | Zweck |
+|-------|-------|
+| `BlocklyWorkspace.js` | React-Wrapper um `Blockly.inject` (kein `react-blockly` — React-18-Peer-Dependency-Konflikt; dieses UI läuft auf React 17) |
+| `blocks.js` | Blockdefinitionen: `play`, `task`, `role_use`, `raw_task`/`raw_yaml` (Fallback), + 1 Block pro Katalog-Modul |
+| `moduleCatalog.generated.json` | Auto-generierter Katalog **aller 71 `ansible.builtin`-Module** (`tools/gen-module-catalog.py`, läuft via `ansible-doc -j` in `awx_ee`) |
+| `toolbox.js` | Kategorien Play/Task/Modules/Roles/Raw; Roles-Kategorie wird pro Projekt via `workspace.updateToolbox()` neu aufgebaut |
+| `ansibleGenerator.js` | Blöcke → `plays[]`-Objektbaum → `jsonToYaml()` (bestehendes Util, kein Blockly-eigener String-Generator) |
+| `playbookImporter.js` | Inverse: YAML → Blöcke; unbekannte Module/Konstrukte werden als `raw_task`/`raw_yaml` verlustfrei erhalten |
+| `VariablesPanel.js` + `varInsertion.js` | Rechte Variablen-Palette (Rollen-Variablen + Vault-Variablen), Drag&Drop fügt `{{ name }}` in ein Textfeld ein |
+| `sidecarPath.js` | `playbooks/site.yml` → `playbooks/site.blockly.json` (Workspace-Layout-Sidecar) |
+
+**Wichtige Design-Entscheidungen**:
+- Blockly-Sprites/Sounds liegen lokal unter `public/static/blockly-media/` (Original zeigt auf externe `appspot.com`-URL → von der CSP blockiert). Dockerfile kopiert dieses Verzeichnis zusätzlich nach `/var/lib/awx/public/static/blockly-media/`.
+- Modul-Textfelder starten **immer leer** (keine Katalog-Defaults vorbefüllt) — sonst würden ungenutzte Parameter beim Generieren immer mit ausgegeben.
+- Checkbox-Felder: nicht angehakt = Parameter wird weggelassen (kein UI-Weg, "explizit false" von "nicht gesetzt" zu unterscheiden).
+- `play`-Block hat ein `EXTRA`-Textfeld für Play-Level-Keys ohne eigenen Block (`environment:`, `vars:`, …) — verlustfrei als Inline-YAML.
+- `roles:` hat einen eigenen typisierten Block (`role_use`, separates `ROLES`-Statement-Input neben `TASKS`), andere Extra-Keys bleiben im `EXTRA`-Feld.
+- Rollen-Katalog ist projektspezifisch → Toolbox wird bei Projektwechsel per `workspace.updateToolbox()` neu aufgebaut, nicht bei App-Start fixiert wie die Module-Kategorie.
+
+**Katalog neu generieren** (z.B. nach ansible-core-Upgrade):
+```bash
+docker compose exec -T awx_ee python3 - < awx/ui/src/screens/CustomVars/playbookBuilder/tools/gen-module-catalog.py \
+  > awx/ui/src/screens/CustomVars/playbookBuilder/moduleCatalog.generated.json
+```
 
 ### Playbook-Cache
 `project.playbook_files` (JSONField) wird nur beim Project-Sync aktualisiert.  
