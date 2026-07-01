@@ -34,6 +34,7 @@ import {
   ProjectEditor as NgProjectEditor,
   UserTokens as NgUserTokens,
   Vaults as NgVaults,
+  PlaybookBuilder as NgPlaybookBuilder,
 } from 'screens/CustomVars';
 
 function getRouteConfig(userProfile = {}) {
@@ -131,6 +132,12 @@ function getRouteConfig(userProfile = {}) {
           title: <Trans>Vaults</Trans>,
           path: '/vaults',
           screen: NgVaults,
+        },
+        {
+          // awx-ng: visual (Blockly) playbook builder
+          title: <Trans>Playbook Builder</Trans>,
+          path: '/playbook-builder',
+          screen: NgPlaybookBuilder,
         },
       ],
     },

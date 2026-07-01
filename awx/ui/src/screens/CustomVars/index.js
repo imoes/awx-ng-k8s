@@ -7,3 +7,4 @@ export { default as Playbooks } from './Playbooks';
 export { default as ProjectEditor } from './ProjectEditor';
 export { default as UserTokens } from './UserTokens';
 export { default as Vaults } from './Vaults';
+export { default as PlaybookBuilder } from './playbookBuilder/PlaybookBuilder';
