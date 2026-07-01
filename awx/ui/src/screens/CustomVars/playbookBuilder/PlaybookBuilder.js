@@ -22,7 +22,34 @@ import { buildToolbox } from './toolbox';
 import { workspaceToPlaybook } from './ansibleGenerator';
 import { importPlaybookYaml } from './playbookImporter';
 import { sidecarPathFor } from './sidecarPath';
+import { insertVariableReference } from './varInsertion';
+import VariablesPanel from './VariablesPanel';
 import { readProjects, readProjectRoles, readProjectFile, saveProjectFile, lintProjectFile } from '../api';
+
+// Finds the Blockly text field rendered under the given viewport coordinates
+// — used to resolve where a dragged variable should be inserted. Blockly
+// doesn't expose a ready-made "field at point" API, but every field's SVG
+// group is a real DOM node we can hit-test with getBoundingClientRect().
+function findFieldAtPoint(workspace, clientX, clientY) {
+  const blocks = workspace.getAllBlocks(false);
+  for (let i = 0; i < blocks.length; i += 1) {
+    const { inputList } = blocks[i];
+    for (let j = 0; j < inputList.length; j += 1) {
+      const { fieldRow } = inputList[j];
+      for (let k = 0; k < fieldRow.length; k += 1) {
+        const field = fieldRow[k];
+        if (!(field instanceof Blockly.FieldTextInput)) continue;
+        const svgRoot = field.getSvgRoot ? field.getSvgRoot() : null;
+        if (!svgRoot) continue;
+        const rect = svgRoot.getBoundingClientRect();
+        if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+          return field;
+        }
+      }
+    }
+  }
+  return null;
+}
 
 function PlaybookBuilder() {
   const [blockCount, setBlockCount] = useState(0);
@@ -71,6 +98,25 @@ function PlaybookBuilder() {
   const handleChange = (workspace) => {
     setBlockCount(workspace.getAllBlocks(false).length);
     setPlaybookYaml(workspaceToPlaybook(workspace));
+  };
+
+  const handleWorkspaceReady = (ws) => {
+    workspaceRef.current = ws;
+    // Wires the VariablesPanel's HTML5 drag-and-drop onto the Blockly
+    // canvas: dropping a variable chip over a text field inserts a
+    // {{ name }} reference into that field.
+    const svgRoot = ws.getParentSvg();
+    svgRoot.addEventListener('dragover', (event) => event.preventDefault());
+    svgRoot.addEventListener('drop', (event) => {
+      event.preventDefault();
+      const varName = event.dataTransfer.getData('text/plain');
+      if (!varName) return;
+      const field = findFieldAtPoint(ws, event.clientX, event.clientY);
+      if (field) {
+        insertVariableReference(field, varName);
+        handleChange(ws);
+      }
+    });
   };
 
   const handleSave = async () => {
@@ -235,14 +281,14 @@ function PlaybookBuilder() {
 
             <div data-testid="blockly-block-count">{blockCount}</div>
             <div style={{ display: 'flex', gap: 16 }}>
-              <div style={{ flex: '1 1 60%', minWidth: 0 }}>
+              <div style={{ flex: '1 1 45%', minWidth: 0 }}>
                 <BlocklyWorkspace
                   toolbox={toolbox}
                   onChange={handleChange}
-                  onWorkspaceReady={(ws) => { workspaceRef.current = ws; }}
+                  onWorkspaceReady={handleWorkspaceReady}
                 />
               </div>
-              <div style={{ flex: '1 1 40%', minWidth: 0 }}>
+              <div style={{ flex: '1 1 30%', minWidth: 0 }}>
                 <Title headingLevel="h3" size="sm" style={{ marginBottom: 8 }}>
                   Generated YAML
                 </Title>
@@ -254,6 +300,12 @@ function PlaybookBuilder() {
                     rows={22}
                   />
                 </div>
+              </div>
+              <div style={{ flex: '0 0 auto' }}>
+                <Title headingLevel="h3" size="sm" style={{ marginBottom: 8 }}>
+                  Variables
+                </Title>
+                <VariablesPanel projectId={projectId} />
               </div>
             </div>
           </CardBody>
