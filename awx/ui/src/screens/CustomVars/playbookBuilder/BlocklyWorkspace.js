@@ -3,7 +3,7 @@
 import React, { useEffect, useRef } from 'react';
 import * as Blockly from 'blockly';
 
-function BlocklyWorkspace({ toolbox, initialState, onChange, style }) {
+function BlocklyWorkspace({ toolbox, initialState, onChange, onWorkspaceReady, style }) {
   const containerRef = useRef(null);
   const workspaceRef = useRef(null);
   const onChangeRef = useRef(onChange);
@@ -27,6 +27,11 @@ function BlocklyWorkspace({ toolbox, initialState, onChange, style }) {
     if (initialState) {
       Blockly.serialization.workspaces.load(initialState, workspace);
     }
+
+    // Gives the parent a stable reference to call workspace.clear()/
+    // serialization.load() on demand (e.g. the Section F sidecar loader),
+    // independent of onChange which only fires on workspace edits.
+    onWorkspaceReady?.(workspace);
 
     const listener = (event) => {
       if (event.isUiEvent) return;

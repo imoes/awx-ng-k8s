@@ -1,6 +1,7 @@
 /* eslint-disable i18next/no-literal-string */
 // awx-ng: Visual (Blockly) playbook builder screen.
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import * as Blockly from 'blockly';
 import {
   Alert,
   Button,
@@ -19,7 +20,8 @@ import BlocklyWorkspace from './BlocklyWorkspace';
 import { registerBlocks } from './blocks';
 import { buildToolbox } from './toolbox';
 import { workspaceToPlaybook } from './ansibleGenerator';
-import { readProjects, saveProjectFile, lintProjectFile } from '../api';
+import { sidecarPathFor } from './sidecarPath';
+import { readProjects, readProjectFile, saveProjectFile, lintProjectFile } from '../api';
 
 function PlaybookBuilder() {
   const [blockCount, setBlockCount] = useState(0);
@@ -31,6 +33,9 @@ function PlaybookBuilder() {
   const [saveError, setSaveError] = useState(null);
   const [lintErrors, setLintErrors] = useState([]);
   const [saved, setSaved] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [loadMessage, setLoadMessage] = useState(null);
+  const workspaceRef = useRef(null);
 
   // Block definitions must be registered before Blockly.inject runs; do it
   // once per mount, not on every render.
@@ -65,11 +70,39 @@ function PlaybookBuilder() {
         return;
       }
       await saveProjectFile(projectId, targetPath, playbookYaml);
+      // Persist the visual layout alongside the generated YAML so the
+      // builder can be reopened later (Section F) without losing the
+      // block arrangement — regenerating YAML from scratch would work,
+      // but re-editing requires the original block tree.
+      const workspaceState = Blockly.serialization.workspaces.save(workspaceRef.current);
+      await saveProjectFile(projectId, sidecarPathFor(targetPath), JSON.stringify(workspaceState));
       setSaved(true);
     } catch (e) {
       setSaveError(e?.response?.data?.detail || e.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleLoad = async () => {
+    setLoading(true);
+    setLoadMessage(null);
+    setSaveError(null);
+    try {
+      const { data } = await readProjectFile(projectId, sidecarPathFor(targetPath));
+      const workspace = workspaceRef.current;
+      workspace.clear();
+      Blockly.serialization.workspaces.load(JSON.parse(data.content), workspace);
+      handleChange(workspace);
+      setLoadMessage({ variant: 'success', text: 'Layout loaded from sidecar.' });
+    } catch (e) {
+      if (e?.response?.status === 404) {
+        setLoadMessage({ variant: 'info', text: 'No saved layout found for this path yet.' });
+      } else {
+        setLoadMessage({ variant: 'danger', text: e?.response?.data?.detail || e.message });
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -115,10 +148,27 @@ function PlaybookBuilder() {
               >
                 {saving ? <Spinner size="sm" /> : 'Lint & Save'}
               </Button>
+              <Button
+                variant="secondary"
+                onClick={handleLoad}
+                isDisabled={loading || !projectId}
+                data-testid="pb-load-button"
+              >
+                {loading ? <Spinner size="sm" /> : 'Load layout'}
+              </Button>
             </div>
 
             {saveError && <Alert variant="danger" title={saveError} isInline style={{ marginBottom: 12 }} />}
             {saved && <Alert variant="success" title={`Saved to ${targetPath}`} isInline style={{ marginBottom: 12 }} />}
+            {loadMessage && (
+              <Alert
+                variant={loadMessage.variant}
+                title={loadMessage.text}
+                isInline
+                style={{ marginBottom: 12 }}
+                data-testid="pb-load-message"
+              />
+            )}
             {lintErrors.length > 0 && (
               <Alert variant="warning" title="Lint issues — not saved" isInline style={{ marginBottom: 12 }}>
                 <ul data-testid="pb-lint-errors">
@@ -134,7 +184,11 @@ function PlaybookBuilder() {
             <div data-testid="blockly-block-count">{blockCount}</div>
             <div style={{ display: 'flex', gap: 16 }}>
               <div style={{ flex: '1 1 60%', minWidth: 0 }}>
-                <BlocklyWorkspace toolbox={toolbox} onChange={handleChange} />
+                <BlocklyWorkspace
+                  toolbox={toolbox}
+                  onChange={handleChange}
+                  onWorkspaceReady={(ws) => { workspaceRef.current = ws; }}
+                />
               </div>
               <div style={{ flex: '1 1 40%', minWidth: 0 }}>
                 <Title headingLevel="h3" size="sm" style={{ marginBottom: 8 }}>
