@@ -41,6 +41,12 @@ def compact_options(options):
             'choices': opt.get('choices'),
             'default': opt.get('default'),
             'description': _text(opt.get('description')),
+            # Real playbooks routinely use a param's alias instead of its
+            # canonical name (e.g. ansible.builtin.file's `dest:`/`name:` for
+            # `path:`, apt's `pkg:`/`package:` for `name:`, systemd's `unit:`
+            # for `name:`) — without these, the importer can't recognize the
+            # param and falls back to raw_task even for a plain builtin module.
+            'aliases': opt.get('aliases') or [],
         })
     return result
 

@@ -236,6 +236,64 @@ describe('playbookImporter', () => {
     expect(regenerated[0].tasks[0].loop).toEqual(['/tmp/a', '/tmp/b']);
   });
 
+  it('imports ansible.builtin.file using its "src"/"dest" alias for "path" (reported bug)', () => {
+    // Real file from this repo (roles/img_docker/tasks/main.yml): a symlink
+    // task using src:/dest: instead of path: — "dest" is a documented alias
+    // of file's "path" param (ansible-doc reports it under `path.aliases`).
+    // The importer didn't know about aliases at all, so `dest` was an
+    // "unknown key" and the whole task fell back to raw_task even though
+    // it's a completely ordinary ansible.builtin.file call.
+    const original = `
+- name: Create a symbolic link /var/lib/docker -> /data1/var_lib_docker
+  ansible.builtin.file:
+    src: /data1/var_lib_docker
+    dest: /var/lib/docker
+    owner: root
+    group: root
+    state: link
+`;
+    importTasksYaml(original, workspace);
+    const types = workspace.getAllBlocks(false).map((b) => b.type);
+    expect(types).toContain('module_file');
+    expect(types).not.toContain('raw_task');
+
+    const regenerated = yaml.load(serializeWorkspace(workspace, 'role'));
+    // The block always stores/emits the CANONICAL param name (path), which
+    // is functionally identical to dest: for ansible.builtin.file.
+    expect(regenerated[0].file).toEqual({
+      src: '/data1/var_lib_docker',
+      path: '/var/lib/docker',
+      owner: 'root',
+      group: 'root',
+      state: 'link',
+    });
+  });
+
+  it('imports apt using "pkg:" (alias of "name") and systemd using "unit:" (alias of "name")', () => {
+    const original = `
+- name: p
+  hosts: all
+  tasks:
+    - name: install nginx via pkg alias
+      apt:
+        pkg: nginx
+        state: present
+    - name: restart via unit alias
+      systemd:
+        unit: nginx
+        state: restarted
+`;
+    importPlaybookYaml(original, workspace);
+    const types = workspace.getAllBlocks(false).map((b) => b.type);
+    expect(types).toContain('module_apt');
+    expect(types).toContain('module_systemd');
+    expect(types).not.toContain('raw_task');
+
+    const regenerated = yaml.load(workspaceToPlaybook(workspace));
+    expect(regenerated[0].tasks[0].apt).toEqual({ name: ['nginx'], state: 'present' });
+    expect(regenerated[0].tasks[1].systemd).toEqual({ name: 'nginx', state: 'restarted' });
+  });
+
   it('round-trips a role tasks/main.yml (bare task list) with no data loss', () => {
     const original = `
 - name: install nginx

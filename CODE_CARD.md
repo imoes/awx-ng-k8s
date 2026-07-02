@@ -200,25 +200,36 @@ vars_files:
 Visueller Block-Editor für Playbooks (analog ioBroker.javascript-Blockly). Reines
 Frontend-Feature — Backend liefert nur bereits existierende Endpunkte (Dateien lesen/schreiben/linten,
 Projekt-Rollen, Rollen-Variablen, Vaults). Einzige Backend-Änderung: `.json` zu
-`_ALLOWED_SUFFIXES` (`customvars/api.py`) für den Blockly-Sidecar.
+`_ALLOWED_SUFFIXES` (`customvars/api.py`) für den Blockly-Sidecar. Nutzer-Anleitung:
+`awx/ui/src/screens/CustomVars/playbookBuilder/README.md`.
 
 **Frontend-Dateien**: `awx/ui/src/screens/CustomVars/playbookBuilder/`
 | Datei | Zweck |
 |-------|-------|
-| `BlocklyWorkspace.js` | React-Wrapper um `Blockly.inject` (kein `react-blockly` — React-18-Peer-Dependency-Konflikt; dieses UI läuft auf React 17) |
-| `blocks.js` | Blockdefinitionen: `play`, `task`, `role_use`, `raw_task`/`raw_yaml` (Fallback), + 1 Block pro Katalog-Modul. Modul-Blöcke zeigen nur Pflicht+Primär-Params, Rest via „add parameter…"-Dropdown (dynamische Inputs, `saveExtraState`/`loadExtraState`) |
-| `moduleCatalog.generated.json` | Auto-generierter Katalog **aller 71 `ansible.builtin`-Module** (`tools/gen-module-catalog.py`, läuft via `ansible-doc -j` in `awx_ee`) |
-| `toolbox.js` | Kategorien: **🔍 Search** (Live-Filter, `@blockly/toolbox-search`) + Play/Task/Modules/Roles/Raw; Roles-Kategorie wird pro Projekt via `workspace.updateToolbox()` neu aufgebaut |
-| `ansibleGenerator.js` | Blöcke → `plays[]`-Objektbaum → `jsonToYaml()` (bestehendes Util, kein Blockly-eigener String-Generator) |
-| `playbookImporter.js` | Inverse: YAML → Blöcke; `importPlaybookYaml` (Plays) + `importTasksYaml` (Rollen-Task-Liste); unbekannte Module/Konstrukte als `raw_task`/`raw_yaml` verlustfrei |
+| `BlocklyWorkspace.js` | React-Wrapper um `Blockly.inject` (kein `react-blockly` — React-18-Peer-Dependency-Konflikt; dieses UI läuft auf React 17). `horizontalLayout`+`toolboxPosition:'start'` → Kategorien als Navbar oben statt Baum links; `height`-Prop |
+| `blocks.js` | Blockdefinitionen: `play`, `role_use`, `raw_task` (Fallback), + 1 Block pro Katalog-Modul. **Modul-Block = Task** (kein separater Task-Wrapper, `setPreviousStatement/setNextStatement(true,'Task')` direkt auf dem Modul-Block). Zwei getrennte Dropdowns: „add parameter…" (Modul-eigene Optional-Args) und „add task setting…" (when/tags/notify/register/loop/delegate_to/become/ignore_errors) |
+| `moduleCatalog.generated.json` | Auto-generierter Katalog **aller 71 `ansible.builtin`-Module** (`tools/gen-module-catalog.py`, läuft via `ansible-doc -j` in `awx_ee`) — inkl. `type` je Param (`str`/`bool`/`int`/`float`/`path`/`list`/`dict`/`raw`) |
+| `toolbox.js` | Kategorien Play/Modules/Roles/Raw. **Modules und Roles sind dynamische Blockly-`custom`-Kategorien** (`registerToolboxCategoryCallback`) statt statischer `contents` — ermöglicht kategorie-scoped Live-Suche (siehe unten). `moduleFlyoutContents(filter)` / `roleFlyoutContents(roleNames, filter)` sind eigenständig testbar |
+| `ansibleGenerator.js` | Blöcke → `plays[]`-Objektbaum → `jsonToYaml()` (bestehendes Util, kein Blockly-eigener String-Generator). `coerceModuleArgValue()` parst jeden Feldwert typgerecht (list/dict/int/float/raw) anhand `paramTypes_` |
+| `playbookImporter.js` | Inverse: YAML → Blöcke; `importPlaybookYaml` (Plays) + `importTasksYaml` (Rollen-Task-Liste); unbekannte Module/Konstrukte als `raw_task` verlustfrei |
 | `VariablesPanel.js` + `varInsertion.js` | Rechte Variablen-Palette, **nur für die Rollen des aktuellen Dokuments** (+ Vault-Variablen); zeigt je Variable den Wert/Default; Drag&Drop fügt `{{ name }}` in ein Wertefeld ein |
 | `sidecarPath.js` | `playbooks/site.yml` → `playbooks/site.blockly.json` (Workspace-Layout-Sidecar) |
 
-**Plugins** (Blockly 11 — passende Peer-Versionen!): `@blockly/toolbox-search@2.0.16` (Live-Suche, `kind:'search'`), `@blockly/field-multilineinput@5.0.17` (`registerFieldMultilineInput()`, mehrzeilige Felder für `EXTRA`/`RAW_YAML`/`VARS`). **Nicht** die neuesten Versionen nehmen — v13.x verlangen Blockly ^13.
+**Plugins** (Blockly 11 — passende Peer-Versionen!): `@blockly/field-multilineinput@5.0.17` (`registerFieldMultilineInput()`, mehrzeilige Felder für alle Text-Params + `EXTRA`/`RAW_YAML`/`VARS`). **Nicht** die neueste Version nehmen — v13.x verlangt Blockly ^13. `@blockly/toolbox-search` wurde **wieder entfernt** — es durchsucht alle Kategorien gemeinsam; ersetzt durch eigene kategorie-scoped Suche (siehe unten).
 
-**New / Öffnen-Dialog & Doc-Mode**: „New playbook"/„New role" leeren die Canvas und setzen einen Start-Block. „Open playbook…" listet Playbooks (`/plays/`), „Open role…" listet Rollen (`/roles/`). Beim Öffnen wird zuerst ein vorhandener `.blockly.json`-Sidecar geladen (exaktes Layout), sonst die YAML geparst. **Doc-Mode** `playbook` | `role`: im Rollen-Modus wird `roles/<name>/tasks/main.yml` als **reine Task-Liste** (ohne Play-Wrapper) importiert/generiert (`serializeWorkspace(ws, mode)` / `workspaceToTasks`).
+**New / Öffnen-Dialog (Hamburger-Menü) & Doc-Mode**: „New playbook"/„New role"/„Open playbook…"/„Open role…" liegen in einem PatternFly-`Dropdown` (☰-Icon, `pb-file-menu-toggle`), nicht mehr als vier Einzel-Buttons. „Open playbook…" listet Playbooks (`/plays/`), „Open role…" listet Rollen (`/roles/`). Beim Öffnen wird zuerst ein vorhandener `.blockly.json`-Sidecar geladen (exaktes Layout), sonst die YAML geparst. **Doc-Mode** `playbook` | `role`: im Rollen-Modus wird `roles/<name>/tasks/main.yml` als **reine Task-Liste** (ohne Play-Wrapper) importiert/generiert (`serializeWorkspace(ws, mode)` / `workspaceToTasks`).
 
-**Import-Robustheit**: `importModuleSlot` normalisiert die Ansible-Inline-Kurzform (`file: path=/x state=directory`) via `parseInlineArgs` zu einem Mapping → auch diese Tasks werden typisierte Modul-Blöcke (nicht `raw_task`). Optionale Params werden beim Import per `addOptionalParam` nachgerüstet; nicht darstellbare (nicht-skalare Werte / unbekannte Keys) → `raw_yaml`-Fallback (verlustfrei).
+**Kategorie-scoped Live-Suche**: ein einzelnes Filter-Textfeld (`pb-palette-filter`) über der Canvas filtert **nur die gerade offene** Kategorie (Modules ODER Roles — da immer nur eine Flyout-Kategorie gleichzeitig offen ist). Mechanismus: `workspace.registerToolboxCategoryCallback()` + `toolbox.refreshSelection()` bei jedem Tastendruck — kein globales „durchsucht alles"-Verhalten mehr.
+
+**Typ-bewusste Modul-Parameter** (`paramTypes_` je Block, aus dem Katalog): 60 `list`-, 5 `dict`-, 40 `int`-Params im Katalog. `list` (z.B. `apt.name` für Mehrfach-Paketinstallation) akzeptiert Komma-Kurzform ODER volle YAML-Listensyntax; `dict` (z.B. `set_stats.data`) als YAML-Mapping; `int`/`float` werden beim Generieren zu echten Zahlen. Labels bekommen einen `[list]`/`{dict}`-Hinweis. Vorher erzwang JEDER nicht-skalare Wert einen `raw_task`-Fallback — betraf u.a. reale `ansible.builtin.apt`/`yum`/`dnf`-Nutzung mit Paketlisten.
+
+**Task-Name vs. Modul-eigenes „name"**: 23 Katalog-Module (`apt`, `user`, `package`, `group`, …) haben selbst einen Parameter namens `name`. Das Task-Beschreibungsfeld heißt daher **„task name:"** (Feld-ID bleibt `NAME`), nicht „name:" — sonst erschien „name:" zweimal ohne Unterscheidung.
+
+**`with_items`-Alias**: beim Import wird das alte `with_items:` (Vorgänger von `loop:`) als Synonym erkannt und ins `LOOP`-Feld übernommen; beim Generieren wird immer die moderne Schreibweise `loop:` erzeugt.
+
+**Kuratierte Choices**: `package.state` ist im ganzen Katalog der einzige Fall, wo `ansible-doc` keine `choices` liefert (generischer Passthrough zu apt/yum/dnf) — Override auf `['present','absent','latest']` in `CURATED_CHOICES` (`blocks.js`). Jeder andere state-artige Param hat bereits echte `ansible-doc`-Choices.
+
+**Param-Aliase (`paramAliases_`)**: `ansible-doc -j` liefert pro Param auch `aliases` (z.B. `ansible.builtin.file`s kanonischer Param `path` hat die Aliase `dest`/`name`; `apt.name` → `pkg`/`package`; `systemd.name` → `unit`). `tools/gen-module-catalog.py` erfasst dieses Feld (`compact_options()`), `blocks.js` baut daraus je Block eine `alias → kanonischer Name`-Map (`this.paramAliases_`). Beim Import (`playbookImporter.js`) wird **jeder** eingehende Arg-Key zuerst über diese Map aufgelöst, bevor `getField`/`addOptionalParam`/`canRepresent` etwas damit tun — vorher waren `dest:`/`pkg:`/`unit:` & Co. komplett unbekannte Keys, wodurch reale Tasks (z.B. Symlinks via `file: src:/dest:`) fälschlich als `raw_task` importiert wurden, obwohl sie ein ganz normales `ansible.builtin`-Modul verwenden. Der Katalog-Audit fand ~60+ solcher Alias-Mappings quer über die 71 Module. Block speichert/erzeugt beim Regenerieren immer den kanonischen Namen (funktional identisch, z.B. `path:` statt `dest:`).
 
 **Wichtige Design-Entscheidungen**:
 - Blockly-Sprites/Sounds liegen lokal unter `public/static/blockly-media/` (Original zeigt auf externe `appspot.com`-URL → von der CSP blockiert). Dockerfile kopiert dieses Verzeichnis zusätzlich nach `/var/lib/awx/public/static/blockly-media/`.
@@ -228,7 +239,7 @@ Projekt-Rollen, Rollen-Variablen, Vaults). Einzige Backend-Änderung: `.json` zu
 - `play`-Block hat ein `EXTRA`-Textfeld für Play-Level-Keys ohne eigenen Block (`environment:`, `vars:`, …) — verlustfrei als Inline-YAML. **YAML-Felder** (`EXTRA`/`RAW_YAML`/`VARS`) sind **keine** Variablen-Drop-Ziele, und der Generator merged EXTRA/VARS nur, wenn `yaml.load()` ein Mapping ergibt (sonst würde ein bloßer String in Zeichen-Keys `{0:'c',…}` zerlegt).
 - `roles:` hat einen eigenen typisierten Block (`role_use`, separates `ROLES`-Statement-Input neben `TASKS`), andere Extra-Keys bleiben im `EXTRA`-Feld.
 - Variablen-Drop läuft über einen **Document-Capture-`drop`-Listener** (nicht nur SVG-Root), damit er auch das offene Blockly-Inline-HTML-`<input>` abfängt und das rohe Einfügen (ohne `{{ }}`) verhindert.
-- Rollen-Katalog ist projektspezifisch → Toolbox wird bei Projektwechsel per `workspace.updateToolbox()` neu aufgebaut, nicht bei App-Start fixiert wie die Module-Kategorie.
+- Rollen-Namen sind projektspezifisch → über eine Ref (`roleNamesRef`) an den `ROLE_SEARCH`-Kategorie-Callback durchgereicht, aktualisiert bei Projektwechsel via `toolbox.refreshSelection()` (kein `updateToolbox()`-Rebuild mehr nötig).
 
 **Katalog neu generieren** (z.B. nach ansible-core-Upgrade):
 ```bash

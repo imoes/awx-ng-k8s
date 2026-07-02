@@ -93,6 +93,15 @@ function importModuleBlock(workspace, moduleKey, args) {
 
   const moduleBlock = newBlock(workspace, moduleBlockType(shortName));
   const paramTypes = moduleBlock.paramTypes_ || {};
+  const paramAliases = moduleBlock.paramAliases_ || {};
+  // Real playbooks routinely use a param's alias instead of its canonical
+  // name (ansible.builtin.file's `dest:`/`name:` for `path:`, apt's `pkg:`
+  // for `name:`, systemd's `unit:` for `name:`, …) — resolve every incoming
+  // key to its canonical param name up front so the rest of this function
+  // (and the generated block) only ever deals with canonical names.
+  const canonicalArgEntries = argEntries
+    ? argEntries.map(([key, value]) => [paramAliases[key] || key, value])
+    : null;
   // Optional params aren't shown by default — add their rows before setting
   // values. A non-scalar value (array/object) is only representable when the
   // param's own ansible-doc type declares it (list/dict/raw) — e.g. apt's
@@ -100,7 +109,7 @@ function importModuleBlock(workspace, moduleKey, args) {
   // type (see coerceModuleArgValue). An array/object on an otherwise
   // scalar-typed param is unexpected input we can't represent faithfully.
   const isScalar = (v) => v === null || v === undefined || typeof v !== 'object';
-  const canRepresent = (argEntries || []).every(([key, value]) => {
+  const canRepresent = (canonicalArgEntries || []).every(([key, value]) => {
     if (!isScalar(value)) {
       const declaredType = paramTypes[key];
       if (declaredType !== 'list' && declaredType !== 'dict' && declaredType !== 'raw') {
@@ -115,7 +124,7 @@ function importModuleBlock(workspace, moduleKey, args) {
     moduleBlock.dispose();
     return null;
   }
-  (argEntries || []).forEach(([key, value]) => setField(moduleBlock, key, value));
+  (canonicalArgEntries || []).forEach(([key, value]) => setField(moduleBlock, key, value));
   return moduleBlock;
 }
 

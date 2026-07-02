@@ -94,6 +94,21 @@ describe('playbook builder blocks', () => {
     workspace.dispose();
   });
 
+  it('exposes ansible-doc param aliases (paramAliases_) so the importer recognizes either spelling', () => {
+    const workspace = new Blockly.Workspace();
+    // ansible.builtin.file's canonical param is "path"; "dest" and "name"
+    // are documented aliases real playbooks commonly use instead.
+    const file = workspace.newBlock(moduleBlockType('file'));
+    expect(file.paramAliases_.dest).toBe('path');
+    expect(file.paramAliases_.name).toBe('path');
+    // apt's "name" has aliases "pkg"/"package"; systemd's "name" has "unit".
+    const apt = workspace.newBlock(moduleBlockType('apt'));
+    expect(apt.paramAliases_.pkg).toBe('name');
+    const systemd = workspace.newBlock(moduleBlockType('systemd'));
+    expect(systemd.paramAliases_.unit).toBe('name');
+    workspace.dispose();
+  });
+
   it('curates state choices for "package" (the only module ansible-doc leaves generic)', () => {
     const workspace = new Blockly.Workspace();
     const pkg = workspace.newBlock(moduleBlockType('package'));

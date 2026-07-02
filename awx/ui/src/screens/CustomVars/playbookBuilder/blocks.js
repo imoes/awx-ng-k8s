@@ -140,6 +140,14 @@ function defineModuleBlocks() {
     const blockType = moduleBlockType(mod.short_name);
     const paramByName = {};
     mod.params.forEach((p) => { paramByName[p.name] = p; });
+    // Real playbooks routinely use a param's alias instead of its canonical
+    // name (file's `dest:`/`name:` for `path:`, apt's `pkg:` for `name:`,
+    // systemd's `unit:` for `name:`, …) — map every alias to the canonical
+    // param so the importer can recognize either spelling.
+    const aliasToCanonical = {};
+    mod.params.forEach((p) => {
+      (p.aliases || []).forEach((alias) => { aliasToCanonical[alias] = p.name; });
+    });
 
     const requiredNames = mod.params.filter((p) => p.required).map((p) => p.name);
     const primary = (PRIMARY_PARAMS[mod.short_name] || []).filter((n) => paramByName[n]);
@@ -168,6 +176,10 @@ function defineModuleBlocks() {
         // ansibleGenerator.coerceModuleArgValue().
         this.paramTypes_ = {};
         mod.params.forEach((p) => { this.paramTypes_[p.name] = p.type; });
+        // Looked up by the importer to resolve an incoming YAML key that's an
+        // alias (e.g. `dest:`) to the canonical param name (`path`) whose
+        // field actually exists on this block.
+        this.paramAliases_ = aliasToCanonical;
         defaultNames.forEach((name) => appendParamRow(this, paramByName[name], mod.short_name));
         // Two separate "add …" dropdowns so task settings (when/notify/…) are
         // clearly discoverable and not buried among the module's own params.
