@@ -39,16 +39,27 @@ describe('playbook builder blocks', () => {
     workspace.dispose();
   });
 
-  it('offers task-level modifiers (when/tags/register/…) via their own "add task setting…" dropdown', () => {
+  it('offers task-level modifiers (when/tags/register/…) as standalone blocks chained via "add task setting…"', () => {
+    // Each setting is its OWN single-row block (not a field on the module
+    // block) so Blockly can safely render it "inline" (recessed condition
+    // socket for WHEN) without disturbing the module's one-row-per-param
+    // layout — see blocks.js defineTaskSettingBlocks().
     const workspace = new Blockly.Workspace();
     const debug = workspace.newBlock(moduleBlockType('debug'));
     expect(debug.getField('ADD_PARAM')).toBeDefined();
     expect(debug.getField('ADD_TASKOPT')).toBeDefined();
-    expect(debug.getField('WHEN')).toBeNull();
+    expect(debug.getInput('SETTINGS').connection.targetBlock()).toBeNull();
+
     debug.addEnvelopeField('WHEN');
-    expect(debug.getField('WHEN')).toBeDefined();
     debug.addEnvelopeField('REGISTER');
-    expect(debug.saveExtraState()).toEqual({ optional: [], envelope: ['WHEN', 'REGISTER'] });
+
+    const chain = [];
+    let b = debug.getInput('SETTINGS').connection.targetBlock();
+    while (b) { chain.push(b.settingKey_); b = b.getNextBlock(); }
+    expect(chain).toEqual(['WHEN', 'REGISTER']);
+    // addEnvelopeField is idempotent — calling again returns the same block.
+    expect(debug.addEnvelopeField('WHEN').settingKey_).toBe('WHEN');
+    expect(debug.saveExtraState()).toBeNull(); // no optional params added
     workspace.dispose();
   });
 
@@ -124,14 +135,14 @@ describe('playbook builder blocks', () => {
     expect(debug.getField('verbosity')).toBeNull();
     debug.addOptionalParam('verbosity');
     expect(debug.getField('verbosity')).toBeDefined();
-    expect(debug.saveExtraState()).toEqual({ optional: ['verbosity'], envelope: [] });
+    expect(debug.saveExtraState()).toEqual({ optional: ['verbosity'] });
 
     // Re-create and restore
     const debug2 = workspace.newBlock(moduleBlockType('debug'));
     expect(debug2.getField('verbosity')).toBeNull();
-    debug2.loadExtraState({ optional: ['verbosity'], envelope: [] });
+    debug2.loadExtraState({ optional: ['verbosity'] });
     expect(debug2.getField('verbosity')).toBeDefined();
-    expect(debug2.saveExtraState()).toEqual({ optional: ['verbosity'], envelope: [] });
+    expect(debug2.saveExtraState()).toEqual({ optional: ['verbosity'] });
     workspace.dispose();
   });
 

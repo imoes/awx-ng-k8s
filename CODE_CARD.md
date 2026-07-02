@@ -207,7 +207,7 @@ Projekt-Rollen, Rollen-Variablen, Vaults). Einzige Backend-Änderung: `.json` zu
 | Datei | Zweck |
 |-------|-------|
 | `BlocklyWorkspace.js` | React-Wrapper um `Blockly.inject` (kein `react-blockly` — React-18-Peer-Dependency-Konflikt; dieses UI läuft auf React 17). `horizontalLayout`+`toolboxPosition:'start'` → Kategorien als Navbar oben statt Baum links; `height`-Prop |
-| `blocks.js` | Blockdefinitionen: `play`, `role_use`, `raw_task` (Fallback), + 1 Block pro Katalog-Modul. **Modul-Block = Task** (kein separater Task-Wrapper, `setPreviousStatement/setNextStatement(true,'Task')` direkt auf dem Modul-Block). Zwei getrennte Dropdowns: „add parameter…" (Modul-eigene Optional-Args) und „add task setting…" (when/tags/notify/register/loop/delegate_to/become/ignore_errors) |
+| `blocks.js` | Blockdefinitionen: `play`, `role_use`, `raw_task` (Fallback), + 1 Block pro Katalog-Modul, + Condition-Blöcke (`cond_*`), + Task-Setting-Blöcke (`setting_*`). **Modul-Block = Task** (kein separater Task-Wrapper, `setPreviousStatement/setNextStatement(true,'Task')` direkt auf dem Modul-Block). Zwei getrennte Dropdowns: „add parameter…" (Modul-eigene Optional-Args) und „add task setting…" (erzeugt+verkettet einen `setting_*`-Mini-Block im `SETTINGS`-Statement-Input — siehe unten) |
 | `moduleCatalog.generated.json` | Auto-generierter Katalog **aller 71 `ansible.builtin`-Module** (`tools/gen-module-catalog.py`, läuft via `ansible-doc -j` in `awx_ee`) — inkl. `type` je Param (`str`/`bool`/`int`/`float`/`path`/`list`/`dict`/`raw`) |
 | `toolbox.js` | Kategorien Play/Modules/Roles/Raw. **Modules und Roles sind dynamische Blockly-`custom`-Kategorien** (`registerToolboxCategoryCallback`) statt statischer `contents` — ermöglicht kategorie-scoped Live-Suche (siehe unten). `moduleFlyoutContents(filter)` / `roleFlyoutContents(roleNames, filter)` sind eigenständig testbar |
 | `ansibleGenerator.js` | Blöcke → `plays[]`-Objektbaum → `jsonToYaml()` (bestehendes Util, kein Blockly-eigener String-Generator). `coerceModuleArgValue()` parst jeden Feldwert typgerecht (list/dict/int/float/raw) anhand `paramTypes_`. `conditionBlockToExpr()` wandelt einen Condition-Block-Baum (siehe unten) in den Jinja-Ausdruck für `when:` |
@@ -249,6 +249,26 @@ Primary) zurück in Blöcke; alles außerhalb dieser Grammatik (Filter wie `| in
 Listen-Literale, `~`-Konkatenation) landet in `cond_raw`. Live an der echten Rolle `img_docker`
 verifiziert: `not _containerd_dir.stat.exists` → `cond_not`+`cond_var` (keine Klammern nötig, da
 „not" in Jinja/Python stärker bindet als Vergleiche), `docker.proxy is defined` → `cond_test`.
+
+**Task-Settings als eigene Mini-Block-Kette** (nicht mehr Felder auf dem Modul-Block): Blockly
+erlaubt „inline"-Rendering (das eingebettete/rezessierte Aussehen für einen eingesteckten Wert,
+z.B. die WHEN-Bedingung) nur pro **ganzem Block**, nicht pro Zeile — ein Modul-Block hat aber
+10+ eigene Zeilen (Task-Name, jeder Parameter, …), die zwingend je eine eigene Zeile bleiben
+müssen. Ein `setInputsInline(true)` auf dem Modul-Block würde Blockly dazu bringen, ALLE Zeilen
+zu einer einzigen Fließzeile zusammenzufassen (live getestet, verworfen — siehe Git-Historie).
+Lösung: jede Task-Einstellung (`when`/`tags`/`notify`/`register`/`loop`/`delegate_to`/`become`/
+`ignore_errors`) ist jetzt ein **eigenständiger, einzeiliger Blocktyp** (`setting_<key>`,
+`defineTaskSettingBlocks()` in `blocks.js`, Check `'TaskSetting'`), der **gefahrlos** inline sein
+kann (nichts anderes auf dem Block, das mitgerissen werden könnte). Diese Mini-Blöcke hängen als
+Kette an einem **Statement-Input** `SETTINGS` auf dem Modul-Block (`appendStatementInput`) — exakt
+wie die `ROLES`/`TASKS`-Ketten des Play-Blocks. `moduleBlock.addEnvelopeField(key)` erzeugt (oder
+findet, idempotent) den passenden `setting_<key>`-Block und hängt ihn ans Kettenende; gibt den
+Block zurück (Importer nutzt das z.B. um WHEN's Condition-Block in dessen `VALUE`-Input zu
+stecken). `saveExtraState`/`loadExtraState` brauchen für Settings **keine eigene Logik mehr** —
+verbundene Blöcke werden von Blockly automatisch (de)serialisiert; nur `optional` (Modul-eigene
+Zusatzparameter) wird noch selbst getrackt. Ergebnis: `when:`-Bedingungen erscheinen jetzt sauber
+eingebettet in einer „settings"-Klammer statt außen am Modul-Block anzudocken (live verifiziert,
+Screenshot-Vergleich vorher/nachher).
 
 **Param-Aliase (`paramAliases_`)**: `ansible-doc -j` liefert pro Param auch `aliases` (z.B. `ansible.builtin.file`s kanonischer Param `path` hat die Aliase `dest`/`name`; `apt.name` → `pkg`/`package`; `systemd.name` → `unit`). `tools/gen-module-catalog.py` erfasst dieses Feld (`compact_options()`), `blocks.js` baut daraus je Block eine `alias → kanonischer Name`-Map (`this.paramAliases_`). Beim Import (`playbookImporter.js`) wird **jeder** eingehende Arg-Key zuerst über diese Map aufgelöst, bevor `getField`/`addOptionalParam`/`canRepresent` etwas damit tun — vorher waren `dest:`/`pkg:`/`unit:` & Co. komplett unbekannte Keys, wodurch reale Tasks (z.B. Symlinks via `file: src:/dest:`) fälschlich als `raw_task` importiert wurden, obwohl sie ein ganz normales `ansible.builtin`-Modul verwenden. Der Katalog-Audit fand ~60+ solcher Alias-Mappings quer über die 71 Module. Block speichert/erzeugt beim Regenerieren immer den kanonischen Namen (funktional identisch, z.B. `path:` statt `dest:`).
 

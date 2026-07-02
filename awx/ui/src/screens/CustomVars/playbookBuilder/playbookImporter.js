@@ -138,20 +138,23 @@ function importTask(workspace, taskObj) {
   if (taskObj.name) setField(moduleBlock, 'NAME', taskObj.name);
   ENVELOPE_FIELDS.forEach((envelope) => {
     // `with_items` is the legacy alias for `loop:` (see KNOWN_TASK_ENVELOPE_KEYS) —
-    // both populate the same LOOP field; regeneration always emits `loop:`.
+    // both populate the same LOOP setting; regeneration always emits `loop:`.
     const sourceKey = envelope.key === 'LOOP' && !('loop' in taskObj) && 'with_items' in taskObj
       ? 'with_items'
       : envelope.yamlKey;
     if (!(sourceKey in taskObj)) return;
     let value = taskObj[sourceKey];
-    moduleBlock.addEnvelopeField(envelope.key);
+    // Each task setting is its own standalone block chained onto the
+    // module's SETTINGS statement input (see blocks.js) — addEnvelopeField
+    // creates (or returns the existing) one.
+    const settingBlock = moduleBlock.addEnvelopeField(envelope.key);
     if (envelope.kind === 'value') {
       // when: may be a single Jinja expression string, or a list of strings
       // that Ansible implicitly ANDs together — normalize to one string
       // before handing it to the condition parser (see conditionParser.js).
       const exprText = Array.isArray(value) ? value.join(' and ') : String(value);
       const condBlock = parseConditionToBlock(workspace, exprText);
-      moduleBlock.getInput(`ROW_${envelope.key}`).connection.connect(condBlock.outputConnection);
+      settingBlock.getInput('VALUE').connection.connect(condBlock.outputConnection);
       return;
     }
     if (envelope.key === 'TAGS' || envelope.key === 'NOTIFY') {
@@ -159,7 +162,7 @@ function importTask(workspace, taskObj) {
     } else if (envelope.key === 'LOOP' && typeof value !== 'string') {
       value = yaml.dump(value).trim();
     }
-    setField(moduleBlock, envelope.key, value);
+    setField(settingBlock, 'VALUE', value);
   });
   return moduleBlock;
 }

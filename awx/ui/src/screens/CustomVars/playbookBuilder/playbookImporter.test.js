@@ -4,6 +4,18 @@ import { registerBlocks } from './blocks';
 import { importPlaybookYaml, importTasksYaml } from './playbookImporter';
 import { workspaceToPlaybook, serializeWorkspace } from './ansibleGenerator';
 
+// WHEN's condition now lives on a standalone setting_when block chained into
+// the module's SETTINGS statement input (see blocks.js) — finds it and
+// returns the connected condition block, or null if there's no when: at all.
+function whenCondition(moduleBlock) {
+  let b = moduleBlock.getInput('SETTINGS').connection.targetBlock();
+  while (b) {
+    if (b.settingKey_ === 'WHEN') return b.getInputTargetBlock('VALUE');
+    b = b.getNextBlock();
+  }
+  return null;
+}
+
 describe('playbookImporter', () => {
   let workspace;
 
@@ -313,9 +325,9 @@ describe('playbookImporter', () => {
     const fileBlocks = workspace.getAllBlocks(false).filter((b) => b.type === 'module_file');
     expect(fileBlocks).toHaveLength(2);
 
-    const whenBlock0 = fileBlocks[0].getInputTargetBlock('ROW_WHEN');
+    const whenBlock0 = whenCondition(fileBlocks[0]);
     expect(whenBlock0.type).toBe('cond_not');
-    const whenBlock1 = fileBlocks[1].getInputTargetBlock('ROW_WHEN');
+    const whenBlock1 = whenCondition(fileBlocks[1]);
     expect(whenBlock1.type).toBe('cond_test');
 
     const regenerated = yaml.load(serializeWorkspace(workspace, 'role'));
@@ -335,7 +347,7 @@ describe('playbookImporter', () => {
 `;
     importPlaybookYaml(original, workspace);
     const debugBlock = workspace.getAllBlocks(false).find((b) => b.type === 'module_debug');
-    const whenBlock = debugBlock.getInputTargetBlock('ROW_WHEN');
+    const whenBlock = whenCondition(debugBlock);
     expect(whenBlock.type).toBe('cond_raw');
 
     const regenerated = yaml.load(workspaceToPlaybook(workspace));

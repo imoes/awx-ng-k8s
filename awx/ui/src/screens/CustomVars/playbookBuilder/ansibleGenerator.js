@@ -6,7 +6,7 @@
 import * as Blockly from 'blockly';
 import yaml from 'js-yaml';
 import { jsonToYaml } from 'util/yaml';
-import { RESERVED_FIELD_NAMES, ENVELOPE_FIELDS } from './blocks';
+import { RESERVED_FIELD_NAMES, ENVELOPE_BY_KEY } from './blocks';
 
 function fieldValue(block, fieldName) {
   const field = block.getField(fieldName);
@@ -177,26 +177,35 @@ function blockToTaskObject(taskBlock) {
   if (name) ordered.name = name;
   ordered[shortName] = blockToModuleArgs(taskBlock);
 
-  ENVELOPE_FIELDS.forEach((envelope) => {
-    if (envelope.kind === 'value') {
-      const expr = conditionBlockToExpr(taskBlock.getInputTargetBlock(`ROW_${envelope.key}`));
-      if (expr) ordered[envelope.yamlKey] = expr;
-      return;
+  // Task settings (when/tags/register/…) are a chain of standalone blocks
+  // plugged into the module block's SETTINGS statement input (see blocks.js
+  // defineTaskSettingBlocks()) — walk it like any other Blockly stack.
+  let settingBlock = taskBlock.getInputTargetBlock('SETTINGS');
+  while (settingBlock) {
+    const envelope = ENVELOPE_BY_KEY[settingBlock.settingKey_];
+    if (envelope) {
+      if (envelope.kind === 'value') {
+        const expr = conditionBlockToExpr(settingBlock.getInputTargetBlock('VALUE'));
+        if (expr) ordered[envelope.yamlKey] = expr;
+      } else {
+        const value = fieldValue(settingBlock, 'VALUE');
+        if (value !== '' && value !== null && value !== undefined && value !== false) {
+          if (envelope.fieldKind === 'checkbox') {
+            ordered[envelope.yamlKey] = true;
+          } else if (envelope.key === 'TAGS' || envelope.key === 'NOTIFY') {
+            ordered[envelope.yamlKey] = String(value).split(',').map((t) => t.trim()).filter(Boolean);
+          } else if (envelope.key === 'LOOP') {
+            // loop is assigned directly (not spread), so a bare scalar is
+            // safe — no repeat of the EXTRA/VARS char-spread bug.
+            ordered[envelope.yamlKey] = yaml.load(value);
+          } else {
+            ordered[envelope.yamlKey] = value;
+          }
+        }
+      }
     }
-    const value = fieldValue(taskBlock, envelope.key);
-    if (value === '' || value === null || value === undefined || value === false) return;
-    if (envelope.key === 'BECOME' || envelope.key === 'IGNORE_ERRORS') {
-      ordered[envelope.yamlKey] = true;
-    } else if (envelope.key === 'TAGS' || envelope.key === 'NOTIFY') {
-      ordered[envelope.yamlKey] = String(value).split(',').map((t) => t.trim()).filter(Boolean);
-    } else if (envelope.key === 'LOOP') {
-      // loop is assigned directly (not spread), so a bare scalar is safe —
-      // no repeat of the EXTRA/VARS char-spread bug from a plain string.
-      ordered[envelope.yamlKey] = yaml.load(value);
-    } else {
-      ordered[envelope.yamlKey] = value;
-    }
-  });
+    settingBlock = settingBlock.getNextBlock();
+  }
 
   return ordered;
 }

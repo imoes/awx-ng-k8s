@@ -101,14 +101,14 @@ describe('ansibleGenerator', () => {
     whenCompare.setFieldValue('==', 'OP');
     whenCompare.getInput('LEFT').connection.connect(whenLeft.outputConnection);
     whenCompare.getInput('RIGHT').connection.connect(whenRight.outputConnection);
-    debugModule.addEnvelopeField('WHEN');
-    debugModule.getInput('ROW_WHEN').connection.connect(whenCompare.outputConnection);
-    debugModule.addEnvelopeField('REGISTER');
-    debugModule.setFieldValue('result', 'REGISTER');
-    debugModule.addEnvelopeField('BECOME');
-    debugModule.setFieldValue('TRUE', 'BECOME');
-    debugModule.addEnvelopeField('LOOP');
-    debugModule.setFieldValue('[1, 2, 3]', 'LOOP');
+    // Each task setting is now its own standalone block chained onto the
+    // module's SETTINGS statement input — addEnvelopeField() creates it and
+    // returns it so its (single) 'VALUE' field/input can be set.
+    const whenSetting = debugModule.addEnvelopeField('WHEN');
+    whenSetting.getInput('VALUE').connection.connect(whenCompare.outputConnection);
+    debugModule.addEnvelopeField('REGISTER').setFieldValue('result', 'VALUE');
+    debugModule.addEnvelopeField('BECOME').setFieldValue('TRUE', 'VALUE');
+    debugModule.addEnvelopeField('LOOP').setFieldValue('[1, 2, 3]', 'VALUE');
 
     play.getInput('TASKS').connection.connect(debugModule.previousConnection);
 

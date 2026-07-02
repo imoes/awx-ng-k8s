@@ -58,33 +58,39 @@ const PRIMARY_PARAMS = {
 };
 
 // Common Ansible task-level keywords, offered on every module block via the
-// same "add parameter…" dropdown as the module's own optional args. Field
-// ids are ALL-CAPS so they can never collide with a lowercase module
-// parameter name (ansible-doc param names are always lowercase).
-// WHEN is a value input (a condition-block tree, see defineConditionBlocks())
-// instead of a plain text field — "Blockly-like" conditions instead of
-// hand-typed Jinja. Every other envelope entry stays a simple field.
+// "add task setting…" dropdown. Each one is its OWN standalone, single-row,
+// chainable "setting" block (see defineTaskSettingBlocks()) — NOT a row
+// directly on the module block. Reason: Blockly only lets a block be
+// "inline" (the recessed/embedded look for a plugged-in value, e.g. WHEN's
+// condition) as a whole-block setting, not per-row — and the module block
+// has 10+ other one-per-line param rows that must NOT be forced inline.
+// Giving each setting its own tiny single-row block makes inline safe for
+// that block alone, so a WHEN condition renders properly embedded instead of
+// looking bolted on from outside.
 export const COND_CHECK = 'Cond';
+export const TASK_SETTING_CHECK = 'TaskSetting';
 export const ENVELOPE_FIELDS = [
   { key: 'WHEN', label: 'when', yamlKey: 'when', kind: 'value', check: COND_CHECK },
-  { key: 'TAGS', label: 'tags', yamlKey: 'tags', makeField: () => new Blockly.FieldTextInput('') },
-  { key: 'NOTIFY', label: 'notify', yamlKey: 'notify', makeField: () => new Blockly.FieldTextInput('') },
-  { key: 'REGISTER', label: 'register', yamlKey: 'register', makeField: () => new Blockly.FieldTextInput('') },
-  { key: 'LOOP', label: 'loop', yamlKey: 'loop', makeField: () => new FieldMultilineInput('') },
-  { key: 'DELEGATE_TO', label: 'delegate_to', yamlKey: 'delegate_to', makeField: () => new Blockly.FieldTextInput('') },
-  { key: 'BECOME', label: 'become', yamlKey: 'become', makeField: () => new Blockly.FieldCheckbox('FALSE') },
-  { key: 'IGNORE_ERRORS', label: 'ignore_errors', yamlKey: 'ignore_errors', makeField: () => new Blockly.FieldCheckbox('FALSE') },
+  { key: 'TAGS', label: 'tags', yamlKey: 'tags', kind: 'field', fieldKind: 'text' },
+  { key: 'NOTIFY', label: 'notify', yamlKey: 'notify', kind: 'field', fieldKind: 'text' },
+  { key: 'REGISTER', label: 'register', yamlKey: 'register', kind: 'field', fieldKind: 'text' },
+  { key: 'LOOP', label: 'loop', yamlKey: 'loop', kind: 'field', fieldKind: 'multiline' },
+  { key: 'DELEGATE_TO', label: 'delegate_to', yamlKey: 'delegate_to', kind: 'field', fieldKind: 'text' },
+  { key: 'BECOME', label: 'become', yamlKey: 'become', kind: 'field', fieldKind: 'checkbox' },
+  { key: 'IGNORE_ERRORS', label: 'ignore_errors', yamlKey: 'ignore_errors', kind: 'field', fieldKind: 'checkbox' },
 ];
-const ENVELOPE_BY_KEY = {};
+export const ENVELOPE_BY_KEY = {};
 ENVELOPE_FIELDS.forEach((e) => { ENVELOPE_BY_KEY[e.key] = e; });
 
-// Every field id that is part of the fixed task "envelope" or block
-// scaffolding — never a module argument. Used by the generator to know
-// which fields to skip when collecting a module's own args.
-export const RESERVED_FIELD_NAMES = new Set([
-  'MODULE_LABEL', 'ADD_PARAM', 'ADD_TASKOPT', 'NAME',
-  ...ENVELOPE_FIELDS.map((e) => e.key),
-]);
+export function settingBlockType(key) {
+  return `setting_${key.toLowerCase()}`;
+}
+
+// Every field id that is part of the module block's own fixed scaffolding —
+// never a module argument. Used by the generator to know which fields to
+// skip when collecting a module's own args. Task-setting keys (when/tags/…)
+// no longer live here — they're fields on their own separate blocks now.
+export const RESERVED_FIELD_NAMES = new Set(['MODULE_LABEL', 'ADD_PARAM', 'ADD_TASKOPT', 'NAME']);
 
 function moduleBlockType(shortName) {
   return `${MODULE_BLOCK_PREFIX}${shortName}`;
@@ -132,18 +138,33 @@ function appendParamRow(block, param, moduleShortName) {
     .appendField(fieldForParam(param, choices), param.name);
 }
 
-function appendEnvelopeRow(block, envelope) {
-  if (envelope.kind === 'value') {
-    block
-      .appendValueInput(`ROW_${envelope.key}`)
-      .setCheck(envelope.check || null)
-      .appendField(`${envelope.label}:`);
-    return;
-  }
-  block
-    .appendDummyInput(`ROW_${envelope.key}`)
-    .appendField(`${envelope.label}:`)
-    .appendField(envelope.makeField(), envelope.key);
+// One standalone block type per task-setting keyword (see ENVELOPE_FIELDS
+// above) — each has exactly one row, so `setInputsInline(true)` is always
+// safe (there's nothing else on the block it could wrongly merge with),
+// which is what gives WHEN's plugged-in condition its recessed/embedded
+// look instead of appearing bolted on from outside.
+function defineTaskSettingBlocks() {
+  ENVELOPE_FIELDS.forEach((envelope) => {
+    Blockly.Blocks[settingBlockType(envelope.key)] = {
+      init() {
+        if (envelope.kind === 'value') {
+          this.appendValueInput('VALUE').setCheck(envelope.check || null).appendField(`${envelope.label}:`);
+        } else if (envelope.fieldKind === 'checkbox') {
+          this.appendDummyInput().appendField(envelope.label).appendField(new Blockly.FieldCheckbox('TRUE'), 'VALUE');
+        } else if (envelope.fieldKind === 'multiline') {
+          this.appendDummyInput().appendField(`${envelope.label}:`).appendField(new FieldMultilineInput(''), 'VALUE');
+        } else {
+          this.appendDummyInput().appendField(`${envelope.label}:`).appendField(new Blockly.FieldTextInput(''), 'VALUE');
+        }
+        this.setInputsInline(true);
+        this.setPreviousStatement(true, TASK_SETTING_CHECK);
+        this.setNextStatement(true, TASK_SETTING_CHECK);
+        this.setColour(230);
+        this.settingKey_ = envelope.key;
+        this.setTooltip(`Task setting: ${envelope.yamlKey}:`);
+      },
+    };
+  });
 }
 
 function defineModuleBlocks() {
@@ -181,7 +202,6 @@ function defineModuleBlocks() {
           .appendField('task name:')
           .appendField(new Blockly.FieldTextInput(''), 'NAME');
         this.activeOptional_ = [];
-        this.activeEnvelope_ = [];
         // Looked up by the generator/importer to parse each field's raw text
         // into the right shape (list/dict/int/float/raw) — see
         // ansibleGenerator.coerceModuleArgValue().
@@ -199,11 +219,23 @@ function defineModuleBlocks() {
           'ADD_PARAM'
         );
         this.getField('ADD_PARAM').setValidator((sel) => this.onAddParam_(sel));
+        // Chain of standalone task-setting blocks (when/tags/register/…) —
+        // see defineTaskSettingBlocks(). A statement input (not fields
+        // directly on this block) so each setting can safely be its own
+        // "inline" single-row block without disturbing this block's own
+        // one-row-per-param layout. Must exist BEFORE the ADD_TASKOPT
+        // dropdown below, since FieldDropdown evaluates its option generator
+        // immediately and addTaskOptOptions_() reads this input.
+        this.appendStatementInput('SETTINGS').setCheck(TASK_SETTING_CHECK).appendField('settings');
         this.appendDummyInput('ADD_TASKOPT').appendField(
           new Blockly.FieldDropdown(() => this.addTaskOptOptions_()),
           'ADD_TASKOPT'
         );
         this.getField('ADD_TASKOPT').setValidator((sel) => this.onAddTaskOpt_(sel));
+        // Visually the settings stack belongs BELOW the "add task setting…"
+        // button (constructed above only for the null-check ordering reason
+        // noted there) — move it to the end now that both inputs exist.
+        this.moveInputBefore('SETTINGS', undefined);
         // A module block IS a task — plugs directly into a play's tasks
         // stack (or a role's bare task list). No separate wrapper needed.
         this.setPreviousStatement(true, 'Task');
@@ -234,11 +266,12 @@ function defineModuleBlocks() {
         return ADD_PARAM_PLACEHOLDER; // dropdown snaps back to the placeholder
       },
       // Options for the "add task setting…" dropdown: Ansible task-level
-      // keywords (when/tags/notify/register/loop/…) not yet shown.
+      // keywords (when/tags/notify/register/loop/…) not yet in the SETTINGS
+      // chain.
       addTaskOptOptions_() {
         const opts = [['＋ add task setting…', ADD_PARAM_PLACEHOLDER]];
         ENVELOPE_FIELDS
-          .filter((e) => !this.activeEnvelope_.includes(e.key))
+          .filter((e) => !this.getSetting_(e.key))
           .forEach((e) => opts.push([e.label, e.key]));
         return opts;
       },
@@ -259,30 +292,47 @@ function defineModuleBlocks() {
         appendParamRow(this, paramByName[name], mod.short_name);
         this.moveInputBefore(`ROW_${name}`, 'ADD_OPT');
       },
-      // Public: adds a task-level modifier row (when/tags/register/…),
-      // grouped after the module params (before the ADD_TASKOPT dropdown).
-      // Idempotent.
-      addEnvelopeField(key) {
-        if (this.activeEnvelope_.includes(key)) return;
-        const envelope = ENVELOPE_BY_KEY[key];
-        if (!envelope) return;
-        this.activeEnvelope_.push(key);
-        appendEnvelopeRow(this, envelope);
-        this.moveInputBefore(`ROW_${key}`, 'ADD_TASKOPT');
+      // Finds an existing task-setting block of the given key already
+      // chained into the SETTINGS stack, or null.
+      getSetting_(key) {
+        let b = this.getInput('SETTINGS').connection.targetBlock();
+        while (b) {
+          if (b.settingKey_ === key) return b;
+          b = b.getNextBlock();
+        }
+        return null;
       },
-      // JSON serialization (sidecar save/load): only the sets of added
-      // optional/envelope fields — field values are (de)serialized by
-      // Blockly itself, and loadExtraState runs first so the rows exist
-      // when values are applied.
+      // Public: adds a task-setting block (when/tags/register/…) to the end
+      // of the SETTINGS chain and returns it (existing block if already
+      // present — idempotent, and lets the importer plug a value into it,
+      // e.g. WHEN's parsed condition).
+      addEnvelopeField(key) {
+        const existing = this.getSetting_(key);
+        if (existing) return existing;
+        if (!ENVELOPE_BY_KEY[key]) return null;
+        const child = this.workspace.newBlock(settingBlockType(key));
+        if (typeof child.initSvg === 'function') { child.initSvg(); child.render(); }
+        const settingsInput = this.getInput('SETTINGS');
+        let last = settingsInput.connection.targetBlock();
+        if (!last) {
+          settingsInput.connection.connect(child.previousConnection);
+        } else {
+          while (last.getNextBlock()) last = last.getNextBlock();
+          last.nextConnection.connect(child.previousConnection);
+        }
+        return child;
+      },
+      // JSON serialization (sidecar save/load): only the set of added
+      // optional param names — field values, AND the SETTINGS chain's child
+      // blocks, are (de)serialized by Blockly itself automatically (they're
+      // real connected blocks now, not custom-tracked fields).
       saveExtraState() {
-        if (!this.activeOptional_.length && !this.activeEnvelope_.length) return null;
-        return { optional: this.activeOptional_, envelope: this.activeEnvelope_ };
+        if (!this.activeOptional_.length) return null;
+        return { optional: this.activeOptional_ };
       },
       loadExtraState(state) {
         this.activeOptional_ = [];
-        this.activeEnvelope_ = [];
         ((state && state.optional) || []).forEach((name) => this.addOptionalParam(name));
-        ((state && state.envelope) || []).forEach((key) => this.addEnvelopeField(key));
       },
     };
   });
@@ -476,10 +526,13 @@ export const CONDITION_BLOCK_TYPES = [
   'cond_var', 'cond_literal', 'cond_compare', 'cond_test', 'cond_not', 'cond_logic', 'cond_raw',
 ];
 
+export const TASK_SETTING_BLOCK_TYPES = ENVELOPE_FIELDS.map((e) => settingBlockType(e.key));
+
 export function registerBlocks() {
   defineStaticBlocks();
   defineModuleBlocks();
   defineConditionBlocks();
+  defineTaskSettingBlocks();
 }
 
 export { moduleBlockType };
