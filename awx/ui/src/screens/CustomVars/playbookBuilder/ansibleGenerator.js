@@ -210,6 +210,20 @@ function blockToTaskObject(taskBlock) {
   return ordered;
 }
 
+// Walks a chain of module_*/raw_task blocks (starting at `firstBlock`, e.g.
+// from a statement input's getInputTargetBlock()) into an ordered array of
+// task objects. Shared by tasks:/handlers: (same block shape) and by
+// workspaceToTasks() (role tasks/main.yml — a bare top-level chain).
+function taskChainToObjects(firstBlock) {
+  const tasks = [];
+  let block = firstBlock;
+  while (block) {
+    if (block.isEnabled()) tasks.push(blockToTaskObject(block));
+    block = block.getNextBlock();
+  }
+  return tasks;
+}
+
 function blockToRoleObject(roleBlock) {
   const name = fieldValue(roleBlock, 'ROLE_NAME');
   const roleVars = parseYamlMapping(fieldValue(roleBlock, 'VARS'));
@@ -255,14 +269,8 @@ function blockToPlayObject(playBlock) {
     roleBlock = roleBlock.getNextBlock();
   }
 
-  const tasks = [];
-  let taskBlock = playBlock.getInputTargetBlock('TASKS');
-  while (taskBlock) {
-    if (taskBlock.isEnabled()) {
-      tasks.push(blockToTaskObject(taskBlock));
-    }
-    taskBlock = taskBlock.getNextBlock();
-  }
+  const tasks = taskChainToObjects(playBlock.getInputTargetBlock('TASKS'));
+  const handlers = taskChainToObjects(playBlock.getInputTargetBlock('HANDLERS'));
 
   const play = { name, hosts };
   if (become) play.become = true;
@@ -275,6 +283,9 @@ function blockToPlayObject(playBlock) {
   if (extraObj) Object.assign(play, extraObj);
   if (roles.length) play.roles = roles;
   play.tasks = tasks;
+  // Handlers are the same block shape as tasks (module_*/raw_task), just
+  // addressed by name via another task's notify: — see blocks.js.
+  if (handlers.length) play.handlers = handlers;
   return play;
 }
 
@@ -290,16 +301,29 @@ export function workspaceToPlays(workspace) {
 export function workspaceToTasks(workspace) {
   const tasks = [];
   workspace.getTopBlocks(true).forEach((top) => {
+    const isTaskLike = top.type === 'raw_task' || top.type.startsWith('module_');
+    if (isTaskLike) tasks.push(...taskChainToObjects(top));
+  });
+  return tasks;
+}
+
+// Role defaults/main.yml and vars/main.yml are both a bare vars: mapping
+// (no play/task wrapper) — a top-level chain of define_var blocks, the
+// inverse of importVarsYaml() in playbookImporter.js.
+export function workspaceToVarsMapping(workspace) {
+  const vars = {};
+  workspace.getTopBlocks(true).forEach((top) => {
+    if (top.type !== 'define_var') return;
     let block = top;
     while (block) {
-      const isTaskLike = block.type === 'raw_task' || block.type.startsWith('module_');
-      if (block.isEnabled() && isTaskLike) {
-        tasks.push(blockToTaskObject(block));
+      if (block.isEnabled()) {
+        const name = fieldValue(block, 'NAME');
+        if (name) vars[name] = blockToVarValue(fieldValue(block, 'VALUE'));
       }
       block = block.getNextBlock();
     }
   });
-  return tasks;
+  return vars;
 }
 
 export function workspaceToPlaybook(workspace) {
@@ -308,8 +332,12 @@ export function workspaceToPlaybook(workspace) {
 }
 
 // Serializes the workspace for the active document mode:
-//   'playbook' → list of plays;  'role' → bare list of tasks.
+//   'playbook' → list of plays; 'role'/'tasks' → bare list of tasks
+//   (tasks/main.yml and handlers/main.yml are the same shape); 'vars' →
+//   bare vars: mapping (defaults/main.yml and vars/main.yml are the same
+//   shape) — see the role section tabs in PlaybookBuilder.js.
 export function serializeWorkspace(workspace, mode = 'playbook') {
-  const doc = mode === 'role' ? workspaceToTasks(workspace) : workspaceToPlays(workspace);
+  if (mode === 'vars') return jsonToYaml(JSON.stringify(workspaceToVarsMapping(workspace)));
+  const doc = (mode === 'role' || mode === 'tasks') ? workspaceToTasks(workspace) : workspaceToPlays(workspace);
   return jsonToYaml(JSON.stringify(doc));
 }

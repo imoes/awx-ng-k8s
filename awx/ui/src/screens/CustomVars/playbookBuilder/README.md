@@ -88,9 +88,27 @@ als fertiger Block — einfach reinziehen (landet im separaten `roles:`-Slot des
 nicht bei den Tasks). Im `vars (optional):`-Feld können projektspezifische Rollen-Variablen als
 YAML-Mapping mitgegeben werden.
 
+## Eigene Rolle anlegen (Tasks/Handlers/Defaults/Vars)
+
+**☰ → New role** legt eine neue Rolle mit **4 Reitern** an: **Tasks | Handlers | Defaults | Vars**
+— entspricht den 4 realen Dateien `roles/<name>/{tasks,handlers,defaults,vars}/main.yml`. Alle 4
+werden in **derselben** Canvas bearbeitet; beim Reiter-Wechsel wird der aktuelle Inhalt gemerkt
+(nicht verworfen). Man muss sich um nichts kümmern:
+
+- **Tasks**/**Handlers**: normale Modul-Blöcke wie sonst auch. Ein Handler wird über den
+  `notify:`-Task-Einstellung eines Tasks per Namen angesprochen (`task name:`-Feld des
+  Handler-Blocks = der Name, den `notify:` erwartet).
+- **Defaults**/**Vars**: `var`-Blöcke wie im Play (siehe „Variablen anlegen" unten) — landen in
+  `defaults/main.yml` bzw. `vars/main.yml`.
+- **☰ → Lint & Save** schreibt **alle 4 Dateien auf einmal** — auch Reiter, die man nie angeklickt
+  hat, werden als leere Datei angelegt. Die Verzeichnisse entstehen dabei automatisch; man muss sie
+  nicht selbst anlegen.
+- **☰ → Open role…** lädt eine bestehende Rolle wieder komplett (alle 4 Dateien auf einmal, nicht
+  nacheinander) — Reiter wechseln ist danach sofort, ohne weiteres Nachladen.
+
 ## Bestehende Playbooks/Rollen öffnen (Import)
 
-**☰ → Open playbook…** bzw. **Open role…** listet alle Dateien des gewählten Projekts. Beim
+**☰ → Open playbook…** bzw. **Open role…** listet alle Dateien/Rollen des gewählten Projekts. Beim
 Öffnen wird zuerst ein gespeichertes Layout (`<datei>.blockly.json`) geladen, falls vorhanden
 — sonst wird die YAML direkt geparst:
 
@@ -121,8 +139,8 @@ Der Wert wird beim Speichern typgerecht interpretiert:
 - **Mapping**: YAML-Mapping-Syntax, z.B. `key: value`⏎`count: 3`.
 
 Beim Öffnen einer bestehenden Datei wird ein vorhandenes `vars:`-Mapping automatisch in einzelne
-`var`-Blöcke zerlegt. **Grenze**: aktuell nur Play-Level-`vars:` — Rollen-eigene
-`defaults/main.yml`/`vars/main.yml` werden vom Builder (noch) nicht verwaltet.
+`var`-Blöcke zerlegt — das gilt für Play-`vars:` genauso wie für die Defaults/Vars-Reiter einer
+Rolle (siehe „Eigene Rolle anlegen" oben).
 
 ## Variablen-Palette
 
@@ -138,16 +156,17 @@ zur Verfügung (Distribution, OS-Familie, IP-Adresse, RAM, …), unabhängig vom
 
 ## Bekannte Grenzen
 
-- Ein Play-Block/eine Canvas entspricht **einer** Playbook-Datei bzw. **einer** Rollen-`tasks/main.yml`
-  — kein Multi-Play- oder Multi-Datei-Editing in einer Sitzung.
+- Ein Play-Block/eine Canvas entspricht **einer** Playbook-Datei — kein Multi-Play-Editing in
+  einer Sitzung (Rollen sind die Ausnahme: Tasks/Handlers/Defaults/Vars teilen sich eine Canvas
+  über Reiter, siehe „Eigene Rolle anlegen").
 - Module außerhalb von `ansible.builtin` (Collections wie `community.general`) haben keinen
   eigenen Block-Typ — sie werden als `raw task` importiert/erzeugt (Original-YAML bleibt erhalten).
 - `block:`/`rescue:`/`always:`-Strukturen haben (noch) keinen eigenen Block und werden als
   `raw task` dargestellt.
 - Checkbox-Felder können „nicht gesetzt" nicht von „explizit false" unterscheiden.
-- Variablen anlegen (`var`-Block) funktioniert aktuell nur auf **Play-Ebene** (`vars:`) —
-  Rollen-eigene `defaults/main.yml`/`vars/main.yml`/`handlers/main.yml` werden vom Builder
-  (noch) nicht angelegt oder bearbeitet.
+- Beim Rollen-Speichern wird nur die **aktive** Sektion gelintet, nicht alle 4 auf einmal.
+- `templates/`, `files/`, `meta/` (Rollen-Metadaten, Jinja-Templates, statische Dateien) werden
+  vom Builder (noch) nicht verwaltet — nur tasks/handlers/defaults/vars.
 
 ## Technischer Hintergrund
 

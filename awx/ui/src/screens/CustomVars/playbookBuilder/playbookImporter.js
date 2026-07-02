@@ -11,7 +11,7 @@ import { moduleBlockType, MODULE_NAMES, ENVELOPE_FIELDS } from './blocks';
 import { newBlock } from './blocklyUtil';
 import { parseConditionToBlock } from './conditionParser';
 
-const KNOWN_PLAY_KEYS = new Set(['name', 'hosts', 'become', 'tasks', 'roles']);
+const KNOWN_PLAY_KEYS = new Set(['name', 'hosts', 'become', 'tasks', 'roles', 'handlers']);
 // A task's module key is whatever remains after removing "name" and every
 // task-level modifier keyword (when/tags/notify/register/become/…) — NOT
 // simply "the first unrecognized key", which used to misfire whenever a
@@ -239,18 +239,28 @@ function importPlay(workspace, playObj) {
     previousRole = roleBlock;
   });
 
+  chainTasksInto(workspace, playBlock, 'TASKS', playObj.tasks);
+  // Handlers are the same block shape as tasks (module_*/raw_task), just
+  // addressed by name via another task's notify: — see blocks.js.
+  chainTasksInto(workspace, playBlock, 'HANDLERS', playObj.handlers);
+
+  return playBlock;
+}
+
+// Imports a list of task objects into a module_*/raw_task chain plugged into
+// `inputName` on `containerBlock` — shared by TASKS and HANDLERS (identical
+// shape) and reusable by role-mode's bare task list.
+function chainTasksInto(workspace, containerBlock, inputName, taskObjs) {
   let previousTask = null;
-  (playObj.tasks || []).forEach((taskObj) => {
+  (taskObjs || []).forEach((taskObj) => {
     const taskBlock = importTask(workspace, taskObj);
     if (previousTask) {
       previousTask.nextConnection.connect(taskBlock.previousConnection);
     } else {
-      playBlock.getInput('TASKS').connection.connect(taskBlock.previousConnection);
+      containerBlock.getInput(inputName).connection.connect(taskBlock.previousConnection);
     }
     previousTask = taskBlock;
   });
-
-  return playBlock;
 }
 
 // Parses playbook YAML (a top-level list of plays) and rebuilds it as
@@ -274,11 +284,14 @@ export function importPlaybookYaml(content, workspace) {
   return plays.length;
 }
 
-// Role-tasks document mode: a role's tasks/main.yml is a bare list of tasks.
-// Rebuilds it as a single top-level stack of module/raw_task blocks (no play
-// wrapper), the inverse of ansibleGenerator's workspaceToTasks().
+// Role-tasks document mode: a role's tasks/main.yml (and, identically
+// shaped, handlers/main.yml) is a bare list of tasks. Rebuilds it as a
+// single top-level stack of module/raw_task blocks (no play wrapper), the
+// inverse of ansibleGenerator's workspaceToTasks(). An empty/null document
+// (a freshly-scaffolded stub file, "---\n") is treated as zero tasks rather
+// than an error, so a brand-new role's untouched sections still open.
 export function importTasksYaml(content, workspace) {
-  const tasks = yaml.load(content);
+  const tasks = yaml.load(content) || [];
   if (!Array.isArray(tasks)) {
     throw new Error('Expected a YAML list of tasks at the top level.');
   }
@@ -295,4 +308,29 @@ export function importTasksYaml(content, workspace) {
     return index;
   });
   return tasks.length;
+}
+
+// Role vars document mode: a role's defaults/main.yml (and, identically
+// shaped, vars/main.yml) is a bare vars: mapping — no play/task wrapper.
+// Rebuilds it as a top-level chain of define_var blocks, the inverse of
+// ansibleGenerator's workspaceToVarsMapping(). An empty/null document (a
+// freshly-scaffolded stub file) is treated as zero variables.
+export function importVarsYaml(content, workspace) {
+  const varsObj = yaml.load(content) || {};
+  if (typeof varsObj !== 'object' || Array.isArray(varsObj)) {
+    throw new Error('Expected a YAML mapping of variables at the top level.');
+  }
+  workspace.clear();
+  let previousVar = null;
+  const entries = Object.entries(varsObj);
+  entries.forEach(([varName, varValue]) => {
+    const varBlock = importVar(workspace, varName, varValue);
+    if (previousVar) {
+      previousVar.nextConnection.connect(varBlock.previousConnection);
+    } else if (typeof varBlock.moveBy === 'function') {
+      varBlock.moveBy(20, 20);
+    }
+    previousVar = varBlock;
+  });
+  return entries.length;
 }

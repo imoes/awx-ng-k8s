@@ -357,11 +357,17 @@ function defineStaticBlocks() {
       this.appendStatementInput('VARS').setCheck('Var').appendField('vars');
       this.appendStatementInput('ROLES').setCheck('Role').appendField('roles');
       this.appendStatementInput('TASKS').setCheck('Task').appendField('tasks');
+      // Same block shape as tasks (module_*/raw_task) — a handler is just a
+      // task addressed by name via another task's notify:. notify: is
+      // already free text (see ENVELOPE_FIELDS), so no separate handler-name
+      // picker is needed for it to work.
+      this.appendStatementInput('HANDLERS').setCheck('Task').appendField('handlers');
       this.setColour(120);
       this.setDeletable(true);
       this.setTooltip(
         'An Ansible play — a set of tasks (and/or roles) run against a group ' +
-        'of hosts. "vars" holds typed variable-definition blocks; "extra" ' +
+        'of hosts. "vars" holds typed variable-definition blocks; "handlers" ' +
+        'holds tasks addressed by name via another task\'s notify:; "extra" ' +
         'preserves any other play-level key without a dedicated block yet ' +
         '(e.g. environment:) as raw YAML.'
       );

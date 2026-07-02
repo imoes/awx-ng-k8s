@@ -179,6 +179,19 @@ describe('ansibleGenerator', () => {
     expect(parsed).toEqual([{ name: 'install', apt: { name: ['nginx'] } }]);
   });
 
+  it('serializeWorkspace("vars") emits a bare vars: mapping (role defaults/main.yml shape)', () => {
+    const v1 = workspace.newBlock('define_var');
+    v1.setFieldValue('nginx_port', 'NAME');
+    v1.setFieldValue('8080', 'VALUE');
+    const v2 = workspace.newBlock('define_var');
+    v2.setFieldValue('nginx_worker_processes', 'NAME');
+    v2.setFieldValue('auto', 'VALUE');
+    v1.nextConnection.connect(v2.previousConnection);
+
+    const parsed = yaml.load(serializeWorkspace(workspace, 'vars'));
+    expect(parsed).toEqual({ nginx_port: 8080, nginx_worker_processes: 'auto' });
+  });
+
   it('emits a correct roles: list from two role_use blocks (one with vars)', () => {
     const play = workspace.newBlock('play');
     play.setFieldValue('provision', 'NAME');
@@ -200,6 +213,36 @@ describe('ansibleGenerator', () => {
     expect(parsed[0].roles).toEqual([
       'img_common',
       { role: 'img_docker', docker_version: '24.0' },
+    ]);
+  });
+
+  it('emits a play-level handlers: list from the HANDLERS chain (same shape as tasks)', () => {
+    const play = workspace.newBlock('play');
+    play.setFieldValue('with handlers', 'NAME');
+    play.setFieldValue('all', 'HOSTS');
+
+    const task = workspace.newBlock('module_service');
+    task.setFieldValue('configure nginx', 'NAME');
+    task.setFieldValue('nginx', 'name');
+    task.setFieldValue('started', 'state');
+    task.addEnvelopeField('NOTIFY').setFieldValue('restart nginx', 'VALUE');
+
+    const handler = workspace.newBlock('module_service');
+    handler.setFieldValue('restart nginx', 'NAME');
+    handler.setFieldValue('nginx', 'name');
+    handler.setFieldValue('restarted', 'state');
+
+    play.getInput('TASKS').connection.connect(task.previousConnection);
+    play.getInput('HANDLERS').connection.connect(handler.previousConnection);
+
+    const parsed = yaml.load(workspaceToPlaybook(workspace));
+    expect(parsed[0].tasks[0]).toEqual({
+      name: 'configure nginx',
+      service: { name: 'nginx', state: 'started' },
+      notify: ['restart nginx'], // notify is always emitted as a list (see TAGS/NOTIFY handling)
+    });
+    expect(parsed[0].handlers).toEqual([
+      { name: 'restart nginx', service: { name: 'nginx', state: 'restarted' } },
     ]);
   });
 

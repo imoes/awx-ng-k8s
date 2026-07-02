@@ -1,7 +1,7 @@
 import * as Blockly from 'blockly';
 import yaml from 'js-yaml';
 import { registerBlocks } from './blocks';
-import { importPlaybookYaml, importTasksYaml } from './playbookImporter';
+import { importPlaybookYaml, importTasksYaml, importVarsYaml } from './playbookImporter';
 import { workspaceToPlaybook, serializeWorkspace } from './ansibleGenerator';
 
 // WHEN's condition now lives on a standalone setting_when block chained into
@@ -66,6 +66,33 @@ describe('playbookImporter', () => {
     importPlaybookYaml(original, workspace);
     const regenerated = workspaceToPlaybook(workspace);
     expect(yaml.load(regenerated)).toEqual(yaml.load(original));
+  });
+
+  it('round-trips play-level handlers: (same block shape as tasks, addressed via notify:)', () => {
+    const original = `
+- name: web
+  hosts: all
+  tasks:
+    - name: configure nginx
+      service:
+        name: nginx
+        state: started
+      notify:
+        - restart nginx
+  handlers:
+    - name: restart nginx
+      service:
+        name: nginx
+        state: restarted
+`;
+    importPlaybookYaml(original, workspace);
+    const playBlock = workspace.getAllBlocks(false).find((b) => b.type === 'play');
+    const handlerBlock = playBlock.getInputTargetBlock('HANDLERS');
+    expect(handlerBlock.type).toBe('module_service');
+    expect(handlerBlock.getFieldValue('NAME')).toBe('restart nginx');
+
+    const regenerated = yaml.load(workspaceToPlaybook(workspace));
+    expect(regenerated).toEqual(yaml.load(original));
   });
 
   it('imports vars: as chained define_var blocks (not dumped into EXTRA)', () => {
@@ -398,5 +425,29 @@ describe('playbookImporter', () => {
     const expected = yaml.load(original);
     expected[0].apt.name = ['nginx'];
     expect(yaml.load(regenerated)).toEqual(expected);
+  });
+
+  it('round-trips a role defaults/main.yml (bare vars: mapping) with no data loss', () => {
+    const original = `
+nginx_port: 8080
+nginx_worker_processes: auto
+nginx_packages:
+  - nginx
+  - nginx-common
+`;
+    const count = importVarsYaml(original, workspace);
+    expect(count).toBe(3);
+    const varTypes = workspace.getAllBlocks(false).map((b) => b.type);
+    expect(varTypes).toEqual(['define_var', 'define_var', 'define_var']);
+
+    const regenerated = serializeWorkspace(workspace, 'vars');
+    expect(yaml.load(regenerated)).toEqual(yaml.load(original));
+  });
+
+  it('treats an empty/null defaults or tasks document as zero items (freshly-scaffolded stub file)', () => {
+    expect(importVarsYaml('---\n', workspace)).toBe(0);
+    expect(workspace.getAllBlocks(false)).toHaveLength(0);
+    expect(importTasksYaml('---\n', workspace)).toBe(0);
+    expect(workspace.getAllBlocks(false)).toHaveLength(0);
   });
 });

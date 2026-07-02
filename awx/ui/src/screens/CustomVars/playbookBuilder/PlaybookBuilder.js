@@ -26,7 +26,7 @@ import BlocklyWorkspace from './BlocklyWorkspace';
 import { registerBlocks } from './blocks';
 import { buildToolbox, registerCategoryCallbacks } from './toolbox';
 import { serializeWorkspace } from './ansibleGenerator';
-import { importPlaybookYaml, importTasksYaml } from './playbookImporter';
+import { importPlaybookYaml, importTasksYaml, importVarsYaml } from './playbookImporter';
 import { sidecarPathFor } from './sidecarPath';
 import { insertVariableReference } from './varInsertion';
 import VariablesPanel from './VariablesPanel';
@@ -69,6 +69,31 @@ function findFieldAtPoint(workspace, clientX, clientY) {
   return null;
 }
 
+// A role's 4 editable sections (in tab order) — each maps 1:1 to a real
+// role subdirectory (roles/<name>/<section>/main.yml). tasks/handlers share
+// the "bare task list" shape; defaults/vars share the "bare vars mapping"
+// shape (see ansibleGenerator.js serializeWorkspace()).
+const ROLE_SECTIONS = ['tasks', 'handlers', 'defaults', 'vars'];
+const ROLE_SECTION_LABELS = { tasks: 'Tasks', handlers: 'Handlers', defaults: 'Defaults', vars: 'Vars' };
+
+function sectionSerializeMode(section) {
+  return section === 'defaults' || section === 'vars' ? 'vars' : 'tasks';
+}
+
+function roleSectionPath(roleName, section) {
+  return `roles/${roleName}/${section}/main.yml`;
+}
+
+// What an untouched/never-visited section should write as its stub file —
+// generated from a real (empty) workspace rather than a hand-written string
+// so it's always exactly what serializeWorkspace would produce.
+function emptyStubYaml(mode) {
+  const tmp = new Blockly.Workspace();
+  const text = serializeWorkspace(tmp, mode);
+  tmp.dispose();
+  return text;
+}
+
 function workspaceRoleNames(workspace) {
   return workspace
     .getAllBlocks(false)
@@ -85,6 +110,11 @@ function PlaybookBuilder() {
   const [docMode, setDocMode] = useState('playbook'); // 'playbook' | 'role'
   const [openedRole, setOpenedRole] = useState(null);
   const [targetPath, setTargetPath] = useState('playbooks/blockly-test.yml');
+  // Role mode only: which of the 4 sections (tasks/handlers/defaults/vars)
+  // is currently shown on the canvas, and the role's name (all 4 file paths
+  // are derived from it — see roleSectionPath()).
+  const [roleSection, setRoleSection] = useState('tasks');
+  const [roleName, setRoleName] = useState('new-role');
   const [relevantRoles, setRelevantRoles] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
@@ -112,6 +142,13 @@ function PlaybookBuilder() {
   docModeRef.current = docMode;
   const openedRoleRef = useRef(openedRole);
   openedRoleRef.current = openedRole;
+  const roleSectionRef = useRef(roleSection);
+  roleSectionRef.current = roleSection;
+  // Cache of the 3 role sections NOT currently on the canvas, keyed by
+  // section name: { blockly: <serialized workspace state>, yaml: <string> }.
+  // Populated on tab-switch (outgoing section) and on role-open (all 4 at
+  // once). Never triggers a re-render itself — it's a plain mutable cache.
+  const roleSectionsRef = useRef({});
   // Read live by the dynamic-category callbacks (registered once).
   const paletteFilterRef = useRef('');
   const roleNamesRef = useRef([]);
@@ -125,7 +162,10 @@ function PlaybookBuilder() {
   // by the workspace change listener and the document drop listener alike.
   const refreshFromWorkspace = useCallback((ws) => {
     setBlockCount(ws.getAllBlocks(false).length);
-    setPlaybookYaml(serializeWorkspace(ws, docModeRef.current));
+    const mode = docModeRef.current === 'role'
+      ? sectionSerializeMode(roleSectionRef.current)
+      : 'playbook';
+    setPlaybookYaml(serializeWorkspace(ws, mode));
     const roles = workspaceRoleNames(ws);
     if (openedRoleRef.current) roles.push(openedRoleRef.current);
     setRelevantRoles(roles);
@@ -242,14 +282,45 @@ function PlaybookBuilder() {
     }
     // Role mode has no wrapper block to seed — drag a module block from the
     // Modules category directly onto the canvas to start the first task.
+    // All 4 sections start empty; Save scaffolds all 4 files/directories
+    // even for sections the user never visits (see handleSave).
     setDocMode(mode);
     docModeRef.current = mode;
     setOpenedRole(null);
     openedRoleRef.current = null;
-    setTargetPath(mode === 'role' ? 'roles/new-role/tasks/main.yml' : 'playbooks/new-playbook.yml');
+    if (mode === 'role') {
+      roleSectionsRef.current = {};
+      setRoleName('new-role');
+      setRoleSection('tasks');
+      roleSectionRef.current = 'tasks';
+    } else {
+      setTargetPath('playbooks/new-playbook.yml');
+    }
     setLoadMessage(null);
     setLintErrors([]);
     setSaved(false);
+    refreshFromWorkspace(ws);
+  };
+
+  // Switches the canvas to a different role section (Tasks/Handlers/
+  // Defaults/Vars), caching the outgoing section's state first so nothing
+  // is lost. All 4 sections live in the same Blockly workspace instance,
+  // swapped in and out — not 4 separate workspaces.
+  const switchRoleSection = (nextSection) => {
+    if (nextSection === roleSection) return;
+    const ws = workspaceRef.current;
+    if (!ws) return;
+    roleSectionsRef.current[roleSection] = {
+      blockly: Blockly.serialization.workspaces.save(ws),
+      yaml: serializeWorkspace(ws, sectionSerializeMode(roleSection)),
+    };
+    ws.clear();
+    const cached = roleSectionsRef.current[nextSection];
+    if (cached?.blockly) {
+      Blockly.serialization.workspaces.load(cached.blockly, ws);
+    }
+    setRoleSection(nextSection);
+    roleSectionRef.current = nextSection;
     refreshFromWorkspace(ws);
   };
 
@@ -259,22 +330,62 @@ function PlaybookBuilder() {
     setLintErrors([]);
     setSaved(false);
     try {
-      const { data: lintResult } = await lintProjectFile(projectId, playbookYaml, targetPath);
-      if (!lintResult.valid) {
-        setLintErrors(lintResult.errors || []);
-        return;
+      if (docMode === 'role') {
+        const ok = await saveRoleSections();
+        if (!ok) return;
+      } else {
+        const { data: lintResult } = await lintProjectFile(projectId, playbookYaml, targetPath);
+        if (!lintResult.valid) {
+          setLintErrors(lintResult.errors || []);
+          return;
+        }
+        await saveProjectFile(projectId, targetPath, playbookYaml);
+        // Persist the visual layout alongside the generated YAML so the
+        // builder can be reopened later without losing the block arrangement.
+        const workspaceState = Blockly.serialization.workspaces.save(workspaceRef.current);
+        await saveProjectFile(projectId, sidecarPathFor(targetPath), JSON.stringify(workspaceState));
       }
-      await saveProjectFile(projectId, targetPath, playbookYaml);
-      // Persist the visual layout alongside the generated YAML so the builder
-      // can be reopened later without losing the block arrangement.
-      const workspaceState = Blockly.serialization.workspaces.save(workspaceRef.current);
-      await saveProjectFile(projectId, sidecarPathFor(targetPath), JSON.stringify(workspaceState));
       setSaved(true);
     } catch (e) {
       setSaveError(e?.response?.data?.detail || e.message);
     } finally {
       setSaving(false);
     }
+  };
+
+  // Writes all 4 role sections at once (roles/<name>/{tasks,handlers,
+  // defaults,vars}/main.yml), scaffolding directories/files the user never
+  // even opened as empty stubs — "the user shouldn't have to deal with it".
+  // Only the currently-active section is linted (matches the single-file
+  // lint UX elsewhere); the other 3 are trusted from when they were active.
+  // Returns false (and sets lintErrors) on a lint failure, true on success —
+  // callers must check this since it can't just early-return out of the
+  // caller's own try block the way a plain inline lint check would.
+  const saveRoleSections = async () => {
+    const ws = workspaceRef.current;
+    const activeYaml = serializeWorkspace(ws, sectionSerializeMode(roleSection));
+    roleSectionsRef.current[roleSection] = {
+      blockly: Blockly.serialization.workspaces.save(ws),
+      yaml: activeYaml,
+    };
+
+    const activePath = roleSectionPath(roleName, roleSection);
+    const { data: lintResult } = await lintProjectFile(projectId, activeYaml, activePath);
+    if (!lintResult.valid) {
+      setLintErrors(lintResult.errors || []);
+      return false;
+    }
+
+    await Promise.all(ROLE_SECTIONS.map(async (section) => {
+      const cached = roleSectionsRef.current[section];
+      const path = roleSectionPath(roleName, section);
+      const yamlText = cached ? cached.yaml : emptyStubYaml(sectionSerializeMode(section));
+      await saveProjectFile(projectId, path, yamlText);
+      if (cached) {
+        await saveProjectFile(projectId, sidecarPathFor(path), JSON.stringify(cached.blockly));
+      }
+    }));
+    return true;
   };
 
   // ── Open dialog ──────────────────────────────────────────────────────────
@@ -290,7 +401,7 @@ function PlaybookBuilder() {
     }
   };
 
-  const openDocument = async (path, mode, roleName) => {
+  const openDocument = async (path) => {
     setOpening(true);
     setLoadMessage(null);
     setSaveError(null);
@@ -308,14 +419,13 @@ function PlaybookBuilder() {
 
       if (!restoredFromSidecar) {
         const { data } = await readProjectFile(projectId, path);
-        if (mode === 'role') importTasksYaml(data.content, ws);
-        else importPlaybookYaml(data.content, ws);
+        importPlaybookYaml(data.content, ws);
       }
 
-      setDocMode(mode);
-      docModeRef.current = mode;
-      setOpenedRole(mode === 'role' ? roleName : null);
-      openedRoleRef.current = mode === 'role' ? roleName : null;
+      setDocMode('playbook');
+      docModeRef.current = 'playbook';
+      setOpenedRole(null);
+      openedRoleRef.current = null;
       setTargetPath(path);
       refreshFromWorkspace(ws);
       setOpenDialog(false);
@@ -323,6 +433,57 @@ function PlaybookBuilder() {
         variant: 'success',
         text: `Opened ${path}${restoredFromSidecar ? ' (from saved layout)' : ''}.`,
       });
+    } catch (e) {
+      setLoadMessage({ variant: 'danger', text: e?.response?.data?.detail || e.message });
+    } finally {
+      setOpening(false);
+    }
+  };
+
+  // Loads all 4 sections of an existing role up front (so switching tabs is
+  // instant, no extra round-trip), rendering "Tasks" on the canvas first.
+  // A section whose file doesn't exist yet (role predates this feature, or
+  // that section was simply never populated) is just treated as empty.
+  const openRoleDocument = async (name) => {
+    setOpening(true);
+    setLoadMessage(null);
+    setSaveError(null);
+    try {
+      const cache = {};
+      await Promise.all(ROLE_SECTIONS.map(async (section) => {
+        const path = roleSectionPath(name, section);
+        try {
+          const sidecar = await readProjectFile(projectId, sidecarPathFor(path));
+          cache[section] = { blockly: JSON.parse(sidecar.data.content), yaml: null };
+          return;
+        } catch { /* no sidecar — import from YAML below */ }
+        try {
+          const { data } = await readProjectFile(projectId, path);
+          const tmp = new Blockly.Workspace();
+          if (sectionSerializeMode(section) === 'vars') importVarsYaml(data.content, tmp);
+          else importTasksYaml(data.content, tmp);
+          cache[section] = { blockly: Blockly.serialization.workspaces.save(tmp), yaml: data.content };
+          tmp.dispose();
+        } catch {
+          cache[section] = null; // file doesn't exist yet — treated as empty
+        }
+      }));
+      roleSectionsRef.current = cache;
+
+      const ws = workspaceRef.current;
+      ws.clear();
+      if (cache.tasks?.blockly) Blockly.serialization.workspaces.load(cache.tasks.blockly, ws);
+
+      setDocMode('role');
+      docModeRef.current = 'role';
+      setRoleName(name);
+      setRoleSection('tasks');
+      roleSectionRef.current = 'tasks';
+      setOpenedRole(name);
+      openedRoleRef.current = name;
+      refreshFromWorkspace(ws);
+      setOpenDialog(false);
+      setLoadMessage({ variant: 'success', text: `Opened role ${name}.` });
     } catch (e) {
       setLoadMessage({ variant: 'danger', text: e?.response?.data?.detail || e.message });
     } finally {
@@ -395,13 +556,23 @@ function PlaybookBuilder() {
                   ))}
                 </select>
               </FormGroup>
-              <FormGroup label={docMode === 'role' ? 'Role file' : 'Save to'} style={{ minWidth: 320 }}>
-                <TextInput
-                  value={targetPath}
-                  onChange={setTargetPath}
-                  data-testid="pb-target-path"
-                />
-              </FormGroup>
+              {docMode === 'role' ? (
+                <FormGroup label="Role name" style={{ minWidth: 320 }}>
+                  <TextInput
+                    value={roleName}
+                    onChange={setRoleName}
+                    data-testid="pb-role-name"
+                  />
+                </FormGroup>
+              ) : (
+                <FormGroup label="Save to" style={{ minWidth: 320 }}>
+                  <TextInput
+                    value={targetPath}
+                    onChange={setTargetPath}
+                    data-testid="pb-target-path"
+                  />
+                </FormGroup>
+              )}
               <Button
                 variant="primary"
                 onClick={handleSave}
@@ -412,8 +583,39 @@ function PlaybookBuilder() {
               </Button>
             </div>
 
+            {docMode === 'role' && (
+              <div style={{ display: 'flex', gap: 4, marginBottom: 12 }} data-testid="pb-role-section-tabs">
+                {ROLE_SECTIONS.map((section) => (
+                  <button
+                    key={section}
+                    type="button"
+                    data-testid={`pb-role-section-${section}`}
+                    onClick={() => switchRoleSection(section)}
+                    style={{
+                      padding: '6px 14px',
+                      border: '1px solid #ccc',
+                      borderBottom: section === roleSection ? '2px solid #06c' : '1px solid #ccc',
+                      borderRadius: '4px 4px 0 0',
+                      background: section === roleSection ? '#fff' : '#f2f2f2',
+                      fontWeight: section === roleSection ? 600 : 400,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {ROLE_SECTION_LABELS[section]}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {saveError && <Alert variant="danger" title={saveError} isInline style={{ marginBottom: 12 }} />}
-            {saved && <Alert variant="success" title={`Saved to ${targetPath}`} isInline style={{ marginBottom: 12 }} />}
+            {saved && (
+              <Alert
+                variant="success"
+                title={docMode === 'role' ? `Saved role ${roleName} (tasks/handlers/defaults/vars)` : `Saved to ${targetPath}`}
+                isInline
+                style={{ marginBottom: 12 }}
+              />
+            )}
             {loadMessage && (
               <Alert
                 variant={loadMessage.variant}
@@ -456,7 +658,7 @@ function PlaybookBuilder() {
               </div>
               <div style={{ flex: '1 1 26%', minWidth: 0 }}>
                 <Title headingLevel="h3" size="sm" style={{ marginBottom: 8 }}>
-                  Generated YAML
+                  {docMode === 'role' ? `Generated YAML — ${ROLE_SECTION_LABELS[roleSection]}` : 'Generated YAML'}
                 </Title>
                 <div data-testid="playbook-yaml-preview">
                   <CodeEditor value={playbookYaml} mode="yaml" readOnly rows={30} />
@@ -504,7 +706,7 @@ function PlaybookBuilder() {
               key={o.path}
               data-testid="pb-open-item"
               data-openpath={o.path}
-              onClick={() => openDocument(o.path, o.mode, o.role)}
+              onClick={() => (o.mode === 'role' ? openRoleDocument(o.role) : openDocument(o.path))}
               style={{
                 display: 'block', width: '100%', textAlign: 'left',
                 padding: '6px 10px', marginBottom: 4, border: '1px solid #eee',
