@@ -15,7 +15,12 @@ const KNOWN_PLAY_KEYS = new Set(['name', 'hosts', 'become', 'tasks', 'roles']);
 // simply "the first unrecognized key", which used to misfire whenever a
 // task had more than one modifier (e.g. loop + register together would
 // make the importer mistake "loop" for the module and raw_task the rest).
-const KNOWN_TASK_ENVELOPE_KEYS = new Set(['name', ...ENVELOPE_FIELDS.map((e) => e.yamlKey)]);
+// `with_items` is the legacy predecessor of `loop:` (still common in older
+// playbooks) — treated as an alias so those tasks don't need the modern
+// keyword to be recognized.
+const KNOWN_TASK_ENVELOPE_KEYS = new Set([
+  'name', 'with_items', ...ENVELOPE_FIELDS.map((e) => e.yamlKey),
+]);
 const MODULE_NAME_SET = new Set(MODULE_NAMES);
 
 function newBlock(workspace, type) {
@@ -34,6 +39,12 @@ function setField(block, fieldName, value) {
   if (!field) return;
   if (field instanceof Blockly.FieldCheckbox) {
     field.setValue(value ? 'TRUE' : 'FALSE');
+  } else if (value !== null && typeof value === 'object') {
+    // List/dict-typed param values (e.g. apt's `name: [nginx, curl]`) — dump
+    // to YAML text rather than JS's `String([...])`/`"[object Object]"`, so
+    // the field holds a value the generator's coerceModuleArgValue() (and a
+    // human) can actually parse back.
+    field.setValue(yaml.dump(value).trim());
   } else {
     field.setValue(String(value));
   }
@@ -81,12 +92,21 @@ function importModuleBlock(workspace, moduleKey, args) {
   }
 
   const moduleBlock = newBlock(workspace, moduleBlockType(shortName));
+  const paramTypes = moduleBlock.paramTypes_ || {};
   // Optional params aren't shown by default — add their rows before setting
-  // values. If a key isn't a known param, or its value can't live in a text
-  // field (nested dict/list), we can't represent it faithfully.
+  // values. A non-scalar value (array/object) is only representable when the
+  // param's own ansible-doc type declares it (list/dict/raw) — e.g. apt's
+  // `name: [nginx, curl]` — since the field will parse it back via that same
+  // type (see coerceModuleArgValue). An array/object on an otherwise
+  // scalar-typed param is unexpected input we can't represent faithfully.
   const isScalar = (v) => v === null || v === undefined || typeof v !== 'object';
   const canRepresent = (argEntries || []).every(([key, value]) => {
-    if (!isScalar(value)) return false;
+    if (!isScalar(value)) {
+      const declaredType = paramTypes[key];
+      if (declaredType !== 'list' && declaredType !== 'dict' && declaredType !== 'raw') {
+        return false;
+      }
+    }
     if (moduleBlock.getField(key)) return true;
     moduleBlock.addOptionalParam(key);
     return !!moduleBlock.getField(key);
@@ -117,8 +137,13 @@ function importTask(workspace, taskObj) {
 
   if (taskObj.name) setField(moduleBlock, 'NAME', taskObj.name);
   ENVELOPE_FIELDS.forEach((envelope) => {
-    if (!(envelope.yamlKey in taskObj)) return;
-    let value = taskObj[envelope.yamlKey];
+    // `with_items` is the legacy alias for `loop:` (see KNOWN_TASK_ENVELOPE_KEYS) —
+    // both populate the same LOOP field; regeneration always emits `loop:`.
+    const sourceKey = envelope.key === 'LOOP' && !('loop' in taskObj) && 'with_items' in taskObj
+      ? 'with_items'
+      : envelope.yamlKey;
+    if (!(sourceKey in taskObj)) return;
+    let value = taskObj[sourceKey];
     if (envelope.key === 'TAGS' || envelope.key === 'NOTIFY') {
       value = Array.isArray(value) ? value.join(', ') : value;
     } else if (envelope.key === 'LOOP' && typeof value !== 'string') {

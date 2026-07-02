@@ -18,6 +18,16 @@ registerFieldMultilineInput();
 const MODULE_BLOCK_PREFIX = 'module_';
 const ADD_PARAM_PLACEHOLDER = '';
 
+// ansible-doc leaves some very common params without an explicit choices
+// list because the module just forwards to a backend (package: apt/yum/dnf/
+// etc.) — of the whole catalog, `package.state` is the only such case (every
+// other state-like param already carries real choices from ansible-doc).
+// Curated here since guessing at scale would misrepresent modules that
+// genuinely accept freeform values.
+const CURATED_CHOICES = {
+  package: { state: ['present', 'absent', 'latest'] },
+};
+
 // Params shown by default for modules whose primary option isn't marked
 // "required" in ansible-doc (so e.g. debug still shows `msg`, command shows
 // `cmd`). Keeps module blocks small — required + these — while surfacing the
@@ -76,29 +86,46 @@ function moduleBlockType(shortName) {
   return `${MODULE_BLOCK_PREFIX}${shortName}`;
 }
 
-function fieldForParam(param) {
+function effectiveChoices(moduleShortName, param) {
+  if (param.choices && param.choices.length) return param.choices;
+  return (CURATED_CHOICES[moduleShortName] || {})[param.name] || null;
+}
+
+function fieldForParam(param, choices) {
   // Fields start blank/unchecked; dropdowns lead with an "(unset)" option
   // (value '') so an untouched field emits nothing at generation time.
-  if (param.choices && param.choices.length) {
-    const options = [['(unset)', ''], ...param.choices.map((c) => [String(c), String(c)])];
+  if (choices && choices.length) {
+    const options = [['(unset)', ''], ...choices.map((c) => [String(c), String(c)])];
     return new Blockly.FieldDropdown(options);
   }
   if (param.type === 'bool') {
     return new Blockly.FieldCheckbox('FALSE');
   }
   // Text params use a multiline field so values can contain line breaks
-  // (shell scripts, copy content, multi-line messages). It stays compact for
-  // single-line values and grows as you add lines (Enter inserts a newline).
+  // (shell scripts, copy content, multi-line messages, or one-item-per-line
+  // for list/dict params — see ansibleGenerator's type-aware parsing). It
+  // stays compact for single-line values and grows as lines are added.
   return new FieldMultilineInput('');
 }
 
-function appendParamRow(block, param) {
+// list/dict/raw params accept structured values (e.g. a package list) that a
+// single flat field can't self-document — the label hints at the expected
+// shape so users don't have to guess (comma list OR one-per-line OR full
+// YAML — see ansibleGenerator.coerceModuleArgValue).
+function typeHint(param) {
+  if (param.type === 'list') return ' [list]';
+  if (param.type === 'dict') return ' {dict}';
+  return '';
+}
+
+function appendParamRow(block, param, moduleShortName) {
   // Required params are marked with a trailing "*".
-  const label = param.required ? `${param.name} *` : param.name;
+  const label = `${param.name}${param.required ? ' *' : ''}${typeHint(param)}`;
+  const choices = effectiveChoices(moduleShortName, param);
   block
     .appendDummyInput(`ROW_${param.name}`)
     .appendField(`${label}:`)
-    .appendField(fieldForParam(param), param.name);
+    .appendField(fieldForParam(param, choices), param.name);
 }
 
 function appendEnvelopeRow(block, envelope) {
@@ -126,12 +153,22 @@ function defineModuleBlocks() {
     Blockly.Blocks[blockType] = {
       init() {
         this.appendDummyInput('HEAD').appendField(mod.short_name, 'MODULE_LABEL');
+        // "task name:" (not "name:") — many modules (apt/yum/user/package/…)
+        // have their OWN required "name" param; using a plain "name:" label
+        // here made the block show "name:" twice with no way to tell them
+        // apart. This is the task's description; the module's own `name`
+        // param (if any) appears below with its own row.
         this.appendDummyInput('ROW_NAME')
-          .appendField('name:')
+          .appendField('task name:')
           .appendField(new Blockly.FieldTextInput(''), 'NAME');
         this.activeOptional_ = [];
         this.activeEnvelope_ = [];
-        defaultNames.forEach((name) => appendParamRow(this, paramByName[name]));
+        // Looked up by the generator/importer to parse each field's raw text
+        // into the right shape (list/dict/int/float/raw) — see
+        // ansibleGenerator.coerceModuleArgValue().
+        this.paramTypes_ = {};
+        mod.params.forEach((p) => { this.paramTypes_[p.name] = p.type; });
+        defaultNames.forEach((name) => appendParamRow(this, paramByName[name], mod.short_name));
         // Two separate "add …" dropdowns so task settings (when/notify/…) are
         // clearly discoverable and not buried among the module's own params.
         this.appendDummyInput('ADD_OPT').appendField(
@@ -196,7 +233,7 @@ function defineModuleBlocks() {
         if (this.activeOptional_.includes(name) || defaultSet.has(name)) return;
         if (!paramByName[name]) return;
         this.activeOptional_.push(name);
-        appendParamRow(this, paramByName[name]);
+        appendParamRow(this, paramByName[name], mod.short_name);
         this.moveInputBefore(`ROW_${name}`, 'ADD_OPT');
       },
       // Public: adds a task-level modifier row (when/tags/register/…),

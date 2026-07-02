@@ -111,7 +111,12 @@ describe('playbookImporter', () => {
 `;
     importPlaybookYaml(original, workspace);
     const regenerated = workspaceToPlaybook(workspace);
-    expect(yaml.load(regenerated)).toEqual(yaml.load(original));
+    // verbosity is int-typed — the quoted '2' round-trips as the number 2,
+    // which is the ansible-doc-correct representation (and what Ansible
+    // would coerce it to at runtime regardless).
+    const expected = yaml.load(original);
+    expected[0].tasks[0].debug.verbosity = 2;
+    expect(yaml.load(regenerated)).toEqual(expected);
   });
 
   it('imports a module written in inline key=value shorthand as a typed block', () => {
@@ -168,6 +173,69 @@ describe('playbookImporter', () => {
     expect(yaml.load(regenerated)).toEqual(expected);
   });
 
+  it('imports ansible.builtin.apt with a LIST-valued name (multi-package install) as a typed block', () => {
+    // Real-world usage: apt/yum/dnf/pip/package's `name` param accepts a list
+    // of packages. Previously ANY non-scalar arg value forced raw_task,
+    // even for a plain ansible.builtin module — the residual cause behind
+    // "ansible.builtin modules still show up as raw task".
+    const original = `
+- hosts: all
+  tasks:
+    - name: install packages
+      ansible.builtin.apt:
+        name:
+          - nginx
+          - curl
+        state: present
+`;
+    importPlaybookYaml(original, workspace);
+    const types = workspace.getAllBlocks(false).map((b) => b.type);
+    expect(types).toContain('module_apt');
+    expect(types).not.toContain('raw_task');
+
+    const regenerated = yaml.load(workspaceToPlaybook(workspace));
+    expect(regenerated[0].tasks[0].apt).toEqual({ name: ['nginx', 'curl'], state: 'present' });
+  });
+
+  it('imports a required DICT-typed param (set_stats.data) as a typed block', () => {
+    const original = `
+- hosts: all
+  tasks:
+    - name: record stats
+      set_stats:
+        data:
+          foo: bar
+          count: 3
+`;
+    importPlaybookYaml(original, workspace);
+    const types = workspace.getAllBlocks(false).map((b) => b.type);
+    expect(types).toContain('module_set_stats');
+    expect(types).not.toContain('raw_task');
+    const regenerated = yaml.load(workspaceToPlaybook(workspace));
+    expect(regenerated[0].tasks[0].set_stats.data).toEqual({ foo: 'bar', count: 3 });
+  });
+
+  it('imports the legacy with_items keyword as the modern loop equivalent', () => {
+    const original = `
+- hosts: all
+  tasks:
+    - name: create dirs
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+      with_items:
+        - /tmp/a
+        - /tmp/b
+`;
+    importPlaybookYaml(original, workspace);
+    const types = workspace.getAllBlocks(false).map((b) => b.type);
+    expect(types).toContain('module_file');
+    expect(types).not.toContain('raw_task');
+    const regenerated = yaml.load(workspaceToPlaybook(workspace));
+    // Normalized to the modern `loop:` keyword on regeneration.
+    expect(regenerated[0].tasks[0].loop).toEqual(['/tmp/a', '/tmp/b']);
+  });
+
   it('round-trips a role tasks/main.yml (bare task list) with no data loss', () => {
     const original = `
 - name: install nginx
@@ -182,6 +250,10 @@ describe('playbookImporter', () => {
     const count = importTasksYaml(original, workspace);
     expect(count).toBe(2);
     const regenerated = serializeWorkspace(workspace, 'role');
-    expect(yaml.load(regenerated)).toEqual(yaml.load(original));
+    // apt.name is list-typed — a single package name round-trips as a
+    // one-element array (service.name is str-typed and stays a plain string).
+    const expected = yaml.load(original);
+    expected[0].apt.name = ['nginx'];
+    expect(yaml.load(regenerated)).toEqual(expected);
   });
 });

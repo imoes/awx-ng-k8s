@@ -18,6 +18,40 @@ describe('ansibleGenerator', () => {
     workspace.dispose();
   });
 
+  it('coerces a list-typed param (apt.name) from comma text into a real YAML array', () => {
+    const play = workspace.newBlock('play');
+    play.setFieldValue('install packages', 'NAME');
+    play.setFieldValue('all', 'HOSTS');
+
+    const apt = workspace.newBlock('module_apt');
+    apt.setFieldValue('install nginx and curl', 'NAME');
+    apt.setFieldValue('nginx, curl', 'name'); // quick comma shorthand
+    apt.setFieldValue('present', 'state');
+
+    play.getInput('TASKS').connection.connect(apt.previousConnection);
+
+    const parsed = yaml.load(workspaceToPlaybook(workspace));
+    expect(parsed[0].tasks[0].apt).toEqual({ name: ['nginx', 'curl'], state: 'present' });
+  });
+
+  it('coerces a list-typed param given as full YAML list syntax', () => {
+    const apt = workspace.newBlock('module_apt');
+    apt.setFieldValue('- nginx\n- curl', 'name');
+    apt.setFieldValue('present', 'state');
+    const parsed = yaml.load(serializeWorkspace(workspace, 'role'));
+    expect(parsed[0].apt.name).toEqual(['nginx', 'curl']);
+  });
+
+  it('coerces an int-typed param from field text into a real YAML number', () => {
+    const apt = workspace.newBlock('module_apt');
+    apt.setFieldValue('nginx', 'name');
+    apt.addOptionalParam('cache_valid_time');
+    apt.setFieldValue('3600', 'cache_valid_time');
+    const parsed = yaml.load(serializeWorkspace(workspace, 'role'));
+    expect(parsed[0].apt.cache_valid_time).toBe(3600);
+    expect(typeof parsed[0].apt.cache_valid_time).toBe('number');
+  });
+
   it('serializes a play + module_debug(name, msg) to the expected playbook YAML', () => {
     // No separate "task" wrapper — the module block plugs directly into
     // the play's TASKS stack (consolidated per user feedback).
@@ -102,7 +136,9 @@ describe('ansibleGenerator', () => {
     aptModule.setFieldValue('nginx', 'name');
 
     const parsed = yaml.load(serializeWorkspace(workspace, 'role'));
-    expect(parsed).toEqual([{ name: 'install', apt: { name: 'nginx' } }]);
+    // apt.name is list-typed, so even a single package name is coerced to a
+    // one-element array — the technically correct Ansible representation.
+    expect(parsed).toEqual([{ name: 'install', apt: { name: ['nginx'] } }]);
   });
 
   it('emits a correct roles: list from two role_use blocks (one with vars)', () => {

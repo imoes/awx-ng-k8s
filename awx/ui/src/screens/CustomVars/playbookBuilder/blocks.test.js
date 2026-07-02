@@ -39,9 +39,11 @@ describe('playbook builder blocks', () => {
     workspace.dispose();
   });
 
-  it('offers task-level modifiers (when/tags/register/…) via the same add-parameter dropdown', () => {
+  it('offers task-level modifiers (when/tags/register/…) via their own "add task setting…" dropdown', () => {
     const workspace = new Blockly.Workspace();
     const debug = workspace.newBlock(moduleBlockType('debug'));
+    expect(debug.getField('ADD_PARAM')).toBeDefined();
+    expect(debug.getField('ADD_TASKOPT')).toBeDefined();
     expect(debug.getField('WHEN')).toBeNull();
     debug.addEnvelopeField('WHEN');
     expect(debug.getField('WHEN')).toBeDefined();
@@ -61,6 +63,43 @@ describe('playbook builder blocks', () => {
     expect(apt.getField('name')).toBeDefined();
     expect(apt.getField('state')).toBeDefined();
     expect(apt.getField('upgrade')).toBeNull();
+    workspace.dispose();
+  });
+
+  it('disambiguates the task name from a module\'s own "name" param (23 modules have one)', () => {
+    const workspace = new Blockly.Workspace();
+    // apt, package, user, yum, dnf, group, etc. all have their own
+    // required/optional "name" param — the task's own description field
+    // must not also read "name:" or the block shows it twice with no way
+    // to tell them apart (reported bug).
+    const apt = workspace.newBlock(moduleBlockType('apt'));
+    const taskNameField = apt.getField('NAME');
+    const moduleNameField = apt.getField('name');
+    expect(taskNameField).toBeDefined();
+    expect(moduleNameField).toBeDefined();
+    expect(taskNameField).not.toBe(moduleNameField);
+    // Label text must differ so the UI doesn't show "name:" twice.
+    const taskLabel = apt.inputList.find((i) => i.name === 'ROW_NAME').fieldRow[0].getText();
+    expect(taskLabel.toLowerCase()).not.toBe('name:');
+    workspace.dispose();
+  });
+
+  it('exposes ansible-doc param types (paramTypes_) for the generator/importer', () => {
+    const workspace = new Blockly.Workspace();
+    const apt = workspace.newBlock(moduleBlockType('apt'));
+    expect(apt.paramTypes_.name).toBe('list');
+    expect(apt.paramTypes_.state).toBe('str');
+    const find = workspace.newBlock(moduleBlockType('find'));
+    expect(find.paramTypes_.paths).toBe('list');
+    workspace.dispose();
+  });
+
+  it('curates state choices for "package" (the only module ansible-doc leaves generic)', () => {
+    const workspace = new Blockly.Workspace();
+    const pkg = workspace.newBlock(moduleBlockType('package'));
+    const stateField = pkg.getField('state');
+    const options = stateField.getOptions().map((o) => o[1]);
+    expect(options).toEqual(expect.arrayContaining(['present', 'absent', 'latest']));
     workspace.dispose();
   });
 

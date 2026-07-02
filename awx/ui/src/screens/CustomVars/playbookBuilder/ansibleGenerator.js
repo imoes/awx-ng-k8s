@@ -37,8 +37,46 @@ function parseYamlMapping(text) {
   return null;
 }
 
+// Converts a field's raw text into the shape its ansible-doc param type
+// expects. Every module param field is a flat text/dropdown/checkbox
+// control (see blocks.js), so list/dict-typed params (e.g. apt/yum/dnf's
+// `name: [nginx, curl]`, a common multi-package install) need their text
+// parsed into a real array/object rather than being emitted as one literal
+// string — that mismatch used to force those tasks into the raw_task
+// fallback entirely (see playbookImporter.js).
+function coerceModuleArgValue(rawValue, paramType) {
+  if (paramType === 'int' || paramType === 'float') {
+    const n = Number(rawValue);
+    return Number.isNaN(n) ? rawValue : n;
+  }
+  if (paramType === 'list') {
+    // Accept either full YAML list syntax (multi-line "- item" or "[a, b]")
+    // or a quick comma-separated shorthand, same convention as tags/notify.
+    try {
+      const parsed = yaml.load(rawValue);
+      if (Array.isArray(parsed)) return parsed;
+    } catch { /* fall through to comma-split */ }
+    return String(rawValue).split(',').map((s) => s.trim()).filter(Boolean);
+  }
+  if (paramType === 'dict') {
+    return parseYamlMapping(rawValue) || rawValue;
+  }
+  if (paramType === 'raw') {
+    // 'raw' means "accepts anything" — use the parsed structure only when it
+    // actually is one; otherwise keep the original string untouched (a bare
+    // string parses back to itself anyway via yaml.load, so this is safe).
+    try {
+      const parsed = yaml.load(rawValue);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch { /* keep as string */ }
+    return rawValue;
+  }
+  return rawValue; // str / path / bool(already coerced by fieldValue)
+}
+
 function blockToModuleArgs(moduleBlock) {
   const args = {};
+  const paramTypes = moduleBlock.paramTypes_ || {};
   moduleBlock.inputList.forEach((input) => {
     input.fieldRow.forEach((field) => {
       // Skip the module header/add-dropdown and every task-envelope field
@@ -51,7 +89,7 @@ function blockToModuleArgs(moduleBlock) {
       // omit both to avoid bloating every generated task with untouched
       // params (see blocks.js: fields intentionally start blank/unchecked).
       if (value === '' || value === null || value === undefined || value === false) return;
-      args[field.name] = value;
+      args[field.name] = coerceModuleArgValue(value, paramTypes[field.name]);
     });
   });
   return args;
