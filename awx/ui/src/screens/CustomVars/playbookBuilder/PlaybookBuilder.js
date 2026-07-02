@@ -168,7 +168,13 @@ function PlaybookBuilder() {
   useEffect(() => {
     const onDragOver = (event) => {
       const ws = workspaceRef.current;
-      if (ws && findFieldAtPoint(ws, event.clientX, event.clientY)) {
+      if (!ws) return;
+      if (findFieldAtPoint(ws, event.clientX, event.clientY)) {
+        event.preventDefault();
+        return;
+      }
+      const injectionDiv = ws.getInjectionDiv ? ws.getInjectionDiv() : null;
+      if (injectionDiv && injectionDiv.contains(event.target)) {
         event.preventDefault();
       }
     };
@@ -178,12 +184,32 @@ function PlaybookBuilder() {
       const varName = event.dataTransfer?.getData('text/plain');
       if (!varName) return;
       const field = findFieldAtPoint(ws, event.clientX, event.clientY);
-      if (!field) return;
+      if (field) {
+        event.preventDefault();
+        event.stopPropagation();
+        // Close any open inline editor so our value isn't overwritten on blur.
+        try { Blockly.WidgetDiv.hide(); } catch { /* no editor open */ }
+        insertVariableReference(field, varName);
+        refreshFromWorkspace(ws);
+        return;
+      }
+      // Not over a field — if the drop lands on the Blockly canvas itself,
+      // spawn a cond_var block there instead (the "variable as a Blockly
+      // element" workflow: drag a variable out onto empty canvas to get a
+      // block usable in a when: condition, not just text-field insertion).
+      const injectionDiv = ws.getInjectionDiv ? ws.getInjectionDiv() : null;
+      if (!injectionDiv || !injectionDiv.contains(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
-      // Close any open inline editor so our value isn't overwritten on blur.
-      try { Blockly.WidgetDiv.hide(); } catch { /* no editor open */ }
-      insertVariableReference(field, varName);
+      const block = ws.newBlock('cond_var');
+      block.setFieldValue(varName, 'NAME');
+      block.initSvg();
+      block.render();
+      const wsCoord = Blockly.utils.svgMath.screenToWsCoordinates(
+        ws,
+        new Blockly.utils.Coordinate(event.clientX, event.clientY)
+      );
+      block.moveBy(wsCoord.x, wsCoord.y);
       refreshFromWorkspace(ws);
     };
     document.addEventListener('dragover', onDragOver, true);

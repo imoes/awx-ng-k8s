@@ -214,7 +214,8 @@ Projekt-Rollen, Rollen-Variablen, Vaults). Einzige Backend-Änderung: `.json` zu
 | `playbookImporter.js` | Inverse: YAML → Blöcke; `importPlaybookYaml` (Plays) + `importTasksYaml` (Rollen-Task-Liste); unbekannte Module/Konstrukte als `raw_task` verlustfrei |
 | `conditionParser.js` | Best-effort Parser: `when:`-Jinja-Text → Condition-Block-Baum (`parseConditionToBlock`), Fallback `cond_raw` bei nicht unterstützter Grammatik (Filter, Funktionsaufrufe, …) |
 | `blocklyUtil.js` | Gemeinsames `newBlock()` (init/render-Guard für Headless-Jest-Workspaces), von `playbookImporter.js` + `conditionParser.js` genutzt |
-| `VariablesPanel.js` + `varInsertion.js` | Rechte Variablen-Palette, **nur für die Rollen des aktuellen Dokuments** (+ Vault-Variablen); zeigt je Variable den Wert/Default; Drag&Drop fügt `{{ name }}` in ein Wertefeld ein |
+| `VariablesPanel.js` + `varInsertion.js` | Rechte Variablen-Palette — Rollen-Variablen des aktuellen Dokuments + Vault-Variablen + **`ansible_facts` (immer sichtbar, unabhängig vom Projekt)**; zeigt je Variable Wert/Default bzw. Kurzbeschreibung; Drag&Drop auf ein **Textfeld** fügt `{{ name }}` ein, Drop auf die **leere Canvas** erzeugt stattdessen einen echten `cond_var`-Block (Variable als Blockly-Element, direkt in eine Bedingung einklinkbar) |
+| `ansibleFacts.js` | Kuratierte Liste der ~20 gängigsten `ansible_facts` (Distribution, OS-Familie, IP, RAM, …) — Facts existieren erst zur Laufzeit auf dem Zielhost, daher keine dynamische Erkennung möglich (Analogon zu `CURATED_CHOICES` in `blocks.js`) |
 | `sidecarPath.js` | `playbooks/site.yml` → `playbooks/site.blockly.json` (Workspace-Layout-Sidecar) |
 
 **Plugins** (Blockly 11 — passende Peer-Versionen!): `@blockly/field-multilineinput@5.0.17` (`registerFieldMultilineInput()`, mehrzeilige Felder für alle Text-Params + `EXTRA`/`RAW_YAML`/`VARS`). **Nicht** die neueste Version nehmen — v13.x verlangt Blockly ^13. `@blockly/toolbox-search` wurde **wieder entfernt** — es durchsucht alle Kategorien gemeinsam; ersetzt durch eigene kategorie-scoped Suche (siehe unten).
@@ -258,7 +259,7 @@ verifiziert: `not _containerd_dir.stat.exists` → `cond_not`+`cond_var` (keine 
 - Checkbox-Felder: nicht angehakt = Parameter wird weggelassen (kein UI-Weg, "explizit false" von "nicht gesetzt" zu unterscheiden).
 - `play`-Block hat ein `EXTRA`-Textfeld für Play-Level-Keys ohne eigenen Block (`environment:`, `vars:`, …) — verlustfrei als Inline-YAML. **YAML-Felder** (`EXTRA`/`RAW_YAML`/`VARS`) sind **keine** Variablen-Drop-Ziele, und der Generator merged EXTRA/VARS nur, wenn `yaml.load()` ein Mapping ergibt (sonst würde ein bloßer String in Zeichen-Keys `{0:'c',…}` zerlegt).
 - `roles:` hat einen eigenen typisierten Block (`role_use`, separates `ROLES`-Statement-Input neben `TASKS`), andere Extra-Keys bleiben im `EXTRA`-Feld.
-- Variablen-Drop läuft über einen **Document-Capture-`drop`-Listener** (nicht nur SVG-Root), damit er auch das offene Blockly-Inline-HTML-`<input>` abfängt und das rohe Einfügen (ohne `{{ }}`) verhindert.
+- Variablen-Drop läuft über einen **Document-Capture-`drop`-Listener** (nicht nur SVG-Root), damit er auch das offene Blockly-Inline-HTML-`<input>` abfängt und das rohe Einfügen (ohne `{{ }}`) verhindert. Trifft der Drop kein Textfeld, aber die Blockly-`injectionDiv`, wird per `Blockly.utils.svgMath.screenToWsCoordinates()` in Workspace-Koordinaten umgerechnet und dort ein `cond_var`-Block erzeugt.
 - Rollen-Namen sind projektspezifisch → über eine Ref (`roleNamesRef`) an den `ROLE_SEARCH`-Kategorie-Callback durchgereicht, aktualisiert bei Projektwechsel via `toolbox.refreshSelection()` (kein `updateToolbox()`-Rebuild mehr nötig).
 
 **Katalog neu generieren** (z.B. nach ansible-core-Upgrade):

@@ -10,6 +10,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { TextInput } from '@patternfly/react-core';
 import useRequest from 'hooks/useRequest';
 import { readProjectRoleVariables, listVaults, getVault } from '../api';
+import { ANSIBLE_FACT_VARIABLES } from './ansibleFacts';
 
 // Short, single-line preview of a variable's value/default so the user can
 // see what a variable actually holds.
@@ -20,7 +21,9 @@ function previewValue(value) {
 }
 
 async function loadVariables(projectId, roleNames) {
-  if (!projectId) return [];
+  // ansible_facts are always available (gathered on every play by default),
+  // independent of project/role — shown regardless of the open document.
+  if (!projectId) return [...ANSIBLE_FACT_VARIABLES];
   const roleSet = new Set(roleNames);
 
   const [roleVarsRes, vaultsRes] = await Promise.all([
@@ -49,7 +52,7 @@ async function loadVariables(projectId, roleNames) {
   );
 
   const seen = new Set();
-  return [...roleVars, ...vaultVars].filter((v) => {
+  return [...roleVars, ...vaultVars, ...ANSIBLE_FACT_VARIABLES].filter((v) => {
     if (seen.has(v.name)) return false;
     seen.add(v.name);
     return true;

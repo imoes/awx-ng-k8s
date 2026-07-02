@@ -110,8 +110,14 @@ YAML-Mapping mitgegeben werden.
 ## Variablen-Palette
 
 Rechts werden die Variablen angezeigt, die zum **aktuell offenen** Playbook/zur Rolle passen
-(Rollen-Variablen der verwendeten Rollen + alle Ansible-Vault-Variablen), inklusive Wertvorschau.
-Eine Variable auf ein Modul-Textfeld ziehen fügt `{{ variable }}` ein.
+(Rollen-Variablen der verwendeten Rollen + alle Ansible-Vault-Variablen), inklusive Wertvorschau
+— durchsuchbar über das Filterfeld. Zusätzlich stehen immer die **gängigsten `ansible_facts`**
+zur Verfügung (Distribution, OS-Familie, IP-Adresse, RAM, …), unabhängig vom Projekt.
+
+- Auf ein **Modul-Textfeld** ziehen fügt `{{ variable }}` ein.
+- Auf die **leere Canvas** ziehen erzeugt stattdessen einen `var`-Block (Conditions-Rubrik),
+  vorausgefüllt mit dem Variablennamen — direkt bereit zum Einklinken in eine Bedingung
+  (`compare`, `check … is …`, oder auch direkt in den `when:`-Slot).
 
 ## Bekannte Grenzen
 
