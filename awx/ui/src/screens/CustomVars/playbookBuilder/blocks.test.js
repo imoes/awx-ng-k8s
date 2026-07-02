@@ -14,11 +14,10 @@ describe('playbook builder blocks', () => {
     });
   });
 
-  it('registers the static play/task/raw blocks', () => {
+  it('registers the static play/role/raw blocks', () => {
     expect(Blockly.Blocks.play).toBeDefined();
-    expect(Blockly.Blocks.task).toBeDefined();
+    expect(Blockly.Blocks.role_use).toBeDefined();
     expect(Blockly.Blocks.raw_task).toBeDefined();
-    expect(Blockly.Blocks.raw_yaml).toBeDefined();
   });
 
   it('can instantiate a module block (e.g. debug) on a headless workspace', () => {
@@ -27,6 +26,27 @@ describe('playbook builder blocks', () => {
     block.initSvg = undefined; // headless — no rendering
     expect(block.type).toBe('module_debug');
     expect(block.ansibleModuleFqcn).toBe('ansible.builtin.debug');
+    workspace.dispose();
+  });
+
+  it('module blocks plug directly into a task stack — no separate task wrapper', () => {
+    const workspace = new Blockly.Workspace();
+    const debug = workspace.newBlock(moduleBlockType('debug'));
+    expect(debug.previousConnection).toBeDefined();
+    expect(debug.previousConnection.getCheck()).toContain('Task');
+    expect(debug.nextConnection.getCheck()).toContain('Task');
+    expect(debug.getField('NAME')).toBeDefined(); // task name lives on the module block itself
+    workspace.dispose();
+  });
+
+  it('offers task-level modifiers (when/tags/register/…) via the same add-parameter dropdown', () => {
+    const workspace = new Blockly.Workspace();
+    const debug = workspace.newBlock(moduleBlockType('debug'));
+    expect(debug.getField('WHEN')).toBeNull();
+    debug.addEnvelopeField('WHEN');
+    expect(debug.getField('WHEN')).toBeDefined();
+    debug.addEnvelopeField('REGISTER');
+    expect(debug.saveExtraState()).toEqual({ optional: [], envelope: ['WHEN', 'REGISTER'] });
     workspace.dispose();
   });
 
@@ -50,14 +70,14 @@ describe('playbook builder blocks', () => {
     expect(debug.getField('verbosity')).toBeNull();
     debug.addOptionalParam('verbosity');
     expect(debug.getField('verbosity')).toBeDefined();
-    expect(debug.saveExtraState()).toEqual({ optional: ['verbosity'] });
+    expect(debug.saveExtraState()).toEqual({ optional: ['verbosity'], envelope: [] });
 
     // Re-create and restore
     const debug2 = workspace.newBlock(moduleBlockType('debug'));
     expect(debug2.getField('verbosity')).toBeNull();
-    debug2.loadExtraState({ optional: ['verbosity'] });
+    debug2.loadExtraState({ optional: ['verbosity'], envelope: [] });
     expect(debug2.getField('verbosity')).toBeDefined();
-    expect(debug2.saveExtraState()).toEqual({ optional: ['verbosity'] });
+    expect(debug2.saveExtraState()).toEqual({ optional: ['verbosity'], envelope: [] });
     workspace.dispose();
   });
 

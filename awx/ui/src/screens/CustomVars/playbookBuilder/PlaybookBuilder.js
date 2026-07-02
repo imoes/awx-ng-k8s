@@ -180,10 +180,14 @@ function PlaybookBuilder() {
     const ws = workspaceRef.current;
     if (!ws) return;
     ws.clear();
-    const seed = ws.newBlock(mode === 'role' ? 'task' : 'play');
-    seed.initSvg();
-    seed.render();
-    seed.moveBy(30, 30);
+    if (mode === 'playbook') {
+      const seed = ws.newBlock('play');
+      seed.initSvg();
+      seed.render();
+      seed.moveBy(30, 30);
+    }
+    // Role mode has no wrapper block to seed — drag a module block from the
+    // Modules category directly onto the canvas to start the first task.
     setDocMode(mode);
     docModeRef.current = mode;
     setOpenedRole(null);

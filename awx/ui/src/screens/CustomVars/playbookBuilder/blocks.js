@@ -1,6 +1,13 @@
 // awx-ng: Blockly block definitions for the visual playbook builder.
-// Static blocks (play/task/control/raw fallback) + one auto-generated block
-// per ansible.builtin module from moduleCatalog.generated.json.
+// Static blocks (play/role/raw fallback) + one auto-generated block per
+// ansible.builtin module from moduleCatalog.generated.json.
+//
+// Module blocks double as task blocks (no separate "task" wrapper): every
+// module_<name> block is itself a statement block with a `name:` field and
+// can plug directly into a play's tasks stack. Task-level modifiers
+// (when/tags/notify/register/become/ignore_errors/delegate_to/loop) are
+// available via the same "add parameter…" dropdown as the module's own
+// optional arguments — one consolidated place to add anything.
 import * as Blockly from 'blockly';
 import { registerFieldMultilineInput, FieldMultilineInput } from '@blockly/field-multilineinput';
 import moduleCatalog from './moduleCatalog.generated.json';
@@ -40,6 +47,31 @@ const PRIMARY_PARAMS = {
   cron: ['name', 'job'],
 };
 
+// Common Ansible task-level keywords, offered on every module block via the
+// same "add parameter…" dropdown as the module's own optional args. Field
+// ids are ALL-CAPS so they can never collide with a lowercase module
+// parameter name (ansible-doc param names are always lowercase).
+export const ENVELOPE_FIELDS = [
+  { key: 'WHEN', label: 'when', yamlKey: 'when', makeField: () => new Blockly.FieldTextInput('') },
+  { key: 'TAGS', label: 'tags', yamlKey: 'tags', makeField: () => new Blockly.FieldTextInput('') },
+  { key: 'NOTIFY', label: 'notify', yamlKey: 'notify', makeField: () => new Blockly.FieldTextInput('') },
+  { key: 'REGISTER', label: 'register', yamlKey: 'register', makeField: () => new Blockly.FieldTextInput('') },
+  { key: 'LOOP', label: 'loop', yamlKey: 'loop', makeField: () => new FieldMultilineInput('') },
+  { key: 'DELEGATE_TO', label: 'delegate_to', yamlKey: 'delegate_to', makeField: () => new Blockly.FieldTextInput('') },
+  { key: 'BECOME', label: 'become', yamlKey: 'become', makeField: () => new Blockly.FieldCheckbox('FALSE') },
+  { key: 'IGNORE_ERRORS', label: 'ignore_errors', yamlKey: 'ignore_errors', makeField: () => new Blockly.FieldCheckbox('FALSE') },
+];
+const ENVELOPE_BY_KEY = {};
+ENVELOPE_FIELDS.forEach((e) => { ENVELOPE_BY_KEY[e.key] = e; });
+
+// Every field id that is part of the fixed task "envelope" or block
+// scaffolding — never a module argument. Used by the generator to know
+// which fields to skip when collecting a module's own args.
+export const RESERVED_FIELD_NAMES = new Set([
+  'MODULE_LABEL', 'ADD_PARAM', 'NAME',
+  ...ENVELOPE_FIELDS.map((e) => e.key),
+]);
+
 function moduleBlockType(shortName) {
   return `${MODULE_BLOCK_PREFIX}${shortName}`;
 }
@@ -66,6 +98,13 @@ function appendParamRow(block, param) {
     .appendField(fieldForParam(param), param.name);
 }
 
+function appendEnvelopeRow(block, envelope) {
+  block
+    .appendDummyInput(`ROW_${envelope.key}`)
+    .appendField(`${envelope.label}:`)
+    .appendField(envelope.makeField(), envelope.key);
+}
+
 function defineModuleBlocks() {
   moduleCatalog.forEach((mod) => {
     const blockType = moduleBlockType(mod.short_name);
@@ -84,16 +123,21 @@ function defineModuleBlocks() {
     Blockly.Blocks[blockType] = {
       init() {
         this.appendDummyInput('HEAD').appendField(mod.short_name, 'MODULE_LABEL');
+        this.appendDummyInput('ROW_NAME')
+          .appendField('name:')
+          .appendField(new Blockly.FieldTextInput(''), 'NAME');
         this.activeOptional_ = [];
+        this.activeEnvelope_ = [];
         defaultNames.forEach((name) => appendParamRow(this, paramByName[name]));
-        if (optionalNames.length) {
-          this.appendDummyInput('ADD_OPT').appendField(
-            new Blockly.FieldDropdown(() => this.addOptOptions_()),
-            'ADD_PARAM'
-          );
-          this.getField('ADD_PARAM').setValidator((sel) => this.onAddParam_(sel));
-        }
-        this.setOutput(true, 'Module');
+        this.appendDummyInput('ADD_OPT').appendField(
+          new Blockly.FieldDropdown(() => this.addOptOptions_()),
+          'ADD_PARAM'
+        );
+        this.getField('ADD_PARAM').setValidator((sel) => this.onAddParam_(sel));
+        // A module block IS a task — plugs directly into a play's tasks
+        // stack (or a role's bare task list). No separate wrapper needed.
+        this.setPreviousStatement(true, 'Task');
+        this.setNextStatement(true, 'Task');
         this.setColour(210);
         const reqText = requiredNames.length
           ? `Required (*): ${requiredNames.join(', ')}`
@@ -103,20 +147,27 @@ function defineModuleBlocks() {
         this.ansibleModuleFqcn = mod.name;
         this.moduleShortName_ = mod.short_name;
       },
-      // Dynamic options for the "add parameter…" dropdown: every optional
-      // param not already shown.
+      // Dynamic options for the "add parameter…" dropdown: remaining
+      // optional module params + task-level modifiers (when/tags/register/…)
+      // not already shown — one consolidated place to add either kind.
       addOptOptions_() {
         const opts = [['＋ add parameter…', ADD_PARAM_PLACEHOLDER]];
         optionalNames
           .filter((n) => !this.activeOptional_.includes(n))
-          .forEach((n) => opts.push([n, n]));
+          .forEach((n) => opts.push([n, `mod:${n}`]));
+        ENVELOPE_FIELDS
+          .filter((e) => !this.activeEnvelope_.includes(e.key))
+          .forEach((e) => opts.push([e.label, `env:${e.key}`]));
         return opts;
       },
       onAddParam_(sel) {
         if (sel && sel !== ADD_PARAM_PLACEHOLDER) {
+          const [kind, key] = sel.split(':');
           // Defer the structural change out of the validator tick.
-          const name = sel;
-          setTimeout(() => this.addOptionalParam(name), 0);
+          setTimeout(() => {
+            if (kind === 'mod') this.addOptionalParam(key);
+            else if (kind === 'env') this.addEnvelopeField(key);
+          }, 0);
         }
         return ADD_PARAM_PLACEHOLDER; // dropdown snaps back to the placeholder
       },
@@ -128,17 +179,31 @@ function defineModuleBlocks() {
         if (!paramByName[name]) return;
         this.activeOptional_.push(name);
         appendParamRow(this, paramByName[name]);
-        if (this.getInput('ADD_OPT')) this.moveInputBefore(`ROW_${name}`, 'ADD_OPT');
+        this.moveInputBefore(`ROW_${name}`, 'ADD_OPT');
       },
-      // JSON serialization (sidecar save/load): only the set of added optional
-      // params — field values are (de)serialized by Blockly itself, and
-      // loadExtraState runs first so the rows exist when values are applied.
+      // Public: adds a task-level modifier row (when/tags/register/…).
+      // Idempotent.
+      addEnvelopeField(key) {
+        if (this.activeEnvelope_.includes(key)) return;
+        const envelope = ENVELOPE_BY_KEY[key];
+        if (!envelope) return;
+        this.activeEnvelope_.push(key);
+        appendEnvelopeRow(this, envelope);
+        this.moveInputBefore(`ROW_${key}`, 'ADD_OPT');
+      },
+      // JSON serialization (sidecar save/load): only the sets of added
+      // optional/envelope fields — field values are (de)serialized by
+      // Blockly itself, and loadExtraState runs first so the rows exist
+      // when values are applied.
       saveExtraState() {
-        return this.activeOptional_.length ? { optional: this.activeOptional_ } : null;
+        if (!this.activeOptional_.length && !this.activeEnvelope_.length) return null;
+        return { optional: this.activeOptional_, envelope: this.activeEnvelope_ };
       },
       loadExtraState(state) {
         this.activeOptional_ = [];
+        this.activeEnvelope_ = [];
         ((state && state.optional) || []).forEach((name) => this.addOptionalParam(name));
+        ((state && state.envelope) || []).forEach((key) => this.addEnvelopeField(key));
       },
     };
   });
@@ -191,51 +256,17 @@ function defineStaticBlocks() {
     },
   };
 
-  Blockly.Blocks.task = {
-    init() {
-      this.appendValueInput('MODULE').setCheck('Module').appendField('task →');
-      this.appendDummyInput()
-        .appendField('name:')
-        .appendField(new Blockly.FieldTextInput(''), 'NAME');
-      this.appendDummyInput()
-        .appendField('when:')
-        .appendField(new Blockly.FieldTextInput(''), 'WHEN');
-      this.appendDummyInput()
-        .appendField('tags:')
-        .appendField(new Blockly.FieldTextInput(''), 'TAGS');
-      this.appendDummyInput()
-        .appendField('notify:')
-        .appendField(new Blockly.FieldTextInput(''), 'NOTIFY');
-      this.setPreviousStatement(true, 'Task');
-      this.setNextStatement(true, 'Task');
-      this.setColour(65);
-      this.setTooltip(
-        'A single Ansible task. Drag a module block from the Modules category ' +
-        'into the "task →" socket.'
-      );
-    },
-  };
-
-  // Escape hatch: preserves any construct not (yet) covered by a typed
-  // module/control block — critical for lossless import of existing YAML.
+  // Escape hatch: preserves any task shape not covered by a typed module
+  // block — critical for lossless import of existing YAML (unrecognized
+  // modules, block:/rescue:/always:, or task-level keys we don't model).
   Blockly.Blocks.raw_task = {
     init() {
-      this.appendDummyInput().appendField('raw task (unrecognized module)');
+      this.appendDummyInput().appendField('raw task (unrecognized shape)');
       this.appendDummyInput().appendField(new FieldMultilineInput('debug:\n  msg: unrecognized'), 'RAW_YAML');
       this.setPreviousStatement(true, 'Task');
       this.setNextStatement(true, 'Task');
       this.setColour(0);
       this.setTooltip('Fallback block: holds raw task YAML verbatim (round-trip safety).');
-    },
-  };
-
-  Blockly.Blocks.raw_yaml = {
-    init() {
-      this.appendDummyInput().appendField('raw YAML (unrecognized construct)');
-      this.appendDummyInput().appendField(new FieldMultilineInput('key: value'), 'RAW_YAML');
-      this.setOutput(true, 'Module');
-      this.setColour(0);
-      this.setTooltip('Fallback block: holds raw YAML verbatim (round-trip safety).');
     },
   };
 }

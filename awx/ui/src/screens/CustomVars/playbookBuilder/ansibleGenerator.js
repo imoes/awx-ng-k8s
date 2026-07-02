@@ -6,6 +6,7 @@
 import * as Blockly from 'blockly';
 import yaml from 'js-yaml';
 import { jsonToYaml } from 'util/yaml';
+import { RESERVED_FIELD_NAMES, ENVELOPE_FIELDS } from './blocks';
 
 function fieldValue(block, fieldName) {
   const field = block.getField(fieldName);
@@ -40,8 +41,9 @@ function blockToModuleArgs(moduleBlock) {
   const args = {};
   moduleBlock.inputList.forEach((input) => {
     input.fieldRow.forEach((field) => {
-      // MODULE_LABEL is the header; ADD_PARAM is the "add parameter…" dropdown.
-      if (!field.name || field.name === 'MODULE_LABEL' || field.name === 'ADD_PARAM') return;
+      // Skip the module header/add-dropdown and every task-envelope field
+      // (name/when/tags/…) — only the module's OWN arguments belong here.
+      if (!field.name || RESERVED_FIELD_NAMES.has(field.name)) return;
       const value = fieldValue(moduleBlock, field.name);
       // Blank text fields and unchecked checkboxes mean "the user didn't
       // set this" — there's no separate UI affordance (yet) to distinguish
@@ -55,41 +57,39 @@ function blockToModuleArgs(moduleBlock) {
   return args;
 }
 
-// A module slot (the value input a `task` block plugs into) can hold either
-// a typed `module_<name>` block or the `raw_yaml` escape hatch.
-function moduleSlotToObject(moduleBlock) {
-  if (!moduleBlock) return {};
-  if (moduleBlock.type === 'raw_yaml') {
-    const raw = fieldValue(moduleBlock, 'RAW_YAML') || '';
-    return yaml.load(raw) || {};
-  }
-  const shortName = moduleBlock.ansibleModuleFqcn
-    ? moduleBlock.ansibleModuleFqcn.split('.').pop()
-    : moduleBlock.type.replace(/^module_/, '');
-  return { [shortName]: blockToModuleArgs(moduleBlock) };
-}
-
+// A module block IS a task (see blocks.js) — this walks its own name/module-
+// args/envelope fields into one ordered task object. raw_task holds an
+// entire unrecognized task verbatim.
 function blockToTaskObject(taskBlock) {
   if (taskBlock.type === 'raw_task') {
     const raw = fieldValue(taskBlock, 'RAW_YAML') || '';
     return yaml.load(raw) || {};
   }
-  const moduleBlock = taskBlock.getInputTargetBlock('MODULE');
-  const task = { ...moduleSlotToObject(moduleBlock) };
 
+  const shortName = taskBlock.moduleShortName_
+    || (taskBlock.ansibleModuleFqcn ? taskBlock.ansibleModuleFqcn.split('.').pop() : taskBlock.type.replace(/^module_/, ''));
   const name = fieldValue(taskBlock, 'NAME');
-  const when = fieldValue(taskBlock, 'WHEN');
-  const tags = fieldValue(taskBlock, 'TAGS');
-  const notify = fieldValue(taskBlock, 'NOTIFY');
 
   const ordered = {};
   if (name) ordered.name = name;
-  Object.assign(ordered, task);
-  if (when) ordered.when = when;
-  if (tags) {
-    ordered.tags = tags.split(',').map((t) => t.trim()).filter(Boolean);
-  }
-  if (notify) ordered.notify = notify;
+  ordered[shortName] = blockToModuleArgs(taskBlock);
+
+  ENVELOPE_FIELDS.forEach((envelope) => {
+    const value = fieldValue(taskBlock, envelope.key);
+    if (value === '' || value === null || value === undefined || value === false) return;
+    if (envelope.key === 'BECOME' || envelope.key === 'IGNORE_ERRORS') {
+      ordered[envelope.yamlKey] = true;
+    } else if (envelope.key === 'TAGS' || envelope.key === 'NOTIFY') {
+      ordered[envelope.yamlKey] = String(value).split(',').map((t) => t.trim()).filter(Boolean);
+    } else if (envelope.key === 'LOOP') {
+      // loop is assigned directly (not spread), so a bare scalar is safe —
+      // no repeat of the EXTRA/VARS char-spread bug from a plain string.
+      ordered[envelope.yamlKey] = yaml.load(value);
+    } else {
+      ordered[envelope.yamlKey] = value;
+    }
+  });
+
   return ordered;
 }
 
@@ -144,13 +144,14 @@ export function workspaceToPlays(workspace) {
 }
 
 // Role-tasks document mode: a role's tasks/main.yml is a bare list of tasks
-// (no play wrapper). Collect every top-level task/raw_task stack in order.
+// (no play wrapper). Collect every top-level module/raw_task stack in order.
 export function workspaceToTasks(workspace) {
   const tasks = [];
   workspace.getTopBlocks(true).forEach((top) => {
     let block = top;
     while (block) {
-      if (block.isEnabled() && (block.type === 'task' || block.type === 'raw_task')) {
+      const isTaskLike = block.type === 'raw_task' || block.type.startsWith('module_');
+      if (block.isEnabled() && isTaskLike) {
         tasks.push(blockToTaskObject(block));
       }
       block = block.getNextBlock();

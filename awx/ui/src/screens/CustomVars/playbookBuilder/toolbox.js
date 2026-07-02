@@ -1,14 +1,17 @@
 // awx-ng: builds the Blockly toolbox (palette) for the playbook builder.
-// Importing the plugin registers the `kind: 'search'` toolbox category, which
-// adds a live search box that filters blocks (modules, roles, …) as you type.
-import '@blockly/toolbox-search';
+// Live search is scoped per-category (see FlyoutFilter.js) rather than using
+// @blockly/toolbox-search's global "search everything" category, which
+// mixed modules and roles together in one result list.
 import moduleCatalog from './moduleCatalog.generated.json';
 import { moduleBlockType } from './blocks';
+
+export const MODULES_CATEGORY_NAME = 'Modules';
+export const ROLES_CATEGORY_NAME = 'Roles';
 
 function moduleCategory() {
   return {
     kind: 'category',
-    name: 'Modules',
+    name: MODULES_CATEGORY_NAME,
     colour: '210',
     contents: [...moduleCatalog]
       .sort((a, b) => a.short_name.localeCompare(b.short_name))
@@ -23,7 +26,7 @@ function moduleCategory() {
 function rolesCategory(roleNames) {
   return {
     kind: 'category',
-    name: 'Roles',
+    name: ROLES_CATEGORY_NAME,
     colour: '290',
     contents: roleNames.length
       ? [...roleNames].sort().map((name) => ({
@@ -40,22 +43,10 @@ export function buildToolbox(roleNames = []) {
     kind: 'categoryToolbox',
     contents: [
       {
-        // Live search across all catalogued blocks (modules, roles, …).
-        kind: 'search',
-        name: '🔍 Search',
-        contents: [],
-      },
-      {
         kind: 'category',
         name: 'Play',
         colour: '120',
         contents: [{ kind: 'block', type: 'play' }],
-      },
-      {
-        kind: 'category',
-        name: 'Task',
-        colour: '65',
-        contents: [{ kind: 'block', type: 'task' }],
       },
       moduleCategory(),
       rolesCategory(roleNames),
@@ -65,7 +56,6 @@ export function buildToolbox(roleNames = []) {
         colour: '0',
         contents: [
           { kind: 'block', type: 'raw_task' },
-          { kind: 'block', type: 'raw_yaml' },
         ],
       },
     ],

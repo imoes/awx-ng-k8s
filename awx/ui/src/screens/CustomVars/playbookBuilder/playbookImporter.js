@@ -4,13 +4,18 @@
 // create with the builder. Anything not covered by a typed block (a module
 // outside ansible.builtin, an unrecognized task shape like block/rescue, or
 // play-level keys without a dedicated block yet) is preserved verbatim via
-// the raw_task/raw_yaml/EXTRA escape hatches — no data loss on import.
+// the raw_task/EXTRA escape hatches — no data loss on import.
 import * as Blockly from 'blockly';
 import yaml from 'js-yaml';
-import { moduleBlockType, MODULE_NAMES } from './blocks';
+import { moduleBlockType, MODULE_NAMES, ENVELOPE_FIELDS } from './blocks';
 
 const KNOWN_PLAY_KEYS = new Set(['name', 'hosts', 'become', 'tasks', 'roles']);
-const KNOWN_TASK_KEYS = new Set(['name', 'when', 'tags', 'notify']);
+// A task's module key is whatever remains after removing "name" and every
+// task-level modifier keyword (when/tags/notify/register/become/…) — NOT
+// simply "the first unrecognized key", which used to misfire whenever a
+// task had more than one modifier (e.g. loop + register together would
+// make the importer mistake "loop" for the module and raw_task the rest).
+const KNOWN_TASK_ENVELOPE_KEYS = new Set(['name', ...ENVELOPE_FIELDS.map((e) => e.yamlKey)]);
 const MODULE_NAME_SET = new Set(MODULE_NAMES);
 
 function newBlock(workspace, type) {
@@ -54,11 +59,11 @@ function parseInlineArgs(str) {
   return result;
 }
 
-// Builds the block that plugs into a task's MODULE input: a typed
-// `module_<name>` block if the module is in the ansible.builtin catalog AND
-// all its arg keys map to known params; otherwise a `raw_yaml` fallback
-// holding `{moduleKey: args}` verbatim (lossless).
-function importModuleSlot(workspace, moduleKey, args) {
+// Builds a module_<name> block (which IS the task block — see blocks.js) if
+// the module is in the ansible.builtin catalog AND every arg key maps to a
+// known param with a scalar value; otherwise returns null so the caller
+// falls back to raw_task (lossless).
+function importModuleBlock(workspace, moduleKey, args) {
   const shortName = moduleKey.includes('.') ? moduleKey.split('.').pop() : moduleKey;
   // Ansible accepts args as a mapping OR as an inline "key=value" string —
   // normalize the inline form so those tasks still get a typed module block.
@@ -71,67 +76,58 @@ function importModuleSlot(workspace, moduleKey, args) {
     ? Object.entries(normalizedArgs)
     : null;
 
-  if (MODULE_NAME_SET.has(shortName) && (argEntries || args === null || args === undefined)) {
-    const moduleBlock = newBlock(workspace, moduleBlockType(shortName));
-    // Optional params aren't shown by default — add their rows before
-    // setting values. If a key isn't a known param of this module, we can't
-    // represent it faithfully, so fall back to raw_yaml (no data loss).
-    const isScalar = (v) => v === null || v === undefined || typeof v !== 'object';
-    const canRepresent = (argEntries || []).every(([key, value]) => {
-      // Non-scalar values (nested dict/list) can't live in a text field.
-      if (!isScalar(value)) return false;
-      if (moduleBlock.getField(key)) return true;
-      if (typeof moduleBlock.addOptionalParam === 'function') {
-        moduleBlock.addOptionalParam(key);
-        return !!moduleBlock.getField(key);
-      }
-      return false;
-    });
-    if (canRepresent) {
-      (argEntries || []).forEach(([key, value]) => setField(moduleBlock, key, value));
-      return moduleBlock;
-    }
-    moduleBlock.dispose();
+  if (!MODULE_NAME_SET.has(shortName) || (!argEntries && args !== null && args !== undefined)) {
+    return null;
   }
 
-  const rawBlock = newBlock(workspace, 'raw_yaml');
-  setField(rawBlock, 'RAW_YAML', yaml.dump({ [moduleKey]: args }).trim());
-  return rawBlock;
+  const moduleBlock = newBlock(workspace, moduleBlockType(shortName));
+  // Optional params aren't shown by default — add their rows before setting
+  // values. If a key isn't a known param, or its value can't live in a text
+  // field (nested dict/list), we can't represent it faithfully.
+  const isScalar = (v) => v === null || v === undefined || typeof v !== 'object';
+  const canRepresent = (argEntries || []).every(([key, value]) => {
+    if (!isScalar(value)) return false;
+    if (moduleBlock.getField(key)) return true;
+    moduleBlock.addOptionalParam(key);
+    return !!moduleBlock.getField(key);
+  });
+  if (!canRepresent) {
+    moduleBlock.dispose();
+    return null;
+  }
+  (argEntries || []).forEach(([key, value]) => setField(moduleBlock, key, value));
+  return moduleBlock;
 }
 
 function importTask(workspace, taskObj) {
-  const moduleKey = Object.keys(taskObj).find((k) => !KNOWN_TASK_KEYS.has(k));
+  const moduleKeys = Object.keys(taskObj).filter((k) => !KNOWN_TASK_ENVELOPE_KEYS.has(k));
 
-  // No module key (e.g. block:/rescue:/always:, or an empty task) — no
-  // typed shape for this yet; preserve the whole task verbatim.
-  if (!moduleKey) {
+  // Zero or more-than-one remaining key: can't unambiguously identify the
+  // module (e.g. block:/rescue:/always:, or an empty task) — preserve the
+  // whole task verbatim rather than guessing wrong.
+  const moduleBlock = moduleKeys.length === 1
+    ? importModuleBlock(workspace, moduleKeys[0], taskObj[moduleKeys[0]])
+    : null;
+
+  if (!moduleBlock) {
     const rawTask = newBlock(workspace, 'raw_task');
     setField(rawTask, 'RAW_YAML', yaml.dump(taskObj).trim());
     return rawTask;
   }
 
-  const moduleSlot = importModuleSlot(workspace, moduleKey, taskObj[moduleKey]);
-  if (moduleSlot.type === 'raw_yaml') {
-    // Unrecognized module: fold the whole task (incl. name/when/tags/notify)
-    // into one raw_task rather than a typed task wrapping a raw module —
-    // simpler and equally lossless.
-    moduleSlot.dispose();
-    const rawTask = newBlock(workspace, 'raw_task');
-    setField(rawTask, 'RAW_YAML', yaml.dump(taskObj).trim());
-    return rawTask;
-  }
-
-  const taskBlock = newBlock(workspace, 'task');
-  if (taskObj.name) setField(taskBlock, 'NAME', taskObj.name);
-  if (taskObj.when) setField(taskBlock, 'WHEN', taskObj.when);
-  if (taskObj.tags) {
-    setField(taskBlock, 'TAGS', Array.isArray(taskObj.tags) ? taskObj.tags.join(', ') : taskObj.tags);
-  }
-  if (taskObj.notify) {
-    setField(taskBlock, 'NOTIFY', Array.isArray(taskObj.notify) ? taskObj.notify.join(', ') : taskObj.notify);
-  }
-  taskBlock.getInput('MODULE').connection.connect(moduleSlot.outputConnection);
-  return taskBlock;
+  if (taskObj.name) setField(moduleBlock, 'NAME', taskObj.name);
+  ENVELOPE_FIELDS.forEach((envelope) => {
+    if (!(envelope.yamlKey in taskObj)) return;
+    let value = taskObj[envelope.yamlKey];
+    if (envelope.key === 'TAGS' || envelope.key === 'NOTIFY') {
+      value = Array.isArray(value) ? value.join(', ') : value;
+    } else if (envelope.key === 'LOOP' && typeof value !== 'string') {
+      value = yaml.dump(value).trim();
+    }
+    moduleBlock.addEnvelopeField(envelope.key);
+    setField(moduleBlock, envelope.key, value);
+  });
+  return moduleBlock;
 }
 
 // A `roles:` entry is either a plain role name string, or an object
@@ -211,7 +207,7 @@ export function importPlaybookYaml(content, workspace) {
 }
 
 // Role-tasks document mode: a role's tasks/main.yml is a bare list of tasks.
-// Rebuilds it as a single top-level stack of task/raw_task blocks (no play
+// Rebuilds it as a single top-level stack of module/raw_task blocks (no play
 // wrapper), the inverse of ansibleGenerator's workspaceToTasks().
 export function importTasksYaml(content, workspace) {
   const tasks = yaml.load(content);

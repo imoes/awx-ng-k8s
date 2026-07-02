@@ -18,19 +18,18 @@ describe('ansibleGenerator', () => {
     workspace.dispose();
   });
 
-  it('serializes a play + task(debug, msg=hello) to the expected playbook YAML', () => {
+  it('serializes a play + module_debug(name, msg) to the expected playbook YAML', () => {
+    // No separate "task" wrapper — the module block plugs directly into
+    // the play's TASKS stack (consolidated per user feedback).
     const play = workspace.newBlock('play');
     play.setFieldValue('site up', 'NAME');
     play.setFieldValue('all', 'HOSTS');
 
-    const task = workspace.newBlock('task');
-    task.setFieldValue('say hello', 'NAME');
-
     const debugModule = workspace.newBlock('module_debug');
+    debugModule.setFieldValue('say hello', 'NAME');
     debugModule.setFieldValue('hello', 'msg');
 
-    task.getInput('MODULE').connection.connect(debugModule.outputConnection);
-    play.getInput('TASKS').connection.connect(task.previousConnection);
+    play.getInput('TASKS').connection.connect(debugModule.previousConnection);
 
     const outputYaml = workspaceToPlaybook(workspace);
     const parsed = yaml.load(outputYaml);
@@ -47,6 +46,36 @@ describe('ansibleGenerator', () => {
         ],
       },
     ]);
+  });
+
+  it('emits task-level modifiers (when/tags/register/loop/become) alongside the module', () => {
+    const play = workspace.newBlock('play');
+    play.setFieldValue('mods', 'NAME');
+    play.setFieldValue('all', 'HOSTS');
+
+    const debugModule = workspace.newBlock('module_debug');
+    debugModule.setFieldValue('checking', 'NAME');
+    debugModule.setFieldValue('hi', 'msg');
+    debugModule.addEnvelopeField('WHEN');
+    debugModule.setFieldValue("ansible_os_family == 'Debian'", 'WHEN');
+    debugModule.addEnvelopeField('REGISTER');
+    debugModule.setFieldValue('result', 'REGISTER');
+    debugModule.addEnvelopeField('BECOME');
+    debugModule.setFieldValue('TRUE', 'BECOME');
+    debugModule.addEnvelopeField('LOOP');
+    debugModule.setFieldValue('[1, 2, 3]', 'LOOP');
+
+    play.getInput('TASKS').connection.connect(debugModule.previousConnection);
+
+    const parsed = yaml.load(workspaceToPlaybook(workspace));
+    expect(parsed[0].tasks[0]).toEqual({
+      name: 'checking',
+      debug: { msg: 'hi' },
+      when: "ansible_os_family == 'Debian'",
+      register: 'result',
+      become: true,
+      loop: [1, 2, 3],
+    });
   });
 
   it('returns an empty-document YAML for an empty workspace', () => {
@@ -68,11 +97,9 @@ describe('ansibleGenerator', () => {
   });
 
   it('serializeWorkspace("role") emits a bare task list (no play wrapper)', () => {
-    const task = workspace.newBlock('task');
-    task.setFieldValue('install', 'NAME');
     const aptModule = workspace.newBlock('module_apt');
+    aptModule.setFieldValue('install', 'NAME');
     aptModule.setFieldValue('nginx', 'name');
-    task.getInput('MODULE').connection.connect(aptModule.outputConnection);
 
     const parsed = yaml.load(serializeWorkspace(workspace, 'role'));
     expect(parsed).toEqual([{ name: 'install', apt: { name: 'nginx' } }]);
