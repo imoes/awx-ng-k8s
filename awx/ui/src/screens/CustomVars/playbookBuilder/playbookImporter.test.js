@@ -68,6 +68,31 @@ describe('playbookImporter', () => {
     expect(yaml.load(regenerated)).toEqual(yaml.load(original));
   });
 
+  it('imports vars: as chained define_var blocks (not dumped into EXTRA)', () => {
+    const original = `
+- name: with vars
+  hosts: all
+  vars:
+    app_name: myapp
+    port: 8080
+    packages:
+      - nginx
+      - curl
+  tasks: []
+`;
+    importPlaybookYaml(original, workspace);
+    const playBlock = workspace.getAllBlocks(false).find((b) => b.type === 'play');
+    const varTypes = [];
+    let b = playBlock.getInputTargetBlock('VARS');
+    while (b) { varTypes.push(b.type); b = b.getNextBlock(); }
+    expect(varTypes).toEqual(['define_var', 'define_var', 'define_var']);
+    // vars: must NOT also appear duplicated in EXTRA.
+    expect(playBlock.getFieldValue('EXTRA')).toBe('');
+
+    const regenerated = yaml.load(workspaceToPlaybook(workspace));
+    expect(regenerated[0].vars).toEqual({ app_name: 'myapp', port: 8080, packages: ['nginx', 'curl'] });
+  });
+
   it('falls back to a raw_task block for an unrecognized (non-builtin) module, losslessly', () => {
     const original = `
 - name: firewall play

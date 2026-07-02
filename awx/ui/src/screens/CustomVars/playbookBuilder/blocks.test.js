@@ -14,10 +14,24 @@ describe('playbook builder blocks', () => {
     });
   });
 
-  it('registers the static play/role/raw blocks', () => {
+  it('registers the static play/role/raw/define_var blocks', () => {
     expect(Blockly.Blocks.play).toBeDefined();
     expect(Blockly.Blocks.role_use).toBeDefined();
     expect(Blockly.Blocks.raw_task).toBeDefined();
+    expect(Blockly.Blocks.define_var).toBeDefined();
+  });
+
+  it('play has a VARS statement chain for define_var blocks, alongside ROLES/TASKS', () => {
+    const workspace = new Blockly.Workspace();
+    const play = workspace.newBlock('play');
+    expect(play.getInput('VARS').connection.getCheck()).toContain('Var');
+    const v1 = workspace.newBlock('define_var');
+    v1.setFieldValue('enabled', 'NAME');
+    v1.setFieldValue('true', 'VALUE');
+    expect(v1.previousConnection.getCheck()).toContain('Var');
+    play.getInput('VARS').connection.connect(v1.previousConnection);
+    expect(play.getInputTargetBlock('VARS')).toBe(v1);
+    workspace.dispose();
   });
 
   it('can instantiate a module block (e.g. debug) on a headless workspace', () => {

@@ -116,24 +116,45 @@ function VariablesPanel({ projectId, roleNames }) {
             onClick={() => handleClick(v.name)}
             data-testid="pb-variable-item"
             data-varname={v.name}
-            title={`Click to copy {{ ${v.name} }} — or drag onto a text field to insert`}
+            title={`Click to copy {{ ${v.name} }} — or drag onto a text field to insert, or onto the canvas for a var block`}
             style={{
-              padding: '4px 8px',
-              marginBottom: 4,
-              border: '1px solid #ddd',
+              // Mimics the actual Blockly cond_var block's colour/bevel
+              // (setColour(65) → Blockly's default HSV hue conversion,
+              // ~#A0A65B) — dragging any of these onto blank canvas creates
+              // exactly that block, so the panel should look like it.
+              padding: '5px 6px 6px',
+              marginBottom: 6,
               borderRadius: 4,
+              border: '1px solid #7d8347',
+              background: 'linear-gradient(180deg, #b7bd74 0%, #9da35a 100%)',
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.35), 0 1px 2px rgba(0,0,0,0.15)',
               cursor: 'grab',
               fontSize: 12,
-              background: '#fafafa',
             }}
           >
-            <strong>{v.name}</strong>
+            <div
+              style={{
+                display: 'inline-block',
+                background: '#fff',
+                color: '#1a1a1a',
+                borderRadius: 3,
+                padding: '1px 6px',
+                fontWeight: 600,
+                boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.25)',
+                maxWidth: '100%',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {v.name}
+            </div>
             {v.preview !== '' && (
-              <div style={{ color: '#444', fontSize: 11, fontFamily: 'monospace', wordBreak: 'break-all' }}>
+              <div style={{ color: '#2c2f16', fontSize: 11, fontFamily: 'monospace', wordBreak: 'break-all', marginTop: 3 }}>
                 = {v.preview}
               </div>
             )}
-            <div style={{ color: '#888', fontSize: 10 }}>{v.source}</div>
+            <div style={{ color: '#40421f', fontSize: 10, marginTop: 1 }}>{v.source}</div>
           </div>
         ))}
       </div>

@@ -26,7 +26,7 @@ export function buildToolbox() {
         kind: 'category',
         name: 'Play',
         colour: '120',
-        contents: [{ kind: 'block', type: 'play' }],
+        contents: [{ kind: 'block', type: 'play' }, { kind: 'block', type: 'define_var' }],
       },
       {
         kind: 'category',

@@ -104,8 +104,25 @@ YAML-Mapping mitgegeben werden.
 - Parameter-Aliase aus der Ansible-Dokumentation werden erkannt (z.B. `dest:`/`name:` statt
   `path:` bei `ansible.builtin.file`, `pkg:`/`package:` statt `name:` bei `apt`, `unit:` statt
   `name:` bei `systemd`) — der Block speichert intern immer den kanonischen Parameternamen.
-- Play-Level-Schlüssel ohne eigenen Block (`vars:`, `environment:`, …) landen im `extra`-Feld
-  des Play-Blocks als YAML — `roles:` bekommt dagegen eigene, typisierte Blöcke.
+- Play-Level-Schlüssel ohne eigenen Block (`environment:`, …) landen im `extra`-Feld des
+  Play-Blocks als YAML — `roles:` und `vars:` bekommen dagegen eigene, typisierte Blöcke.
+
+## Variablen anlegen
+
+Ein eigener `var`-Block (Rubrik **Play**, oder per Drag&Drop aus der Variablen-Palette rechts
+auf die leere Canvas — siehe unten) definiert einen Eintrag in `vars:`. Er klinkt sich in den
+`vars`-Slot des Play-Blocks ein (neben `roles`/`tasks`), mehrere Blöcke lassen sich verketten.
+
+Der Wert wird beim Speichern typgerecht interpretiert:
+
+- **Text**: einfach eintragen, z.B. `nginx` → `app_name: nginx`.
+- **Zahl**: `8080` → `app_port: 8080` (echte YAML-Zahl, nicht `"8080"`).
+- **Liste**: eine Zeile pro Eintrag mit `- `, z.B. `- nginx`⏎`- curl`.
+- **Mapping**: YAML-Mapping-Syntax, z.B. `key: value`⏎`count: 3`.
+
+Beim Öffnen einer bestehenden Datei wird ein vorhandenes `vars:`-Mapping automatisch in einzelne
+`var`-Blöcke zerlegt. **Grenze**: aktuell nur Play-Level-`vars:` — Rollen-eigene
+`defaults/main.yml`/`vars/main.yml` werden vom Builder (noch) nicht verwaltet.
 
 ## Variablen-Palette
 
@@ -128,6 +145,9 @@ zur Verfügung (Distribution, OS-Familie, IP-Adresse, RAM, …), unabhängig vom
 - `block:`/`rescue:`/`always:`-Strukturen haben (noch) keinen eigenen Block und werden als
   `raw task` dargestellt.
 - Checkbox-Felder können „nicht gesetzt" nicht von „explizit false" unterscheiden.
+- Variablen anlegen (`var`-Block) funktioniert aktuell nur auf **Play-Ebene** (`vars:`) —
+  Rollen-eigene `defaults/main.yml`/`vars/main.yml`/`handlers/main.yml` werden vom Builder
+  (noch) nicht angelegt oder bearbeitet.
 
 ## Technischer Hintergrund
 

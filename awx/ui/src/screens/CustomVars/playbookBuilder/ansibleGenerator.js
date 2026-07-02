@@ -217,11 +217,34 @@ function blockToRoleObject(roleBlock) {
   return { role: name, ...roleVars };
 }
 
+// A define_var block's VALUE field accepts plain text OR YAML (numbers,
+// comma/dash lists, mappings) — same permissive convention as EXTRA/role
+// VARS. A bare word like "nginx" round-trips as the string "nginx" via
+// yaml.load, so this is safe for the common case of a plain string value.
+function blockToVarValue(raw) {
+  if (raw === '') return '';
+  try {
+    return yaml.load(raw);
+  } catch {
+    return raw;
+  }
+}
+
 function blockToPlayObject(playBlock) {
   const name = fieldValue(playBlock, 'NAME');
   const hosts = fieldValue(playBlock, 'HOSTS');
   const become = fieldValue(playBlock, 'BECOME');
   const extra = fieldValue(playBlock, 'EXTRA');
+
+  const vars = {};
+  let varBlock = playBlock.getInputTargetBlock('VARS');
+  while (varBlock) {
+    if (varBlock.isEnabled()) {
+      const varName = fieldValue(varBlock, 'NAME');
+      if (varName) vars[varName] = blockToVarValue(fieldValue(varBlock, 'VALUE'));
+    }
+    varBlock = varBlock.getNextBlock();
+  }
 
   const roles = [];
   let roleBlock = playBlock.getInputTargetBlock('ROLES');
@@ -243,9 +266,11 @@ function blockToPlayObject(playBlock) {
 
   const play = { name, hosts };
   if (become) play.become = true;
-  // Play-level keys without a dedicated block yet (environment:, vars:,
-  // ...) round-trip verbatim through this field — see blocks.js. `roles:`
-  // has its own typed role_use blocks (below), not part of EXTRA.
+  if (Object.keys(vars).length) play.vars = vars;
+  // Play-level keys without a dedicated block yet (environment:, ...)
+  // round-trip verbatim through this field — see blocks.js. `roles:` has its
+  // own typed role_use blocks (below) and `vars:` its own define_var chain
+  // (above), neither is part of EXTRA.
   const extraObj = parseYamlMapping(extra);
   if (extraObj) Object.assign(play, extraObj);
   if (roles.length) play.roles = roles;

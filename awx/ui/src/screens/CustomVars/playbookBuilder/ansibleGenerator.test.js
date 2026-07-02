@@ -123,6 +123,33 @@ describe('ansibleGenerator', () => {
     });
   });
 
+  it('emits a play-level vars: mapping from chained define_var blocks, type-coerced', () => {
+    const play = workspace.newBlock('play');
+    play.setFieldValue('with vars', 'NAME');
+    play.setFieldValue('all', 'HOSTS');
+
+    const v1 = workspace.newBlock('define_var');
+    v1.setFieldValue('app_name', 'NAME');
+    v1.setFieldValue('myapp', 'VALUE'); // plain string
+    const v2 = workspace.newBlock('define_var');
+    v2.setFieldValue('port', 'NAME');
+    v2.setFieldValue('8080', 'VALUE'); // coerced to a number
+    const v3 = workspace.newBlock('define_var');
+    v3.setFieldValue('packages', 'NAME');
+    v3.setFieldValue('- nginx\n- curl', 'VALUE'); // coerced to a list
+
+    play.getInput('VARS').connection.connect(v1.previousConnection);
+    v1.nextConnection.connect(v2.previousConnection);
+    v2.nextConnection.connect(v3.previousConnection);
+
+    const parsed = yaml.load(workspaceToPlaybook(workspace));
+    expect(parsed[0].vars).toEqual({
+      app_name: 'myapp',
+      port: 8080,
+      packages: ['nginx', 'curl'],
+    });
+  });
+
   it('returns an empty-document YAML for an empty workspace', () => {
     const outputYaml = workspaceToPlaybook(workspace);
     expect(outputYaml.trim()).toBe('---');

@@ -351,17 +351,41 @@ function defineStaticBlocks() {
         .appendField('become')
         .appendField(new Blockly.FieldCheckbox('FALSE'), 'BECOME');
       this.appendDummyInput()
-        .appendField('extra (vars, environment, …):');
+        .appendField('extra (environment, …):');
       this.appendDummyInput()
         .appendField(new FieldMultilineInput(''), 'EXTRA');
+      this.appendStatementInput('VARS').setCheck('Var').appendField('vars');
       this.appendStatementInput('ROLES').setCheck('Role').appendField('roles');
       this.appendStatementInput('TASKS').setCheck('Task').appendField('tasks');
       this.setColour(120);
       this.setDeletable(true);
       this.setTooltip(
         'An Ansible play — a set of tasks (and/or roles) run against a group ' +
-        'of hosts. The "extra" field preserves any play-level keys without a ' +
-        'dedicated block yet (e.g. vars:, environment:) as raw YAML.'
+        'of hosts. "vars" holds typed variable-definition blocks; "extra" ' +
+        'preserves any other play-level key without a dedicated block yet ' +
+        '(e.g. environment:) as raw YAML.'
+      );
+    },
+  };
+
+  // Defines one play-level variable (one entry of the play's vars: mapping).
+  // Chained via the play's VARS statement input, same pattern as role_use/
+  // ROLES and module blocks/TASKS.
+  Blockly.Blocks.define_var = {
+    init() {
+      this.appendDummyInput()
+        .appendField('var')
+        .appendField(new Blockly.FieldTextInput('name'), 'NAME');
+      this.appendDummyInput()
+        .appendField('=')
+        .appendField(new FieldMultilineInput(''), 'VALUE');
+      this.setPreviousStatement(true, 'Var');
+      this.setNextStatement(true, 'Var');
+      this.setColour(65);
+      this.setTooltip(
+        'Defines one play-level variable (an entry in vars:). Plain text is ' +
+        'kept as a string; numbers/lists/mappings can be entered as YAML ' +
+        '(e.g. a comma list or one "- item" per line).'
       );
     },
   };

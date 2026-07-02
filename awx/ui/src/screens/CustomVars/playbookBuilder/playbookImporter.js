@@ -184,17 +184,48 @@ function importRole(workspace, roleEntry) {
   return roleBlock;
 }
 
+// A `vars:` entry becomes its own define_var block (the inverse of
+// blockToVarValue in ansibleGenerator.js) — non-scalar values (list/dict)
+// are YAML-dumped into the multiline VALUE field via setField's existing
+// object handling.
+function importVar(workspace, varName, varValue) {
+  const varBlock = newBlock(workspace, 'define_var');
+  setField(varBlock, 'NAME', varName);
+  setField(varBlock, 'VALUE', varValue);
+  return varBlock;
+}
+
 function importPlay(workspace, playObj) {
   const playBlock = newBlock(workspace, 'play');
   if (playObj.name) setField(playBlock, 'NAME', playObj.name);
   if (playObj.hosts) setField(playBlock, 'HOSTS', playObj.hosts);
   if (playObj.become) setField(playBlock, 'BECOME', true);
 
-  const extraKeys = Object.keys(playObj).filter((k) => !KNOWN_PLAY_KEYS.has(k));
+  // Only decompose vars: into typed blocks when it's a plain mapping (the
+  // normal case) — anything unusual (list, scalar) falls through to EXTRA
+  // below, lossless rather than silently dropped.
+  const varsIsMapping = playObj.vars && typeof playObj.vars === 'object' && !Array.isArray(playObj.vars);
+
+  const extraKeys = Object.keys(playObj).filter(
+    (k) => !KNOWN_PLAY_KEYS.has(k) && !(k === 'vars' && varsIsMapping)
+  );
   if (extraKeys.length) {
     const extra = {};
     extraKeys.forEach((k) => { extra[k] = playObj[k]; });
     setField(playBlock, 'EXTRA', yaml.dump(extra).trim());
+  }
+
+  let previousVar = null;
+  if (varsIsMapping) {
+    Object.entries(playObj.vars).forEach(([varName, varValue]) => {
+      const varBlock = importVar(workspace, varName, varValue);
+      if (previousVar) {
+        previousVar.nextConnection.connect(varBlock.previousConnection);
+      } else {
+        playBlock.getInput('VARS').connection.connect(varBlock.previousConnection);
+      }
+      previousVar = varBlock;
+    });
   }
 
   let previousRole = null;
