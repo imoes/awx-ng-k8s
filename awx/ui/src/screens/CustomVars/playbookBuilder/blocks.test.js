@@ -1,6 +1,6 @@
 import * as Blockly from 'blockly';
 import { registerBlocks, moduleBlockType, MODULE_NAMES } from './blocks';
-import { buildToolbox, moduleFlyoutContents, roleFlyoutContents } from './toolbox';
+import { buildToolbox } from './toolbox';
 
 describe('playbook builder blocks', () => {
   beforeAll(() => {
@@ -167,29 +167,21 @@ describe('playbook builder blocks', () => {
     workspace.dispose();
   });
 
-  it('builds a toolbox with dynamic (custom-callback) Modules and Roles categories', () => {
+  it('builds a toolbox with a global search category + static Modules/Roles categories (searchable by @blockly/toolbox-search)', () => {
     const toolbox = buildToolbox();
+    expect(toolbox.contents[0]).toEqual({ kind: 'search', name: '🔍 Search', contents: [] });
     const modulesCategory = toolbox.contents.find((c) => c.name === 'Modules');
+    expect(modulesCategory.contents.length).toBe(MODULE_NAMES.length);
+    expect(modulesCategory.contents.every((b) => b.kind === 'block')).toBe(true);
+    // No roles passed → still offers a blank role_use block.
     const rolesCategory = toolbox.contents.find((c) => c.name === 'Roles');
-    expect(modulesCategory.custom).toBe('MODULE_SEARCH');
-    expect(rolesCategory.custom).toBe('ROLE_SEARCH');
+    expect(rolesCategory.contents).toEqual([{ kind: 'block', type: 'role_use' }]);
   });
 
-  it('moduleFlyoutContents returns all modules unfiltered and narrows on a filter', () => {
-    expect(moduleFlyoutContents('').length).toBe(MODULE_NAMES.length);
-    const filtered = moduleFlyoutContents('lineinfile');
-    expect(filtered).toEqual([{ kind: 'block', type: 'module_lineinfile' }]);
-    // filter matches substrings across module names
-    expect(moduleFlyoutContents('file').length).toBeGreaterThan(1);
-    expect(moduleFlyoutContents('file').every((b) => b.type.includes('file'))).toBe(true);
-  });
-
-  it('roleFlyoutContents filters project roles and pre-fills ROLE_NAME', () => {
-    const roles = ['img_common', 'img_docker', 'nginx'];
-    expect(roleFlyoutContents(roles, '').length).toBe(3);
-    const filtered = roleFlyoutContents(roles, 'img');
-    expect(filtered.map((b) => b.fields.ROLE_NAME)).toEqual(['img_common', 'img_docker']);
-    // no roles at all → still offers a blank role_use block
-    expect(roleFlyoutContents([], '')).toEqual([{ kind: 'block', type: 'role_use' }]);
+  it('buildToolbox(roleNames) fills the Roles category with pre-filled role_use blocks', () => {
+    const toolbox = buildToolbox(['img_docker', 'img_common']);
+    const rolesCategory = toolbox.contents.find((c) => c.name === 'Roles');
+    // sorted alphabetically
+    expect(rolesCategory.contents.map((b) => b.fields.ROLE_NAME)).toEqual(['img_common', 'img_docker']);
   });
 });

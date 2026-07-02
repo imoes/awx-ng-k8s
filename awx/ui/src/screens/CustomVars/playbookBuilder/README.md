@@ -127,9 +127,18 @@ werden in **derselben** Canvas bearbeitet; beim Reiter-Wechsel wird der aktuelle
 
 ## Variablen anlegen
 
-Ein eigener `var`-Block (Rubrik **Play**, oder per Drag&Drop aus der Variablen-Palette rechts
-auf die leere Canvas — siehe unten) definiert einen Eintrag in `vars:`. Er klinkt sich in den
-`vars`-Slot des Play-Blocks ein (neben `roles`/`tasks`), mehrere Blöcke lassen sich verketten.
+Drei Wege, eine Variable anzulegen:
+
+1. **Direkt im rechten Panel**: oben im Variablen-Panel „New variable name…" + optional einen Wert
+   eintragen, **+ Add variable** klicken — landet sofort im `vars:`-Slot des Play-Blocks (bzw. im
+   aktiven Defaults-/Vars-Reiter einer Rolle) und erscheint direkt darunter in der Liste, getaggt
+   „this document".
+2. Ein `var`-Block aus der Rubrik **Play** ziehen.
+3. Eine Variable aus der Palette per Drag&Drop auf die **leere Canvas** ziehen (siehe unten).
+
+Alle drei Wege erzeugen denselben `var`-Block. Er klinkt sich in den `vars`-Slot des Play-Blocks
+ein (neben `roles`/`tasks`/`handlers`) bzw. in die Rollen-Sektion, mehrere Blöcke lassen sich
+verketten.
 
 Der Wert wird beim Speichern typgerecht interpretiert:
 

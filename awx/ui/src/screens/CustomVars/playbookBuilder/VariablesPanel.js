@@ -7,7 +7,7 @@
 // being edited), plus Ansible Vault variable names. NOT every role in the
 // project (that was the original, confusing behaviour).
 import React, { useCallback, useEffect, useState } from 'react';
-import { TextInput } from '@patternfly/react-core';
+import { Button, TextInput } from '@patternfly/react-core';
 import useRequest from 'hooks/useRequest';
 import { readProjectRoleVariables, listVaults, getVault } from '../api';
 import { ANSIBLE_FACT_VARIABLES, ANSIBLE_MAGIC_VARIABLES } from './ansibleFacts';
@@ -61,9 +61,11 @@ async function loadVariables(projectId, roleNames) {
   });
 }
 
-function VariablesPanel({ projectId, roleNames }) {
+function VariablesPanel({ projectId, roleNames, localVars = [], onCreateVariable }) {
   const [search, setSearch] = useState('');
   const [vars, setVars] = useState([]);
+  const [newName, setNewName] = useState('');
+  const [newValue, setNewValue] = useState('');
   // Stable primitive dependency so the effect re-runs only when the actual
   // set of relevant roles changes, not on every parent re-render.
   const roleKey = [...roleNames].sort().join(',');
@@ -75,9 +77,26 @@ function VariablesPanel({ projectId, roleNames }) {
   );
   useEffect(() => { reload(); }, [reload]);
 
-  const filtered = vars.filter(
+  // Variables just defined on the current canvas (a play's vars: or a
+  // role's Defaults/Vars tab) take priority over same-named fetched entries
+  // — they're the most current source of truth for this document.
+  const seen = new Set();
+  const allVars = [...localVars, ...vars].filter((v) => {
+    if (seen.has(v.name)) return false;
+    seen.add(v.name);
+    return true;
+  });
+  const filtered = allVars.filter(
     (v) => !search || v.name.toLowerCase().includes(search.toLowerCase())
   );
+
+  const handleCreate = () => {
+    const name = newName.trim();
+    if (!name || !onCreateVariable) return;
+    onCreateVariable(name, newValue);
+    setNewName('');
+    setNewValue('');
+  };
 
   const handleDragStart = (event, name) => {
     event.dataTransfer.setData('text/plain', name);
@@ -95,7 +114,40 @@ function VariablesPanel({ projectId, roleNames }) {
 
   return (
     <div data-testid="pb-variables-panel" style={{ width: 220, flexShrink: 0 }}>
+      {onCreateVariable && (
+        <div
+          data-testid="pb-add-variable-form"
+          style={{ marginBottom: 10, padding: 6, border: '1px solid #ddd', borderRadius: 4, background: '#fafafa' }}
+        >
+          <TextInput
+            aria-label="New variable name"
+            placeholder="New variable name…"
+            value={newName}
+            onChange={setNewName}
+            data-testid="pb-add-variable-name"
+            style={{ marginBottom: 4 }}
+          />
+          <TextInput
+            aria-label="New variable value"
+            placeholder="Value (optional)…"
+            value={newValue}
+            onChange={setNewValue}
+            data-testid="pb-add-variable-value"
+            style={{ marginBottom: 4 }}
+          />
+          <Button
+            variant="secondary"
+            isBlock
+            isDisabled={!newName.trim()}
+            onClick={handleCreate}
+            data-testid="pb-add-variable-button"
+          >
+            + Add variable
+          </Button>
+        </div>
+      )}
       <TextInput
+        aria-label="Filter variables"
         placeholder="Filter variables…"
         value={search}
         onChange={setSearch}

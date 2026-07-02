@@ -24,7 +24,7 @@ import CodeEditor from 'components/CodeEditor';
 import useRequest from 'hooks/useRequest';
 import BlocklyWorkspace from './BlocklyWorkspace';
 import { registerBlocks } from './blocks';
-import { buildToolbox, registerCategoryCallbacks } from './toolbox';
+import { buildToolbox } from './toolbox';
 import { serializeWorkspace } from './ansibleGenerator';
 import { importPlaybookYaml, importTasksYaml, importVarsYaml } from './playbookImporter';
 import { sidecarPathFor } from './sidecarPath';
@@ -94,6 +94,31 @@ function emptyStubYaml(mode) {
   return text;
 }
 
+// Variables defined ON THE CURRENT CANVAS — a play's `vars:` chain, or (in
+// role mode) the Defaults/Vars tab's top-level define_var chain. Fed into
+// VariablesPanel so a variable just created there shows up immediately,
+// without waiting for a save + role/vault re-fetch.
+function extractCanvasVars(ws, docMode, section) {
+  const entries = [];
+  const collectChain = (block) => {
+    let b = block;
+    while (b) {
+      if (b.type === 'define_var' && b.isEnabled()) {
+        const name = b.getFieldValue('NAME');
+        if (name) entries.push({ name, value: b.getFieldValue('VALUE') });
+      }
+      b = b.getNextBlock();
+    }
+  };
+  if (docMode === 'playbook') {
+    const play = ws.getTopBlocks(true).find((b) => b.type === 'play');
+    if (play) collectChain(play.getInputTargetBlock('VARS'));
+  } else if (sectionSerializeMode(section) === 'vars') {
+    ws.getTopBlocks(true).forEach((top) => { if (top.type === 'define_var') collectChain(top); });
+  }
+  return entries;
+}
+
 function workspaceRoleNames(workspace) {
   return workspace
     .getAllBlocks(false)
@@ -116,6 +141,10 @@ function PlaybookBuilder() {
   const [roleSection, setRoleSection] = useState('tasks');
   const [roleName, setRoleName] = useState('new-role');
   const [relevantRoles, setRelevantRoles] = useState([]);
+  // Variables defined ON THE CURRENT CANVAS (a play's vars: chain, or a
+  // role's Defaults/Vars tab) — fed into VariablesPanel so a var just
+  // created there shows up immediately, tagged "this document".
+  const [docVars, setDocVars] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [lintErrors, setLintErrors] = useState([]);
@@ -130,9 +159,6 @@ function PlaybookBuilder() {
   const [openSearch, setOpenSearch] = useState('');
   const [opening, setOpening] = useState(false);
 
-  // Live palette filter — narrows whichever dynamic category (Modules or
-  // Roles) is currently open. Only one is ever open, so it scopes per rubric.
-  const [paletteFilter, setPaletteFilter] = useState('');
   // Hamburger (file actions) menu open state.
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -149,13 +175,10 @@ function PlaybookBuilder() {
   // Populated on tab-switch (outgoing section) and on role-open (all 4 at
   // once). Never triggers a re-render itself — it's a plain mutable cache.
   const roleSectionsRef = useRef({});
-  // Read live by the dynamic-category callbacks (registered once).
-  const paletteFilterRef = useRef('');
-  const roleNamesRef = useRef([]);
 
   const toolbox = useMemo(() => {
     registerBlocks();
-    return buildToolbox();
+    return buildToolbox([]);
   }, []);
 
   // Stable — reads refs, so it never needs to be recreated and can be used
@@ -169,6 +192,7 @@ function PlaybookBuilder() {
     const roles = workspaceRoleNames(ws);
     if (openedRoleRef.current) roles.push(openedRoleRef.current);
     setRelevantRoles(roles);
+    setDocVars(extractCanvasVars(ws, docModeRef.current, roleSectionRef.current));
   }, []);
 
   const { request: loadProjects } = useRequest(
@@ -180,27 +204,20 @@ function PlaybookBuilder() {
   );
   useEffect(() => { loadProjects(); }, [loadProjects]);
 
-  // Per-project role list drives both the Roles category (via roleNamesRef,
-  // read by the dynamic-category callback) and the Open dialog's role picker.
+  // Per-project role list drives both the toolbox's Roles category and the
+  // Open dialog's role picker. The Roles category is static content (needed
+  // for @blockly/toolbox-search to index it), so the whole toolbox is
+  // rebuilt via updateToolbox() whenever the role list changes.
   const { request: loadRoles } = useRequest(
     useCallback(async () => {
       if (!projectId) return;
       const { data } = await readProjectRoles(projectId);
       const names = (data.results || []).map((r) => r.role_name);
       setRoleOptions(names);
-      roleNamesRef.current = names;
-      // Re-render the Roles flyout if it's the one currently open.
-      workspaceRef.current?.getToolbox()?.refreshSelection();
+      workspaceRef.current?.updateToolbox(buildToolbox(names));
     }, [projectId])
   );
   useEffect(() => { loadRoles(); }, [loadRoles]);
-
-  const handlePaletteFilter = (value) => {
-    setPaletteFilter(value);
-    paletteFilterRef.current = value;
-    // Re-run the open category's custom callback with the new filter.
-    workspaceRef.current?.getToolbox()?.refreshSelection();
-  };
 
   // Wire document-level drag/drop once. Capture phase so it also intercepts
   // drops onto Blockly's open inline HTML input (which would otherwise paste
@@ -262,12 +279,6 @@ function PlaybookBuilder() {
 
   const handleWorkspaceReady = (ws) => {
     workspaceRef.current = ws;
-    // Register the dynamic Modules/Roles category callbacks; they read the
-    // live palette filter + project role names via refs.
-    registerCategoryCallbacks(ws, {
-      getFilter: () => paletteFilterRef.current,
-      getRoleNames: () => roleNamesRef.current,
-    });
   };
 
   const handleNew = (mode) => {
@@ -321,6 +332,48 @@ function PlaybookBuilder() {
     }
     setRoleSection(nextSection);
     roleSectionRef.current = nextSection;
+    refreshFromWorkspace(ws);
+  };
+
+  // Creates a new define_var block from the Variables panel's "+ Add
+  // variable" form and chains it into the right place for the current
+  // document: a play's vars: stack, or (role mode) the active Defaults/Vars
+  // tab's top-level chain. Only offered when that makes sense — see
+  // canCreateVariable below (hidden on the Tasks/Handlers tabs, which
+  // aren't vars-shaped documents).
+  const handleCreateVariable = (name, value) => {
+    const ws = workspaceRef.current;
+    if (!ws) return;
+    const varBlock = ws.newBlock('define_var');
+    varBlock.setFieldValue(name, 'NAME');
+    varBlock.setFieldValue(value, 'VALUE');
+    if (typeof varBlock.initSvg === 'function') { varBlock.initSvg(); varBlock.render(); }
+
+    if (docMode === 'playbook') {
+      const play = ws.getTopBlocks(true).find((b) => b.type === 'play');
+      if (play) {
+        const varsInput = play.getInput('VARS');
+        let last = varsInput.connection.targetBlock();
+        if (!last) {
+          varsInput.connection.connect(varBlock.previousConnection);
+        } else {
+          while (last.getNextBlock()) last = last.getNextBlock();
+          last.nextConnection.connect(varBlock.previousConnection);
+        }
+      } else {
+        varBlock.moveBy(20, 20);
+      }
+    } else {
+      // Role mode, Defaults/Vars tab — chain onto the existing top-level
+      // define_var stack, or just place it if this is the first one.
+      let last = ws.getTopBlocks(true).find((b) => b.type === 'define_var');
+      if (last) {
+        while (last.getNextBlock()) last = last.getNextBlock();
+        last.nextConnection.connect(varBlock.previousConnection);
+      } else {
+        varBlock.moveBy(20, 20);
+      }
+    }
     refreshFromWorkspace(ws);
   };
 
@@ -559,6 +612,7 @@ function PlaybookBuilder() {
               {docMode === 'role' ? (
                 <FormGroup label="Role name" style={{ minWidth: 320 }}>
                   <TextInput
+                    aria-label="Role name"
                     value={roleName}
                     onChange={setRoleName}
                     data-testid="pb-role-name"
@@ -567,6 +621,7 @@ function PlaybookBuilder() {
               ) : (
                 <FormGroup label="Save to" style={{ minWidth: 320 }}>
                   <TextInput
+                    aria-label="Save to path"
                     value={targetPath}
                     onChange={setTargetPath}
                     data-testid="pb-target-path"
@@ -640,15 +695,6 @@ function PlaybookBuilder() {
             <div data-testid="blockly-block-count" style={{ display: 'none' }}>{blockCount}</div>
             <div style={{ display: 'flex', gap: 16 }}>
               <div style={{ flex: '1 1 58%', minWidth: 0 }}>
-                <div style={{ marginBottom: 8, maxWidth: 320 }}>
-                  <SearchInput
-                    placeholder="Filter open category (Modules / Roles)…"
-                    value={paletteFilter}
-                    onChange={(_e, v) => handlePaletteFilter(v)}
-                    onClear={() => handlePaletteFilter('')}
-                    data-testid="pb-palette-filter"
-                  />
-                </div>
                 <BlocklyWorkspace
                   toolbox={toolbox}
                   height={640}
@@ -668,7 +714,16 @@ function PlaybookBuilder() {
                 <Title headingLevel="h3" size="sm" style={{ marginBottom: 8 }}>
                   Variables
                 </Title>
-                <VariablesPanel projectId={projectId} roleNames={relevantRoles} />
+                <VariablesPanel
+                  projectId={projectId}
+                  roleNames={relevantRoles}
+                  localVars={docVars.map((v) => ({ name: v.name, source: 'this document', preview: v.value }))}
+                  onCreateVariable={
+                    docMode === 'playbook' || sectionSerializeMode(roleSection) === 'vars'
+                      ? handleCreateVariable
+                      : undefined
+                  }
+                />
               </div>
             </div>
           </CardBody>
