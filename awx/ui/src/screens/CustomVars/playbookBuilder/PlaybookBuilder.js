@@ -5,6 +5,9 @@ import * as Blockly from 'blockly';
 import {
   Alert,
   Button,
+  Dropdown,
+  DropdownItem,
+  DropdownToggle,
   FormGroup,
   Modal,
   PageSection,
@@ -15,12 +18,13 @@ import {
   TextInput,
   Title,
 } from '@patternfly/react-core';
+import { BarsIcon } from '@patternfly/react-icons';
 import ScreenHeader from 'components/ScreenHeader/ScreenHeader';
 import CodeEditor from 'components/CodeEditor';
 import useRequest from 'hooks/useRequest';
 import BlocklyWorkspace from './BlocklyWorkspace';
 import { registerBlocks } from './blocks';
-import { buildToolbox } from './toolbox';
+import { buildToolbox, registerCategoryCallbacks } from './toolbox';
 import { serializeWorkspace } from './ansibleGenerator';
 import { importPlaybookYaml, importTasksYaml } from './playbookImporter';
 import { sidecarPathFor } from './sidecarPath';
@@ -96,16 +100,25 @@ function PlaybookBuilder() {
   const [openSearch, setOpenSearch] = useState('');
   const [opening, setOpening] = useState(false);
 
+  // Live palette filter — narrows whichever dynamic category (Modules or
+  // Roles) is currently open. Only one is ever open, so it scopes per rubric.
+  const [paletteFilter, setPaletteFilter] = useState('');
+  // Hamburger (file actions) menu open state.
+  const [menuOpen, setMenuOpen] = useState(false);
+
   const workspaceRef = useRef(null);
   // Refs so the (stable) change/drop handlers always see the latest mode.
   const docModeRef = useRef(docMode);
   docModeRef.current = docMode;
   const openedRoleRef = useRef(openedRole);
   openedRoleRef.current = openedRole;
+  // Read live by the dynamic-category callbacks (registered once).
+  const paletteFilterRef = useRef('');
+  const roleNamesRef = useRef([]);
 
   const toolbox = useMemo(() => {
     registerBlocks();
-    return buildToolbox([]);
+    return buildToolbox();
   }, []);
 
   // Stable — reads refs, so it never needs to be recreated and can be used
@@ -127,18 +140,27 @@ function PlaybookBuilder() {
   );
   useEffect(() => { loadProjects(); }, [loadProjects]);
 
-  // Per-project role list drives both the toolbox Roles category and the
-  // Open dialog's role picker.
+  // Per-project role list drives both the Roles category (via roleNamesRef,
+  // read by the dynamic-category callback) and the Open dialog's role picker.
   const { request: loadRoles } = useRequest(
     useCallback(async () => {
       if (!projectId) return;
       const { data } = await readProjectRoles(projectId);
       const names = (data.results || []).map((r) => r.role_name);
       setRoleOptions(names);
-      workspaceRef.current?.updateToolbox(buildToolbox(names));
+      roleNamesRef.current = names;
+      // Re-render the Roles flyout if it's the one currently open.
+      workspaceRef.current?.getToolbox()?.refreshSelection();
     }, [projectId])
   );
   useEffect(() => { loadRoles(); }, [loadRoles]);
+
+  const handlePaletteFilter = (value) => {
+    setPaletteFilter(value);
+    paletteFilterRef.current = value;
+    // Re-run the open category's custom callback with the new filter.
+    workspaceRef.current?.getToolbox()?.refreshSelection();
+  };
 
   // Wire document-level drag/drop once. Capture phase so it also intercepts
   // drops onto Blockly's open inline HTML input (which would otherwise paste
@@ -174,6 +196,12 @@ function PlaybookBuilder() {
 
   const handleWorkspaceReady = (ws) => {
     workspaceRef.current = ws;
+    // Register the dynamic Modules/Roles category callbacks; they read the
+    // live palette filter + project role names via refs.
+    registerCategoryCallbacks(ws, {
+      getFilter: () => paletteFilterRef.current,
+      getRoleNames: () => roleNamesRef.current,
+    });
   };
 
   const handleNew = (mode) => {
@@ -298,6 +326,37 @@ function PlaybookBuilder() {
             </Title>
 
             <div style={{ display: 'flex', gap: 16, marginBottom: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <FormGroup label="File" fieldId="pb-file-menu">
+                <Dropdown
+                  data-testid="pb-file-menu"
+                  isOpen={menuOpen}
+                  toggle={
+                    <DropdownToggle
+                      id="pb-file-menu-toggle"
+                      data-testid="pb-file-menu-toggle"
+                      toggleIndicator={null}
+                      onToggle={(_e, val) => setMenuOpen(typeof val === 'boolean' ? val : !menuOpen)}
+                      aria-label="File actions menu"
+                    >
+                      <BarsIcon />
+                    </DropdownToggle>
+                  }
+                  dropdownItems={[
+                    <DropdownItem key="new-pb" data-testid="pb-new-playbook-button" onClick={() => { setMenuOpen(false); handleNew('playbook'); }}>
+                      New playbook
+                    </DropdownItem>,
+                    <DropdownItem key="new-role" data-testid="pb-new-role-button" onClick={() => { setMenuOpen(false); handleNew('role'); }}>
+                      New role
+                    </DropdownItem>,
+                    <DropdownItem key="open-pb" data-testid="pb-open-playbook-button" isDisabled={!projectId} onClick={() => { setMenuOpen(false); openBrowseDialog('playbook'); }}>
+                      Open playbook…
+                    </DropdownItem>,
+                    <DropdownItem key="open-role" data-testid="pb-open-role-button" isDisabled={!projectId} onClick={() => { setMenuOpen(false); openBrowseDialog('role'); }}>
+                      Open role…
+                    </DropdownItem>,
+                  ]}
+                />
+              </FormGroup>
               <FormGroup label="Project" style={{ minWidth: 200 }}>
                 <select
                   value={projectId}
@@ -310,37 +369,7 @@ function PlaybookBuilder() {
                   ))}
                 </select>
               </FormGroup>
-              <Button
-                variant="secondary"
-                onClick={() => handleNew('playbook')}
-                data-testid="pb-new-playbook-button"
-              >
-                New playbook
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => handleNew('role')}
-                data-testid="pb-new-role-button"
-              >
-                New role
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => openBrowseDialog('playbook')}
-                isDisabled={!projectId}
-                data-testid="pb-open-playbook-button"
-              >
-                Open playbook…
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => openBrowseDialog('role')}
-                isDisabled={!projectId}
-                data-testid="pb-open-role-button"
-              >
-                Open role…
-              </Button>
-              <FormGroup label={docMode === 'role' ? 'Role file' : 'Save to'} style={{ minWidth: 300 }}>
+              <FormGroup label={docMode === 'role' ? 'Role file' : 'Save to'} style={{ minWidth: 320 }}>
                 <TextInput
                   value={targetPath}
                   onChange={setTargetPath}
@@ -380,21 +409,31 @@ function PlaybookBuilder() {
               </Alert>
             )}
 
-            <div data-testid="blockly-block-count">{blockCount}</div>
+            <div data-testid="blockly-block-count" style={{ display: 'none' }}>{blockCount}</div>
             <div style={{ display: 'flex', gap: 16 }}>
-              <div style={{ flex: '1 1 45%', minWidth: 0 }}>
+              <div style={{ flex: '1 1 58%', minWidth: 0 }}>
+                <div style={{ marginBottom: 8, maxWidth: 320 }}>
+                  <SearchInput
+                    placeholder="Filter open category (Modules / Roles)…"
+                    value={paletteFilter}
+                    onChange={(_e, v) => handlePaletteFilter(v)}
+                    onClear={() => handlePaletteFilter('')}
+                    data-testid="pb-palette-filter"
+                  />
+                </div>
                 <BlocklyWorkspace
                   toolbox={toolbox}
+                  height={640}
                   onChange={refreshFromWorkspace}
                   onWorkspaceReady={handleWorkspaceReady}
                 />
               </div>
-              <div style={{ flex: '1 1 30%', minWidth: 0 }}>
+              <div style={{ flex: '1 1 26%', minWidth: 0 }}>
                 <Title headingLevel="h3" size="sm" style={{ marginBottom: 8 }}>
                   Generated YAML
                 </Title>
                 <div data-testid="playbook-yaml-preview">
-                  <CodeEditor value={playbookYaml} mode="yaml" readOnly rows={22} />
+                  <CodeEditor value={playbookYaml} mode="yaml" readOnly rows={30} />
                 </div>
               </div>
               <div style={{ flex: '0 0 auto' }}>

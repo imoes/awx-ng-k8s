@@ -68,7 +68,7 @@ ENVELOPE_FIELDS.forEach((e) => { ENVELOPE_BY_KEY[e.key] = e; });
 // scaffolding — never a module argument. Used by the generator to know
 // which fields to skip when collecting a module's own args.
 export const RESERVED_FIELD_NAMES = new Set([
-  'MODULE_LABEL', 'ADD_PARAM', 'NAME',
+  'MODULE_LABEL', 'ADD_PARAM', 'ADD_TASKOPT', 'NAME',
   ...ENVELOPE_FIELDS.map((e) => e.key),
 ]);
 
@@ -86,7 +86,10 @@ function fieldForParam(param) {
   if (param.type === 'bool') {
     return new Blockly.FieldCheckbox('FALSE');
   }
-  return new Blockly.FieldTextInput('');
+  // Text params use a multiline field so values can contain line breaks
+  // (shell scripts, copy content, multi-line messages). It stays compact for
+  // single-line values and grows as you add lines (Enter inserts a newline).
+  return new FieldMultilineInput('');
 }
 
 function appendParamRow(block, param) {
@@ -129,11 +132,18 @@ function defineModuleBlocks() {
         this.activeOptional_ = [];
         this.activeEnvelope_ = [];
         defaultNames.forEach((name) => appendParamRow(this, paramByName[name]));
+        // Two separate "add …" dropdowns so task settings (when/notify/…) are
+        // clearly discoverable and not buried among the module's own params.
         this.appendDummyInput('ADD_OPT').appendField(
           new Blockly.FieldDropdown(() => this.addOptOptions_()),
           'ADD_PARAM'
         );
         this.getField('ADD_PARAM').setValidator((sel) => this.onAddParam_(sel));
+        this.appendDummyInput('ADD_TASKOPT').appendField(
+          new Blockly.FieldDropdown(() => this.addTaskOptOptions_()),
+          'ADD_TASKOPT'
+        );
+        this.getField('ADD_TASKOPT').setValidator((sel) => this.onAddTaskOpt_(sel));
         // A module block IS a task — plugs directly into a play's tasks
         // stack (or a role's bare task list). No separate wrapper needed.
         this.setPreviousStatement(true, 'Task');
@@ -147,29 +157,37 @@ function defineModuleBlocks() {
         this.ansibleModuleFqcn = mod.name;
         this.moduleShortName_ = mod.short_name;
       },
-      // Dynamic options for the "add parameter…" dropdown: remaining
-      // optional module params + task-level modifiers (when/tags/register/…)
-      // not already shown — one consolidated place to add either kind.
+      // Options for the "add parameter…" dropdown: the module's own optional
+      // arguments not yet shown.
       addOptOptions_() {
         const opts = [['＋ add parameter…', ADD_PARAM_PLACEHOLDER]];
         optionalNames
           .filter((n) => !this.activeOptional_.includes(n))
-          .forEach((n) => opts.push([n, `mod:${n}`]));
-        ENVELOPE_FIELDS
-          .filter((e) => !this.activeEnvelope_.includes(e.key))
-          .forEach((e) => opts.push([e.label, `env:${e.key}`]));
+          .forEach((n) => opts.push([n, n]));
         return opts;
       },
       onAddParam_(sel) {
         if (sel && sel !== ADD_PARAM_PLACEHOLDER) {
-          const [kind, key] = sel.split(':');
-          // Defer the structural change out of the validator tick.
-          setTimeout(() => {
-            if (kind === 'mod') this.addOptionalParam(key);
-            else if (kind === 'env') this.addEnvelopeField(key);
-          }, 0);
+          const name = sel;
+          setTimeout(() => this.addOptionalParam(name), 0);
         }
         return ADD_PARAM_PLACEHOLDER; // dropdown snaps back to the placeholder
+      },
+      // Options for the "add task setting…" dropdown: Ansible task-level
+      // keywords (when/tags/notify/register/loop/…) not yet shown.
+      addTaskOptOptions_() {
+        const opts = [['＋ add task setting…', ADD_PARAM_PLACEHOLDER]];
+        ENVELOPE_FIELDS
+          .filter((e) => !this.activeEnvelope_.includes(e.key))
+          .forEach((e) => opts.push([e.label, e.key]));
+        return opts;
+      },
+      onAddTaskOpt_(sel) {
+        if (sel && sel !== ADD_PARAM_PLACEHOLDER) {
+          const key = sel;
+          setTimeout(() => this.addEnvelopeField(key), 0);
+        }
+        return ADD_PARAM_PLACEHOLDER;
       },
       // Public: adds an optional param row (used by the dropdown UI and by
       // the importer when a YAML task sets a param that isn't shown by
@@ -181,7 +199,8 @@ function defineModuleBlocks() {
         appendParamRow(this, paramByName[name]);
         this.moveInputBefore(`ROW_${name}`, 'ADD_OPT');
       },
-      // Public: adds a task-level modifier row (when/tags/register/…).
+      // Public: adds a task-level modifier row (when/tags/register/…),
+      // grouped after the module params (before the ADD_TASKOPT dropdown).
       // Idempotent.
       addEnvelopeField(key) {
         if (this.activeEnvelope_.includes(key)) return;
@@ -189,7 +208,7 @@ function defineModuleBlocks() {
         if (!envelope) return;
         this.activeEnvelope_.push(key);
         appendEnvelopeRow(this, envelope);
-        this.moveInputBefore(`ROW_${key}`, 'ADD_OPT');
+        this.moveInputBefore(`ROW_${key}`, 'ADD_TASKOPT');
       },
       // JSON serialization (sidecar save/load): only the sets of added
       // optional/envelope fields — field values are (de)serialized by

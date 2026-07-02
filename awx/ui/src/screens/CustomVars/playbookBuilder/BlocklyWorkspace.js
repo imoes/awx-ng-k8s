@@ -3,7 +3,7 @@
 import React, { useEffect, useRef } from 'react';
 import * as Blockly from 'blockly';
 
-function BlocklyWorkspace({ toolbox, initialState, onChange, onWorkspaceReady, style }) {
+function BlocklyWorkspace({ toolbox, initialState, onChange, onWorkspaceReady, height = 500, style }) {
   const containerRef = useRef(null);
   const workspaceRef = useRef(null);
   const onChangeRef = useRef(onChange);
@@ -15,6 +15,10 @@ function BlocklyWorkspace({ toolbox, initialState, onChange, onWorkspaceReady, s
       trashcan: true,
       zoom: { controls: true, wheel: true, startScale: 1 },
       grid: { spacing: 24, length: 3, colour: '#e6e6e6', snap: true },
+      // Category rubrics render as a horizontal navbar across the top of the
+      // canvas (rather than a left-hand column).
+      horizontalLayout: true,
+      toolboxPosition: 'start',
       // 'geras' renderer + Classic theme give the bevelled, glossy 3D block
       // look (like ioBroker's Blockly editor) — the flatter 'thrasos'/'zelos'
       // renderers don't have the raised/3D edges.
@@ -55,7 +59,7 @@ function BlocklyWorkspace({ toolbox, initialState, onChange, onWorkspaceReady, s
   return (
     <div
       ref={containerRef}
-      style={{ height: 500, width: '100%', ...style }}
+      style={{ height, width: '100%', ...style }}
     />
   );
 }

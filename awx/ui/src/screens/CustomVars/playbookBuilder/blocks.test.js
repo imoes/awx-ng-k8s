@@ -1,6 +1,6 @@
 import * as Blockly from 'blockly';
 import { registerBlocks, moduleBlockType, MODULE_NAMES } from './blocks';
-import { buildToolbox } from './toolbox';
+import { buildToolbox, moduleFlyoutContents, roleFlyoutContents } from './toolbox';
 
 describe('playbook builder blocks', () => {
   beforeAll(() => {
@@ -88,10 +88,29 @@ describe('playbook builder blocks', () => {
     workspace.dispose();
   });
 
-  it('builds a toolbox containing a Modules category with all catalog blocks', () => {
+  it('builds a toolbox with dynamic (custom-callback) Modules and Roles categories', () => {
     const toolbox = buildToolbox();
     const modulesCategory = toolbox.contents.find((c) => c.name === 'Modules');
-    expect(modulesCategory).toBeDefined();
-    expect(modulesCategory.contents.length).toBe(MODULE_NAMES.length);
+    const rolesCategory = toolbox.contents.find((c) => c.name === 'Roles');
+    expect(modulesCategory.custom).toBe('MODULE_SEARCH');
+    expect(rolesCategory.custom).toBe('ROLE_SEARCH');
+  });
+
+  it('moduleFlyoutContents returns all modules unfiltered and narrows on a filter', () => {
+    expect(moduleFlyoutContents('').length).toBe(MODULE_NAMES.length);
+    const filtered = moduleFlyoutContents('lineinfile');
+    expect(filtered).toEqual([{ kind: 'block', type: 'module_lineinfile' }]);
+    // filter matches substrings across module names
+    expect(moduleFlyoutContents('file').length).toBeGreaterThan(1);
+    expect(moduleFlyoutContents('file').every((b) => b.type.includes('file'))).toBe(true);
+  });
+
+  it('roleFlyoutContents filters project roles and pre-fills ROLE_NAME', () => {
+    const roles = ['img_common', 'img_docker', 'nginx'];
+    expect(roleFlyoutContents(roles, '').length).toBe(3);
+    const filtered = roleFlyoutContents(roles, 'img');
+    expect(filtered.map((b) => b.fields.ROLE_NAME)).toEqual(['img_common', 'img_docker']);
+    // no roles at all → still offers a blank role_use block
+    expect(roleFlyoutContents([], '')).toEqual([{ kind: 'block', type: 'role_use' }]);
   });
 });
