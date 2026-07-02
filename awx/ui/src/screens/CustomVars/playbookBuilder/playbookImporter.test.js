@@ -294,6 +294,54 @@ describe('playbookImporter', () => {
     expect(regenerated[0].tasks[1].systemd).toEqual({ name: 'nginx', state: 'restarted' });
   });
 
+  it('imports when: expressions as decomposed condition blocks (real img_docker examples)', () => {
+    // Both lines come verbatim from roles/img_docker/tasks/main.yml.
+    const original = `
+- name: Create symbolic link /var/lib/containerd -> /data1/var_lib_containerd
+  ansible.builtin.file:
+    src: /data1/var_lib_containerd
+    dest: /var/lib/containerd
+    state: link
+  when: not _containerd_dir.stat.exists
+- name: Create /etc/systemd/system/docker.service.d
+  ansible.builtin.file:
+    path: /etc/systemd/system/docker.service.d
+    state: directory
+  when: docker.proxy is defined
+`;
+    importTasksYaml(original, workspace);
+    const fileBlocks = workspace.getAllBlocks(false).filter((b) => b.type === 'module_file');
+    expect(fileBlocks).toHaveLength(2);
+
+    const whenBlock0 = fileBlocks[0].getInputTargetBlock('ROW_WHEN');
+    expect(whenBlock0.type).toBe('cond_not');
+    const whenBlock1 = fileBlocks[1].getInputTargetBlock('ROW_WHEN');
+    expect(whenBlock1.type).toBe('cond_test');
+
+    const regenerated = yaml.load(serializeWorkspace(workspace, 'role'));
+    expect(regenerated[0].when).toBe('not _containerd_dir.stat.exists');
+    expect(regenerated[1].when).toBe('docker.proxy is defined');
+  });
+
+  it('falls back to a cond_raw block for a when: expression outside the supported grammar', () => {
+    const original = `
+- name: p
+  hosts: all
+  tasks:
+    - name: noisy
+      debug:
+        msg: hi
+      when: "ansible_facts['distribution_major_version'] | int >= 6"
+`;
+    importPlaybookYaml(original, workspace);
+    const debugBlock = workspace.getAllBlocks(false).find((b) => b.type === 'module_debug');
+    const whenBlock = debugBlock.getInputTargetBlock('ROW_WHEN');
+    expect(whenBlock.type).toBe('cond_raw');
+
+    const regenerated = yaml.load(workspaceToPlaybook(workspace));
+    expect(regenerated[0].tasks[0].when).toBe("ansible_facts['distribution_major_version'] | int >= 6");
+  });
+
   it('round-trips a role tasks/main.yml (bare task list) with no data loss', () => {
     const original = `
 - name: install nginx

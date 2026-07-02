@@ -90,8 +90,19 @@ describe('ansibleGenerator', () => {
     const debugModule = workspace.newBlock('module_debug');
     debugModule.setFieldValue('checking', 'NAME');
     debugModule.setFieldValue('hi', 'msg');
+    // WHEN is a value input (a condition-block tree), not a plain text field
+    // — build ansible_os_family == 'Debian' out of cond_var/cond_literal/
+    // cond_compare (see blocks.js / conditionParser.js).
+    const whenLeft = workspace.newBlock('cond_var');
+    whenLeft.setFieldValue('ansible_os_family', 'NAME');
+    const whenRight = workspace.newBlock('cond_literal');
+    whenRight.setFieldValue('Debian', 'VALUE');
+    const whenCompare = workspace.newBlock('cond_compare');
+    whenCompare.setFieldValue('==', 'OP');
+    whenCompare.getInput('LEFT').connection.connect(whenLeft.outputConnection);
+    whenCompare.getInput('RIGHT').connection.connect(whenRight.outputConnection);
     debugModule.addEnvelopeField('WHEN');
-    debugModule.setFieldValue("ansible_os_family == 'Debian'", 'WHEN');
+    debugModule.getInput('ROW_WHEN').connection.connect(whenCompare.outputConnection);
     debugModule.addEnvelopeField('REGISTER');
     debugModule.setFieldValue('result', 'REGISTER');
     debugModule.addEnvelopeField('BECOME');

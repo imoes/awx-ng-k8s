@@ -210,8 +210,10 @@ Projekt-Rollen, Rollen-Variablen, Vaults). Einzige Backend-Änderung: `.json` zu
 | `blocks.js` | Blockdefinitionen: `play`, `role_use`, `raw_task` (Fallback), + 1 Block pro Katalog-Modul. **Modul-Block = Task** (kein separater Task-Wrapper, `setPreviousStatement/setNextStatement(true,'Task')` direkt auf dem Modul-Block). Zwei getrennte Dropdowns: „add parameter…" (Modul-eigene Optional-Args) und „add task setting…" (when/tags/notify/register/loop/delegate_to/become/ignore_errors) |
 | `moduleCatalog.generated.json` | Auto-generierter Katalog **aller 71 `ansible.builtin`-Module** (`tools/gen-module-catalog.py`, läuft via `ansible-doc -j` in `awx_ee`) — inkl. `type` je Param (`str`/`bool`/`int`/`float`/`path`/`list`/`dict`/`raw`) |
 | `toolbox.js` | Kategorien Play/Modules/Roles/Raw. **Modules und Roles sind dynamische Blockly-`custom`-Kategorien** (`registerToolboxCategoryCallback`) statt statischer `contents` — ermöglicht kategorie-scoped Live-Suche (siehe unten). `moduleFlyoutContents(filter)` / `roleFlyoutContents(roleNames, filter)` sind eigenständig testbar |
-| `ansibleGenerator.js` | Blöcke → `plays[]`-Objektbaum → `jsonToYaml()` (bestehendes Util, kein Blockly-eigener String-Generator). `coerceModuleArgValue()` parst jeden Feldwert typgerecht (list/dict/int/float/raw) anhand `paramTypes_` |
+| `ansibleGenerator.js` | Blöcke → `plays[]`-Objektbaum → `jsonToYaml()` (bestehendes Util, kein Blockly-eigener String-Generator). `coerceModuleArgValue()` parst jeden Feldwert typgerecht (list/dict/int/float/raw) anhand `paramTypes_`. `conditionBlockToExpr()` wandelt einen Condition-Block-Baum (siehe unten) in den Jinja-Ausdruck für `when:` |
 | `playbookImporter.js` | Inverse: YAML → Blöcke; `importPlaybookYaml` (Plays) + `importTasksYaml` (Rollen-Task-Liste); unbekannte Module/Konstrukte als `raw_task` verlustfrei |
+| `conditionParser.js` | Best-effort Parser: `when:`-Jinja-Text → Condition-Block-Baum (`parseConditionToBlock`), Fallback `cond_raw` bei nicht unterstützter Grammatik (Filter, Funktionsaufrufe, …) |
+| `blocklyUtil.js` | Gemeinsames `newBlock()` (init/render-Guard für Headless-Jest-Workspaces), von `playbookImporter.js` + `conditionParser.js` genutzt |
 | `VariablesPanel.js` + `varInsertion.js` | Rechte Variablen-Palette, **nur für die Rollen des aktuellen Dokuments** (+ Vault-Variablen); zeigt je Variable den Wert/Default; Drag&Drop fügt `{{ name }}` in ein Wertefeld ein |
 | `sidecarPath.js` | `playbooks/site.yml` → `playbooks/site.blockly.json` (Workspace-Layout-Sidecar) |
 
@@ -228,6 +230,24 @@ Projekt-Rollen, Rollen-Variablen, Vaults). Einzige Backend-Änderung: `.json` zu
 **`with_items`-Alias**: beim Import wird das alte `with_items:` (Vorgänger von `loop:`) als Synonym erkannt und ins `LOOP`-Feld übernommen; beim Generieren wird immer die moderne Schreibweise `loop:` erzeugt.
 
 **Kuratierte Choices**: `package.state` ist im ganzen Katalog der einzige Fall, wo `ansible-doc` keine `choices` liefert (generischer Passthrough zu apt/yum/dnf) — Override auf `['present','absent','latest']` in `CURATED_CHOICES` (`blocks.js`). Jeder andere state-artige Param hat bereits echte `ansible-doc`-Choices.
+
+**Conditions statt Freitext-`when:`** (Blockly-native, wie vom Nutzer gefordert): `when:` ist kein
+Textfeld mehr, sondern ein **Value-Input** (`ENVELOPE_FIELDS` WHEN-Eintrag hat `kind:'value'`,
+`check:'Cond'`), in das ein Condition-Block eingeklinkt wird. Blocktypen (`blocks.js`,
+`defineConditionBlocks()`): `cond_var` (Variable/Fact-Referenz, freier Text, kein Output-Check →
+darf auch direkt in WHEN, da Ansible einen bloßen truthy-Var-Namen als `when:` erlaubt),
+`cond_literal` (Literal — Zahl/true/false unquoted, alles andere auto-quoted; explizit gequotete
+Werte wie `"6"` bleiben beim Reimport ein String, wichtig weil z.B. `distribution_major_version`
+ein String-Fact ist), `cond_compare` (`==`/`!=`/`>`/`<`/`>=`/`<=`/`in`/`not in`), `cond_test`
+(„is [x] not [Dropdown: defined/undefined/none/true/false/changed/failed/success/skipped]"),
+`cond_not`, `cond_logic` (`and`/`or`, verkettbar für >2 Bedingungen), `cond_raw` (Fallback, hält
+einen nicht zerlegbaren Ausdruck verlustfrei als Text — analog `raw_task`). Eigene Toolbox-Rubrik
+„Conditions". `conditionParser.js` parst reale `when:`-Ausdrücke (Tokenizer + rekursiver
+Abstiegsparser, Operatorpräzedenz wie Jinja/Python: or < and < not < is-Test < Vergleich <
+Primary) zurück in Blöcke; alles außerhalb dieser Grammatik (Filter wie `| int`, Funktionsaufrufe,
+Listen-Literale, `~`-Konkatenation) landet in `cond_raw`. Live an der echten Rolle `img_docker`
+verifiziert: `not _containerd_dir.stat.exists` → `cond_not`+`cond_var` (keine Klammern nötig, da
+„not" in Jinja/Python stärker bindet als Vergleiche), `docker.proxy is defined` → `cond_test`.
 
 **Param-Aliase (`paramAliases_`)**: `ansible-doc -j` liefert pro Param auch `aliases` (z.B. `ansible.builtin.file`s kanonischer Param `path` hat die Aliase `dest`/`name`; `apt.name` → `pkg`/`package`; `systemd.name` → `unit`). `tools/gen-module-catalog.py` erfasst dieses Feld (`compact_options()`), `blocks.js` baut daraus je Block eine `alias → kanonischer Name`-Map (`this.paramAliases_`). Beim Import (`playbookImporter.js`) wird **jeder** eingehende Arg-Key zuerst über diese Map aufgelöst, bevor `getField`/`addOptionalParam`/`canRepresent` etwas damit tun — vorher waren `dest:`/`pkg:`/`unit:` & Co. komplett unbekannte Keys, wodurch reale Tasks (z.B. Symlinks via `file: src:/dest:`) fälschlich als `raw_task` importiert wurden, obwohl sie ein ganz normales `ansible.builtin`-Modul verwenden. Der Katalog-Audit fand ~60+ solcher Alias-Mappings quer über die 71 Module. Block speichert/erzeugt beim Regenerieren immer den kanonischen Namen (funktional identisch, z.B. `path:` statt `dest:`).
 

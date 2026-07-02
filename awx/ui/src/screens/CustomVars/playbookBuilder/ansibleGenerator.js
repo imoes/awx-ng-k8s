@@ -74,6 +74,71 @@ function coerceModuleArgValue(rawValue, paramType) {
   return rawValue; // str / path / bool(already coerced by fieldValue)
 }
 
+// Converts a literal string typed into a cond_literal block into its Jinja
+// source form. An explicitly-quoted value ("6", 'Debian') always stays a
+// string, even if its contents look numeric — this matters because several
+// common ansible_facts (e.g. distribution_major_version) are STRINGS, so a
+// faithfully-imported `== "6"` must not silently become the number 6.
+// Otherwise: plain numbers/true/false are unquoted, anything else is
+// auto-quoted as a string (the convenient default for typing e.g. Debian).
+function literalToExpr(raw) {
+  if (raw === '') return null;
+  const quoted = /^(['"])([\s\S]*)\1$/.exec(raw);
+  if (quoted) return `'${quoted[2].replace(/'/g, "\\'")}'`;
+  if (/^-?\d+(\.\d+)?$/.test(raw) || raw === 'true' || raw === 'false') return raw;
+  return `'${String(raw).replace(/'/g, "\\'")}'`;
+}
+
+// Walks a condition-block tree (cond_var/cond_literal/cond_compare/cond_test/
+// cond_not/cond_logic/cond_raw — see blocks.js) into the Jinja expression
+// string Ansible expects for `when:`. Returns null for an empty/disconnected
+// slot (no when: is emitted) or when a required child is missing.
+export function conditionBlockToExpr(block) {
+  if (!block) return null;
+  switch (block.type) {
+    case 'cond_var': {
+      const name = (block.getFieldValue('NAME') || '').trim();
+      return name || null;
+    }
+    case 'cond_literal':
+      return literalToExpr(block.getFieldValue('VALUE'));
+    case 'cond_compare': {
+      const left = conditionBlockToExpr(block.getInputTargetBlock('LEFT'));
+      const right = conditionBlockToExpr(block.getInputTargetBlock('RIGHT'));
+      if (!left || !right) return null;
+      return `${left} ${block.getFieldValue('OP')} ${right}`;
+    }
+    case 'cond_test': {
+      const subject = conditionBlockToExpr(block.getInputTargetBlock('SUBJECT'));
+      if (!subject) return null;
+      const negate = block.getFieldValue('NEGATE') === 'TRUE';
+      return `${subject} is ${negate ? 'not ' : ''}${block.getFieldValue('TEST')}`;
+    }
+    case 'cond_not': {
+      const innerBlock = block.getInputTargetBlock('A');
+      const inner = conditionBlockToExpr(innerBlock);
+      if (!inner) return null;
+      // "not" binds tighter than and/or in Jinja/Python — only parenthesize
+      // when the child is itself an and/or combination (precedence would
+      // otherwise flip); a plain "not foo.bar" needs no parens (matches the
+      // common hand-written style, e.g. `not _containerd_dir.stat.exists`).
+      return innerBlock.type === 'cond_logic' ? `not (${inner})` : `not ${inner}`;
+    }
+    case 'cond_logic': {
+      const a = conditionBlockToExpr(block.getInputTargetBlock('A'));
+      const b = conditionBlockToExpr(block.getInputTargetBlock('B'));
+      if (!a || !b) return null;
+      // Always parenthesized — safe/unambiguous regardless of how these
+      // blocks are nested, at the minor cost of a few redundant parens.
+      return `(${a} ${block.getFieldValue('OP')} ${b})`;
+    }
+    case 'cond_raw':
+      return block.getFieldValue('EXPR') || null;
+    default:
+      return null;
+  }
+}
+
 function blockToModuleArgs(moduleBlock) {
   const args = {};
   const paramTypes = moduleBlock.paramTypes_ || {};
@@ -113,6 +178,11 @@ function blockToTaskObject(taskBlock) {
   ordered[shortName] = blockToModuleArgs(taskBlock);
 
   ENVELOPE_FIELDS.forEach((envelope) => {
+    if (envelope.kind === 'value') {
+      const expr = conditionBlockToExpr(taskBlock.getInputTargetBlock(`ROW_${envelope.key}`));
+      if (expr) ordered[envelope.yamlKey] = expr;
+      return;
+    }
     const value = fieldValue(taskBlock, envelope.key);
     if (value === '' || value === null || value === undefined || value === false) return;
     if (envelope.key === 'BECOME' || envelope.key === 'IGNORE_ERRORS') {

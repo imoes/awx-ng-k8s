@@ -7,7 +7,7 @@
 // flyout from the current palette-filter string. Since only one category is
 // open at a time, the single filter box only ever narrows that category.
 import moduleCatalog from './moduleCatalog.generated.json';
-import { moduleBlockType } from './blocks';
+import { moduleBlockType, CONDITION_BLOCK_TYPES } from './blocks';
 
 export const MODULES_CATEGORY_NAME = 'Modules';
 export const ROLES_CATEGORY_NAME = 'Roles';
@@ -39,6 +39,12 @@ export function buildToolbox() {
         name: ROLES_CATEGORY_NAME,
         colour: '290',
         custom: ROLE_SEARCH_CALLBACK,
+      },
+      {
+        kind: 'category',
+        name: 'Conditions',
+        colour: '210',
+        contents: CONDITION_BLOCK_TYPES.map((type) => ({ kind: 'block', type })),
       },
       {
         kind: 'category',

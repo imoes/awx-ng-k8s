@@ -53,13 +53,33 @@ Jedes Modul-Feld kennt seinen Ansible-Datentyp (aus `ansible-doc`) und verhält 
 
 | Einstellung | Bedeutung |
 |---|---|
-| `when:` | Bedingung |
+| `when:` | Bedingung — **kein Textfeld**, sondern ein Steckplatz für einen **Condition-Block** (siehe unten) |
 | `tags:` | Kommagetrennte Tag-Liste |
 | `notify:` | Kommagetrennte Handler-Liste |
 | `register:` | Variablenname für das Ergebnis |
 | `loop:` | Schleife über eine Liste (Kurzform oder volle YAML-Liste) — ersetzt auch das ältere `with_items:` beim Import (siehe unten) |
 | `delegate_to:` | Task auf einem anderen Host ausführen |
 | `become:` / `ignore_errors:` | Checkboxen |
+
+## Bedingungen (`when:`) visuell bauen
+
+Statt Jinja-Text zu tippen, klinkt man einen **Condition-Block** aus der Rubrik **Conditions** in
+den `when:`-Steckplatz eines Task-Moduls ein:
+
+| Block | Zweck |
+|---|---|
+| `var` | Variable/Fact-Referenz, z.B. `foo`, `motd_contents.stdout`, `ansible_facts['distribution']` — ohne `{{ }}` |
+| `value` | Literal — Zahlen/`true`/`false` unquoted, alles andere wird automatisch gequotet (z.B. `Debian`) |
+| `compare` | zwei Werte vergleichen: `==`/`!=`/`>`/`<`/`>=`/`<=`/`in`/`not in` |
+| `check … is [x] not …` | Jinja-„is"-Test: `defined`/`undefined`/`none`/`true`/`false`/`changed`/`failed`/`success`/`skipped` (Häkchen = „is not …") |
+| `not` | negiert eine Bedingung |
+| `and`/`or` | verknüpft zwei Bedingungen (mehrere Blöcke verschachteln für mehr als zwei) |
+| raw condition | Fallback — hält einen nicht in Blöcke zerlegbaren Ausdruck als Text (z.B. mit Filtern wie `\| int`) |
+
+Ein bloßer `var`-Block reicht auch direkt im `when:`-Slot (`when: irgendein_flag`, wie in Ansible
+üblich). Beim Öffnen bestehender Playbooks/Rollen wird jedes `when:` automatisch in diese Blöcke
+zerlegt — was die eingebaute Grammatik nicht abdeckt (Filter, Funktionsaufrufe, Jinja-Templating),
+landet unverändert im **raw condition**-Block.
 
 ## Rollen verwenden
 

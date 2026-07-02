@@ -8,6 +8,8 @@
 import * as Blockly from 'blockly';
 import yaml from 'js-yaml';
 import { moduleBlockType, MODULE_NAMES, ENVELOPE_FIELDS } from './blocks';
+import { newBlock } from './blocklyUtil';
+import { parseConditionToBlock } from './conditionParser';
 
 const KNOWN_PLAY_KEYS = new Set(['name', 'hosts', 'become', 'tasks', 'roles']);
 // A task's module key is whatever remains after removing "name" and every
@@ -22,17 +24,6 @@ const KNOWN_TASK_ENVELOPE_KEYS = new Set([
   'name', 'with_items', ...ENVELOPE_FIELDS.map((e) => e.yamlKey),
 ]);
 const MODULE_NAME_SET = new Set(MODULE_NAMES);
-
-function newBlock(workspace, type) {
-  const block = workspace.newBlock(type);
-  // initSvg/render only exist on rendered (browser) workspaces — guard so
-  // this also works against a headless Blockly.Workspace() in jest tests.
-  if (typeof block.initSvg === 'function') {
-    block.initSvg();
-    block.render();
-  }
-  return block;
-}
 
 function setField(block, fieldName, value) {
   const field = block.getField(fieldName);
@@ -153,12 +144,21 @@ function importTask(workspace, taskObj) {
       : envelope.yamlKey;
     if (!(sourceKey in taskObj)) return;
     let value = taskObj[sourceKey];
+    moduleBlock.addEnvelopeField(envelope.key);
+    if (envelope.kind === 'value') {
+      // when: may be a single Jinja expression string, or a list of strings
+      // that Ansible implicitly ANDs together — normalize to one string
+      // before handing it to the condition parser (see conditionParser.js).
+      const exprText = Array.isArray(value) ? value.join(' and ') : String(value);
+      const condBlock = parseConditionToBlock(workspace, exprText);
+      moduleBlock.getInput(`ROW_${envelope.key}`).connection.connect(condBlock.outputConnection);
+      return;
+    }
     if (envelope.key === 'TAGS' || envelope.key === 'NOTIFY') {
       value = Array.isArray(value) ? value.join(', ') : value;
     } else if (envelope.key === 'LOOP' && typeof value !== 'string') {
       value = yaml.dump(value).trim();
     }
-    moduleBlock.addEnvelopeField(envelope.key);
     setField(moduleBlock, envelope.key, value);
   });
   return moduleBlock;

@@ -61,8 +61,12 @@ const PRIMARY_PARAMS = {
 // same "add parameter…" dropdown as the module's own optional args. Field
 // ids are ALL-CAPS so they can never collide with a lowercase module
 // parameter name (ansible-doc param names are always lowercase).
+// WHEN is a value input (a condition-block tree, see defineConditionBlocks())
+// instead of a plain text field — "Blockly-like" conditions instead of
+// hand-typed Jinja. Every other envelope entry stays a simple field.
+export const COND_CHECK = 'Cond';
 export const ENVELOPE_FIELDS = [
-  { key: 'WHEN', label: 'when', yamlKey: 'when', makeField: () => new Blockly.FieldTextInput('') },
+  { key: 'WHEN', label: 'when', yamlKey: 'when', kind: 'value', check: COND_CHECK },
   { key: 'TAGS', label: 'tags', yamlKey: 'tags', makeField: () => new Blockly.FieldTextInput('') },
   { key: 'NOTIFY', label: 'notify', yamlKey: 'notify', makeField: () => new Blockly.FieldTextInput('') },
   { key: 'REGISTER', label: 'register', yamlKey: 'register', makeField: () => new Blockly.FieldTextInput('') },
@@ -129,6 +133,13 @@ function appendParamRow(block, param, moduleShortName) {
 }
 
 function appendEnvelopeRow(block, envelope) {
+  if (envelope.kind === 'value') {
+    block
+      .appendValueInput(`ROW_${envelope.key}`)
+      .setCheck(envelope.check || null)
+      .appendField(`${envelope.label}:`);
+    return;
+  }
   block
     .appendDummyInput(`ROW_${envelope.key}`)
     .appendField(`${envelope.label}:`)
@@ -339,9 +350,136 @@ function defineStaticBlocks() {
   };
 }
 
+// Condition ("when:") blocks — value-returning blocks that compose into a
+// Jinja boolean expression, so `when:` is built visually (drag/drop
+// comparisons, and/or/not, "is" tests) instead of hand-typed Jinja text.
+// cond_var/cond_literal have no output check (`null`) so they can plug
+// directly into a WHEN slot too — Ansible allows a bare truthy variable as
+// `when: some_flag`, same as any of the boolean-producing blocks below.
+export const COND_TEST_NAMES = [
+  ['defined', 'defined'],
+  ['undefined', 'undefined'],
+  ['none', 'none'],
+  ['true', 'true'],
+  ['false', 'false'],
+  ['changed', 'changed'],
+  ['failed', 'failed'],
+  ['success', 'success'],
+  ['skipped', 'skipped'],
+];
+
+function defineConditionBlocks() {
+  Blockly.Blocks.cond_var = {
+    init() {
+      this.appendDummyInput()
+        .appendField('var')
+        .appendField(new Blockly.FieldTextInput('foo'), 'NAME');
+      this.setOutput(true, null);
+      this.setColour(65);
+      this.setTooltip(
+        "A variable/fact reference, e.g. foo, motd_contents.stdout, " +
+        "ansible_facts['distribution']. Emitted verbatim (no {{ }})."
+      );
+    },
+  };
+
+  Blockly.Blocks.cond_literal = {
+    init() {
+      this.appendDummyInput()
+        .appendField('value')
+        .appendField(new Blockly.FieldTextInput(''), 'VALUE');
+      this.setOutput(true, null);
+      this.setColour(65);
+      this.setTooltip(
+        'A literal value — plain numbers/true/false are emitted unquoted, ' +
+        'anything else is quoted as a string (e.g. Debian → \'Debian\').'
+      );
+    },
+  };
+
+  Blockly.Blocks.cond_compare = {
+    init() {
+      this.appendValueInput('LEFT').appendField('compare');
+      this.appendDummyInput().appendField(
+        new Blockly.FieldDropdown([
+          ['==', '=='], ['!=', '!='], ['>', '>'], ['<', '<'], ['>=', '>='], ['<=', '<='],
+          ['in', 'in'], ['not in', 'not in'],
+        ]),
+        'OP'
+      );
+      this.appendValueInput('RIGHT');
+      this.setInputsInline(true);
+      this.setOutput(true, COND_CHECK);
+      this.setColour(210);
+      this.setTooltip("Compares two values, e.g. ansible_facts['distribution'] == 'Debian'.");
+    },
+  };
+
+  Blockly.Blocks.cond_test = {
+    init() {
+      this.appendValueInput('SUBJECT').appendField('check');
+      this.appendDummyInput()
+        .appendField('is')
+        .appendField(new Blockly.FieldCheckbox('FALSE'), 'NEGATE')
+        .appendField('not')
+        .appendField(new Blockly.FieldDropdown(COND_TEST_NAMES), 'TEST');
+      this.setInputsInline(true);
+      this.setOutput(true, COND_CHECK);
+      this.setColour(210);
+      this.setTooltip(
+        'A Jinja "is" test, e.g. foo is defined, task_result is failed ' +
+        '(tick the checkbox for "is not …").'
+      );
+    },
+  };
+
+  Blockly.Blocks.cond_not = {
+    init() {
+      this.appendValueInput('A').setCheck(COND_CHECK).appendField('not');
+      this.setInputsInline(true);
+      this.setOutput(true, COND_CHECK);
+      this.setColour(230);
+      this.setTooltip('Negates a condition.');
+    },
+  };
+
+  Blockly.Blocks.cond_logic = {
+    init() {
+      this.appendValueInput('A').setCheck(COND_CHECK);
+      this.appendDummyInput().appendField(
+        new Blockly.FieldDropdown([['and', 'and'], ['or', 'or']]),
+        'OP'
+      );
+      this.appendValueInput('B').setCheck(COND_CHECK);
+      this.setInputsInline(true);
+      this.setOutput(true, COND_CHECK);
+      this.setColour(230);
+      this.setTooltip('Combines two conditions with and/or — chain multiple blocks for more than two.');
+    },
+  };
+
+  // Escape hatch: preserves any when: expression the parser couldn't
+  // decompose into the blocks above — same lossless-fallback pattern as
+  // raw_task for whole tasks.
+  Blockly.Blocks.cond_raw = {
+    init() {
+      this.appendDummyInput().appendField('raw condition (unrecognized expression)');
+      this.appendDummyInput().appendField(new FieldMultilineInput(''), 'EXPR');
+      this.setOutput(true, COND_CHECK);
+      this.setColour(0);
+      this.setTooltip('Fallback: holds a when: expression verbatim that could not be decomposed into blocks.');
+    },
+  };
+}
+
+export const CONDITION_BLOCK_TYPES = [
+  'cond_var', 'cond_literal', 'cond_compare', 'cond_test', 'cond_not', 'cond_logic', 'cond_raw',
+];
+
 export function registerBlocks() {
   defineStaticBlocks();
   defineModuleBlocks();
+  defineConditionBlocks();
 }
 
 export { moduleBlockType };
