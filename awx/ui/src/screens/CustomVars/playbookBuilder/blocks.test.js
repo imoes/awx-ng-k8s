@@ -34,6 +34,65 @@ describe('playbook builder blocks', () => {
     workspace.dispose();
   });
 
+  it('registers dict/dict_entry value blocks', () => {
+    expect(Blockly.Blocks.dict).toBeDefined();
+    expect(Blockly.Blocks.dict_entry).toBeDefined();
+  });
+
+  it('a dict is a value (not a condition): fits a variable/dict slot but NOT a when: slot', () => {
+    const workspace = new Blockly.Workspace();
+    const dict = workspace.newBlock('dict');
+    expect(dict.outputConnection.getCheck()).toContain('Value');
+
+    // Fits define_var's optional value-block input …
+    const v = workspace.newBlock('define_var');
+    expect(v.getInput('VALUE_BLOCK').connection.getCheck()).toContain('Value');
+    v.getInput('VALUE_BLOCK').connection.connect(dict.outputConnection);
+    expect(v.getInputTargetBlock('VALUE_BLOCK')).toBe(dict);
+
+    // … but a dict must NOT be accepted as a when: condition (setting_when's
+    // value input only takes 'Cond'). The connection checker is exactly what
+    // the drag UI consults, so asserting it rejects the pair is the real test.
+    const whenSetting = workspace.newBlock('setting_when');
+    const dict2 = workspace.newBlock('dict');
+    const checker = workspace.connectionChecker;
+    expect(
+      checker.canConnect(whenSetting.getInput('VALUE').connection, dict2.outputConnection, false)
+    ).toBe(false);
+    workspace.dispose();
+  });
+
+  it('dict_entry takes a scalar text field OR a value block (variable / nested dict)', () => {
+    const workspace = new Blockly.Workspace();
+    const entry = workspace.newBlock('dict_entry');
+    expect(entry.getField('KEY')).toBeDefined();
+    expect(entry.getField('VALUE')).toBeDefined();
+    // A bare variable reference (cond_var, wildcard output) plugs into the
+    // entry's value-block input.
+    const v = workspace.newBlock('cond_var');
+    entry.getInput('VALUE_BLOCK').connection.connect(v.outputConnection);
+    expect(entry.getInputTargetBlock('VALUE_BLOCK')).toBe(v);
+    // Entries chain vertically inside a dict.
+    const entry2 = workspace.newBlock('dict_entry');
+    entry.nextConnection.connect(entry2.previousConnection);
+    expect(entry.getNextBlock()).toBe(entry2);
+    workspace.dispose();
+  });
+
+  it('dict-typed module params (e.g. set_stats.data) get a BLOCK_<name> value input for a dict block', () => {
+    const workspace = new Blockly.Workspace();
+    const setStats = workspace.newBlock(moduleBlockType('set_stats'));
+    // data is required (shown by default) and dict-typed → text field + block input.
+    expect(setStats.getField('data')).toBeDefined();
+    const blockInput = setStats.getInput('BLOCK_data');
+    expect(blockInput).not.toBeNull();
+    expect(blockInput.connection.getCheck()).toContain('Value');
+    const dict = workspace.newBlock('dict');
+    blockInput.connection.connect(dict.outputConnection);
+    expect(setStats.getInputTargetBlock('BLOCK_data')).toBe(dict);
+    workspace.dispose();
+  });
+
   it('can instantiate a module block (e.g. debug) on a headless workspace', () => {
     const workspace = new Blockly.Workspace();
     const block = workspace.newBlock(moduleBlockType('debug'));

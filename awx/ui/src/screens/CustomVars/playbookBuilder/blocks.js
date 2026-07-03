@@ -69,6 +69,13 @@ const PRIMARY_PARAMS = {
 // looking bolted on from outside.
 export const COND_CHECK = 'Cond';
 export const TASK_SETTING_CHECK = 'TaskSetting';
+// A "value" is a variable reference, literal, or dict (later also list) that
+// can fill a variable's value or a dict-/structured module param — as opposed
+// to a condition (COND_CHECK). cond_var/cond_literal keep a wildcard output
+// (null) so they still fit both a when: condition AND a value slot; the
+// `dict` block outputs VALUE_CHECK so it fits value slots but NOT when:.
+export const VALUE_CHECK = 'Value';
+export const DICT_ENTRY_CHECK = 'DictEntry';
 export const ENVELOPE_FIELDS = [
   { key: 'WHEN', label: 'when', yamlKey: 'when', kind: 'value', check: COND_CHECK },
   { key: 'TAGS', label: 'tags', yamlKey: 'tags', kind: 'field', fieldKind: 'text' },
@@ -136,6 +143,15 @@ function appendParamRow(block, param, moduleShortName) {
     .appendDummyInput(`ROW_${param.name}`)
     .appendField(`${label}:`)
     .appendField(fieldForParam(param, choices), param.name);
+  // dict-typed params can be built visually with a `dict` block instead of
+  // typing YAML into the text field — the block (when connected) wins over
+  // the field (see ansibleGenerator blockToModuleArgs).
+  if (param.type === 'dict') {
+    block
+      .appendValueInput(`BLOCK_${param.name}`)
+      .setCheck(VALUE_CHECK)
+      .appendField(`${param.name} (dict block):`);
+  }
 }
 
 // One standalone block type per task-setting keyword (see ENVELOPE_FIELDS
@@ -291,6 +307,9 @@ function defineModuleBlocks() {
         this.activeOptional_.push(name);
         appendParamRow(this, paramByName[name], mod.short_name);
         this.moveInputBefore(`ROW_${name}`, 'ADD_OPT');
+        // dict params also get a `BLOCK_<name>` value input (appendParamRow) —
+        // keep it grouped right after its row, before the "add param" dropdown.
+        if (this.getInput(`BLOCK_${name}`)) this.moveInputBefore(`BLOCK_${name}`, 'ADD_OPT');
       },
       // Finds an existing task-setting block of the given key already
       // chained into the SETTINGS stack, or null.
@@ -385,13 +404,19 @@ function defineStaticBlocks() {
       this.appendDummyInput()
         .appendField('=')
         .appendField(new FieldMultilineInput(''), 'VALUE');
+      // Optional structured value: plug a `dict` (or variable) block here to
+      // give the variable a mapping/variable value without typing YAML — it
+      // overrides the text field above when connected (see ansibleGenerator
+      // valueBlockToValue). "field for scalars, block for structure."
+      this.appendValueInput('VALUE_BLOCK').setCheck(VALUE_CHECK).appendField('or');
       this.setPreviousStatement(true, 'Var');
       this.setNextStatement(true, 'Var');
       this.setColour(65);
       this.setTooltip(
         'Defines one play-level variable (an entry in vars:). Plain text is ' +
         'kept as a string; numbers/lists/mappings can be entered as YAML ' +
-        '(e.g. a comma list or one "- item" per line).'
+        '(e.g. a comma list or one "- item" per line). For a dict/variable ' +
+        'value, plug a block into "or".'
       );
     },
   };
@@ -552,17 +577,61 @@ function defineConditionBlocks() {
   };
 }
 
+// Structured-value blocks (dict; later also list). A `dict` is an ordered
+// chain of `dict_entry` (key→value) blocks and outputs VALUE_CHECK so it fits
+// a variable's value or a dict-typed module param — never a when: condition.
+function defineValueBlocks() {
+  Blockly.Blocks.dict = {
+    init() {
+      this.appendDummyInput().appendField('dict');
+      this.appendStatementInput('ENTRIES').setCheck(DICT_ENTRY_CHECK);
+      this.setOutput(true, VALUE_CHECK);
+      this.setColour(160);
+      this.setTooltip(
+        'A dictionary (key→value mapping). Chain "entry" blocks inside; each ' +
+        'value can be typed text, a variable (var block → {{ … }}), or a ' +
+        'nested dict.'
+      );
+    },
+  };
+
+  // One key→value pair. The value is a typed scalar by default (VALUE text
+  // field); plugging a value block (variable / nested dict) into VALUE_BLOCK
+  // overrides it — same "field for scalars, block for structure" pattern as
+  // define_var.
+  Blockly.Blocks.dict_entry = {
+    init() {
+      this.appendDummyInput()
+        .appendField(new Blockly.FieldTextInput('key'), 'KEY')
+        .appendField(':')
+        .appendField(new FieldMultilineInput(''), 'VALUE');
+      this.appendValueInput('VALUE_BLOCK').setCheck(VALUE_CHECK).appendField('or');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, DICT_ENTRY_CHECK);
+      this.setNextStatement(true, DICT_ENTRY_CHECK);
+      this.setColour(160);
+      this.setTooltip(
+        'One key→value pair. Type a scalar value, or plug a variable/dict ' +
+        'block into "or" for a variable reference or a nested dict.'
+      );
+    },
+  };
+}
+
 export const CONDITION_BLOCK_TYPES = [
   'cond_var', 'cond_literal', 'cond_compare', 'cond_test', 'cond_not', 'cond_logic', 'cond_raw',
 ];
 
 export const TASK_SETTING_BLOCK_TYPES = ENVELOPE_FIELDS.map((e) => settingBlockType(e.key));
 
+export const DATA_BLOCK_TYPES = ['dict', 'dict_entry'];
+
 export function registerBlocks() {
   defineStaticBlocks();
   defineModuleBlocks();
   defineConditionBlocks();
   defineTaskSettingBlocks();
+  defineValueBlocks();
 }
 
 export { moduleBlockType };

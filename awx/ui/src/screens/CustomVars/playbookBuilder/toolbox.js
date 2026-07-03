@@ -8,7 +8,12 @@
 // Importing the plugin registers the `kind: 'search'` toolbox item globally.
 import '@blockly/toolbox-search';
 import moduleCatalog from './moduleCatalog.generated.json';
-import { moduleBlockType, CONDITION_BLOCK_TYPES, TASK_SETTING_BLOCK_TYPES } from './blocks';
+import {
+  moduleBlockType,
+  CONDITION_BLOCK_TYPES,
+  TASK_SETTING_BLOCK_TYPES,
+  DATA_BLOCK_TYPES,
+} from './blocks';
 
 const SORTED_MODULES = [...moduleCatalog].sort((a, b) =>
   a.short_name.localeCompare(b.short_name)
@@ -70,6 +75,12 @@ export function buildToolbox(roleNames = []) {
         name: 'Task Settings',
         colour: '230',
         contents: TASK_SETTING_BLOCK_TYPES.map((type) => ({ kind: 'block', type })),
+      },
+      {
+        kind: 'category',
+        name: 'Data',
+        colour: '160',
+        contents: DATA_BLOCK_TYPES.map((type) => ({ kind: 'block', type })),
       },
       {
         kind: 'category',

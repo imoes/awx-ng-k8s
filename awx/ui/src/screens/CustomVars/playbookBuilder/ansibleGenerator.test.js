@@ -150,6 +150,63 @@ describe('ansibleGenerator', () => {
     });
   });
 
+  it('emits a dict-valued variable from a dict block (scalar, number, variable, nested dict)', () => {
+    const play = workspace.newBlock('play');
+    play.setFieldValue('with dict', 'NAME');
+    play.setFieldValue('all', 'HOSTS');
+
+    const v = workspace.newBlock('define_var');
+    v.setFieldValue('db_config', 'NAME');
+
+    const dict = workspace.newBlock('dict');
+    // host: {{ db_host }}  (a variable → templated in a value context)
+    const eHost = workspace.newBlock('dict_entry');
+    eHost.setFieldValue('host', 'KEY');
+    const hostVar = workspace.newBlock('cond_var');
+    hostVar.setFieldValue('db_host', 'NAME');
+    eHost.getInput('VALUE_BLOCK').connection.connect(hostVar.outputConnection);
+    // port: 5432  (scalar text → number)
+    const ePort = workspace.newBlock('dict_entry');
+    ePort.setFieldValue('port', 'KEY');
+    ePort.setFieldValue('5432', 'VALUE');
+    // options: { ssl: true }  (nested dict)
+    const eOpts = workspace.newBlock('dict_entry');
+    eOpts.setFieldValue('options', 'KEY');
+    const nested = workspace.newBlock('dict');
+    const eSsl = workspace.newBlock('dict_entry');
+    eSsl.setFieldValue('ssl', 'KEY');
+    eSsl.setFieldValue('true', 'VALUE');
+    nested.getInput('ENTRIES').connection.connect(eSsl.previousConnection);
+    eOpts.getInput('VALUE_BLOCK').connection.connect(nested.outputConnection);
+
+    dict.getInput('ENTRIES').connection.connect(eHost.previousConnection);
+    eHost.nextConnection.connect(ePort.previousConnection);
+    ePort.nextConnection.connect(eOpts.previousConnection);
+    v.getInput('VALUE_BLOCK').connection.connect(dict.outputConnection);
+    play.getInput('VARS').connection.connect(v.previousConnection);
+
+    const parsed = yaml.load(workspaceToPlaybook(workspace));
+    expect(parsed[0].vars.db_config).toEqual({
+      host: '{{ db_host }}',
+      port: 5432,
+      options: { ssl: true },
+    });
+  });
+
+  it('emits a dict-typed module param (set_stats.data) from a connected dict block', () => {
+    const setStats = workspace.newBlock('module_set_stats');
+    setStats.setFieldValue('record', 'NAME');
+    const dict = workspace.newBlock('dict');
+    const e1 = workspace.newBlock('dict_entry');
+    e1.setFieldValue('processed', 'KEY');
+    e1.setFieldValue('42', 'VALUE');
+    dict.getInput('ENTRIES').connection.connect(e1.previousConnection);
+    setStats.getInput('BLOCK_data').connection.connect(dict.outputConnection);
+
+    const parsed = yaml.load(serializeWorkspace(workspace, 'role'));
+    expect(parsed[0].set_stats.data).toEqual({ processed: 42 });
+  });
+
   it('returns an empty-document YAML for an empty workspace', () => {
     const outputYaml = workspaceToPlaybook(workspace);
     expect(outputYaml.trim()).toBe('---');

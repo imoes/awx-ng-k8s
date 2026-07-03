@@ -120,6 +120,57 @@ describe('playbookImporter', () => {
     expect(regenerated[0].vars).toEqual({ app_name: 'myapp', port: 8080, packages: ['nginx', 'curl'] });
   });
 
+  it('imports a dict-valued variable as a dict block (nested mapping + {{ var }} value), round-trips', () => {
+    const original = `
+- name: with dict
+  hosts: all
+  vars:
+    db_config:
+      host: "{{ db_host }}"
+      port: 5432
+      options:
+        ssl: true
+  tasks: []
+`;
+    importPlaybookYaml(original, workspace);
+    const types = workspace.getAllBlocks(false).map((b) => b.type);
+    // Built out of dict / dict_entry / cond_var blocks, not dumped to text.
+    expect(types).toContain('dict');
+    expect(types).toContain('dict_entry');
+    expect(types).toContain('cond_var'); // the {{ db_host }} value
+
+    const playBlock = workspace.getAllBlocks(false).find((b) => b.type === 'play');
+    const varBlock = playBlock.getInputTargetBlock('VARS');
+    expect(varBlock.type).toBe('define_var');
+    expect(varBlock.getInputTargetBlock('VALUE_BLOCK').type).toBe('dict');
+
+    const regenerated = yaml.load(workspaceToPlaybook(workspace));
+    expect(regenerated[0].vars.db_config).toEqual({
+      host: '{{ db_host }}',
+      port: 5432,
+      options: { ssl: true },
+    });
+  });
+
+  it('imports a dict-typed module param (set_stats.data) as a dict block, round-trips', () => {
+    const original = `
+- name: record stats
+  set_stats:
+    data:
+      processed: 42
+      status: ok
+`;
+    importTasksYaml(original, workspace);
+    const setStats = workspace.getAllBlocks(false).find((b) => b.type === 'module_set_stats');
+    expect(setStats).toBeDefined();
+    // The dict value lives in a dict block on BLOCK_data, not the text field.
+    expect(setStats.getInputTargetBlock('BLOCK_data').type).toBe('dict');
+    expect(setStats.getFieldValue('data')).toBe('');
+
+    const regenerated = yaml.load(serializeWorkspace(workspace, 'role'));
+    expect(regenerated[0].set_stats.data).toEqual({ processed: 42, status: 'ok' });
+  });
+
   it('falls back to a raw_task block for an unrecognized (non-builtin) module, losslessly', () => {
     const original = `
 - name: firewall play

@@ -142,11 +142,21 @@ export function conditionBlockToExpr(block) {
 function blockToModuleArgs(moduleBlock) {
   const args = {};
   const paramTypes = moduleBlock.paramTypes_ || {};
+  // dict-typed params can carry a connected `dict` block (input BLOCK_<name>)
+  // — it wins over the param's text field (see blocks.js appendParamRow).
+  moduleBlock.inputList.forEach((input) => {
+    if (input.name && input.name.startsWith('BLOCK_') && input.connection) {
+      const vb = input.connection.targetBlock();
+      if (vb) args[input.name.slice('BLOCK_'.length)] = valueBlockToValue(vb);
+    }
+  });
   moduleBlock.inputList.forEach((input) => {
     input.fieldRow.forEach((field) => {
       // Skip the module header/add-dropdown and every task-envelope field
       // (name/when/tags/…) — only the module's OWN arguments belong here.
       if (!field.name || RESERVED_FIELD_NAMES.has(field.name)) return;
+      // A connected dict block already provided this param's value.
+      if (Object.prototype.hasOwnProperty.call(args, field.name)) return;
       const value = fieldValue(moduleBlock, field.name);
       // Blank text fields and unchecked checkboxes mean "the user didn't
       // set this" — there's no separate UI affordance (yet) to distinguish
@@ -235,13 +245,67 @@ function blockToRoleObject(roleBlock) {
 // comma/dash lists, mappings) — same permissive convention as EXTRA/role
 // VARS. A bare word like "nginx" round-trips as the string "nginx" via
 // yaml.load, so this is safe for the common case of a plain string value.
-function blockToVarValue(raw) {
-  if (raw === '') return '';
+// Coerces a scalar text field into its JS value: numbers/booleans/inline
+// lists/mappings parse via YAML; a Jinja `{{ … }}`/`{% … %}` template always
+// stays a verbatim string (YAML would choke on the braces); everything else
+// stays a string. Empty → ''. Used for variable values and dict-entry values.
+function coerceScalarValue(raw) {
+  const text = raw == null ? '' : String(raw);
+  if (text === '') return '';
+  if (text.includes('{{') || text.includes('{%')) return text;
   try {
-    return yaml.load(raw);
+    const parsed = yaml.load(text);
+    return parsed === undefined ? text : parsed;
   } catch {
-    return raw;
+    return text;
   }
+}
+
+// A `dict` block → a plain JS mapping object. Each dict_entry's value is its
+// connected value block (variable/nested dict) if present, else its scalar
+// text field (see coerceScalarValue).
+function dictBlockToObject(dictBlock) {
+  const obj = {};
+  let entry = dictBlock.getInputTargetBlock('ENTRIES');
+  while (entry) {
+    if (entry.type === 'dict_entry' && entry.isEnabled()) {
+      const key = (entry.getFieldValue('KEY') || '').trim();
+      if (key) {
+        const vb = entry.getInputTargetBlock('VALUE_BLOCK');
+        obj[key] = vb ? valueBlockToValue(vb) : coerceScalarValue(entry.getFieldValue('VALUE'));
+      }
+    }
+    entry = entry.getNextBlock();
+  }
+  return obj;
+}
+
+// A "value block" (variable reference / literal / dict) → its JS value, in a
+// VALUE context (a variable's value or a dict/structured param) — NOT a when:
+// condition. Key difference from conditionBlockToExpr: a cond_var here becomes
+// a templated `{{ name }}` reference (in vars/params a bare name would be a
+// literal string), whereas in a when: expression it stays bare.
+export function valueBlockToValue(block) {
+  if (!block) return null;
+  switch (block.type) {
+    case 'cond_var': {
+      const name = (block.getFieldValue('NAME') || '').trim();
+      return name ? `{{ ${name} }}` : '';
+    }
+    case 'cond_literal':
+      return coerceScalarValue(block.getFieldValue('VALUE'));
+    case 'dict':
+      return dictBlockToObject(block);
+    default:
+      return null;
+  }
+}
+
+// The value of a define_var block: a connected value block (dict/variable)
+// wins over the scalar text field.
+function varBlockValue(varBlock) {
+  const vb = varBlock.getInputTargetBlock('VALUE_BLOCK');
+  return vb ? valueBlockToValue(vb) : coerceScalarValue(fieldValue(varBlock, 'VALUE'));
 }
 
 function blockToPlayObject(playBlock) {
@@ -255,7 +319,7 @@ function blockToPlayObject(playBlock) {
   while (varBlock) {
     if (varBlock.isEnabled()) {
       const varName = fieldValue(varBlock, 'NAME');
-      if (varName) vars[varName] = blockToVarValue(fieldValue(varBlock, 'VALUE'));
+      if (varName) vars[varName] = varBlockValue(varBlock);
     }
     varBlock = varBlock.getNextBlock();
   }
@@ -318,7 +382,7 @@ export function workspaceToVarsMapping(workspace) {
     while (block) {
       if (block.isEnabled()) {
         const name = fieldValue(block, 'NAME');
-        if (name) vars[name] = blockToVarValue(fieldValue(block, 'VALUE'));
+        if (name) vars[name] = varBlockValue(block);
       }
       block = block.getNextBlock();
     }

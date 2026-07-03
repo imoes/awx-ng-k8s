@@ -115,7 +115,21 @@ function importModuleBlock(workspace, moduleKey, args) {
     moduleBlock.dispose();
     return null;
   }
-  (canonicalArgEntries || []).forEach(([key, value]) => setField(moduleBlock, key, value));
+  (canonicalArgEntries || []).forEach(([key, value]) => {
+    // A dict-typed param whose value is a mapping is built visually with a
+    // `dict` block plugged into the param's BLOCK_<key> input (see blocks.js);
+    // everything else goes into the param's text field as before.
+    const isMapping = value && typeof value === 'object' && !Array.isArray(value);
+    const blockInput = paramTypes[key] === 'dict' && isMapping
+      ? moduleBlock.getInput(`BLOCK_${key}`)
+      : null;
+    if (blockInput) {
+      const dictBlock = buildDictBlock(workspace, value);
+      blockInput.connection.connect(dictBlock.outputConnection);
+    } else {
+      setField(moduleBlock, key, value);
+    }
+  });
   return moduleBlock;
 }
 
@@ -188,10 +202,64 @@ function importRole(workspace, roleEntry) {
 // blockToVarValue in ansibleGenerator.js) — non-scalar values (list/dict)
 // are YAML-dumped into the multiline VALUE field via setField's existing
 // object handling.
+// Builds a "value block" for a JS value — a nested `dict` block for a plain
+// mapping, or a `cond_var` for a bare `{{ variable }}` reference — or null if
+// the value is a plain scalar/list that belongs in a text field. Inverse of
+// ansibleGenerator's valueBlockToValue.
+function buildValueBlock(workspace, value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return buildDictBlock(workspace, value);
+  }
+  if (typeof value === 'string') {
+    // Only a single bare variable reference (e.g. {{ db_host }},
+    // {{ ansible_facts['x'] }}) becomes a var block — a complex Jinja
+    // expression ({{ a | default(b) }}) stays verbatim text.
+    const m = value.match(/^\{\{\s*([\w[\]'".-]+)\s*\}\}$/);
+    if (m) {
+      const varRef = newBlock(workspace, 'cond_var');
+      setField(varRef, 'NAME', m[1]);
+      return varRef;
+    }
+  }
+  return null;
+}
+
+// A plain mapping object → a `dict` block with a chain of `dict_entry`
+// blocks. Nested mappings/variables recurse via buildValueBlock; plain
+// scalars/lists go into each entry's text field.
+function buildDictBlock(workspace, obj) {
+  const dict = newBlock(workspace, 'dict');
+  let prev = null;
+  Object.entries(obj).forEach(([key, val]) => {
+    const entry = newBlock(workspace, 'dict_entry');
+    setField(entry, 'KEY', key);
+    const vb = buildValueBlock(workspace, val);
+    if (vb) {
+      entry.getInput('VALUE_BLOCK').connection.connect(vb.outputConnection);
+    } else {
+      setField(entry, 'VALUE', val);
+    }
+    if (prev) {
+      prev.nextConnection.connect(entry.previousConnection);
+    } else {
+      dict.getInput('ENTRIES').connection.connect(entry.previousConnection);
+    }
+    prev = entry;
+  });
+  return dict;
+}
+
 function importVar(workspace, varName, varValue) {
   const varBlock = newBlock(workspace, 'define_var');
   setField(varBlock, 'NAME', varName);
-  setField(varBlock, 'VALUE', varValue);
+  // A mapping or bare {{ variable }} value becomes a structured block plugged
+  // into VALUE_BLOCK; a plain scalar/list stays in the text field.
+  const vb = buildValueBlock(workspace, varValue);
+  if (vb) {
+    varBlock.getInput('VALUE_BLOCK').connection.connect(vb.outputConnection);
+  } else {
+    setField(varBlock, 'VALUE', varValue);
+  }
   return varBlock;
 }
 

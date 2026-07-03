@@ -44,8 +44,9 @@ Jedes Modul-Feld kennt seinen Ansible-Datentyp (aus `ansible-doc`) und verhält 
 - **Liste** `[list]` (z.B. `apt.name` für mehrere Pakete): entweder kurz durch Komma getrennt
   eintragen (`nginx, curl, git`) **oder** vollständige YAML-Listensyntax
   (`- nginx`⏎`- curl`⏎`- git`) — beides wird zu einer echten YAML-Liste.
-- **Dict** `{dict}` (z.B. `set_stats.data`): als YAML-Mapping eintragen
-  (`foo: bar`⏎`count: 3`).
+- **Dict** `{dict}` (z.B. `set_stats.data`, `uri.headers`): entweder als YAML-Mapping ins Textfeld
+  (`foo: bar`⏎`count: 3`) **oder** — komfortabler — mit einem **dict-Block** (Rubrik **Data**), der
+  in den `… (dict block):`-Steckplatz des Parameters kommt (siehe „Dicts als Blöcke bauen" unten).
 - **Zahl** (`int`, `float`): wird beim Speichern automatisch in eine echte Zahl umgewandelt
   (kein `"3"`, sondern `3`).
 
@@ -150,6 +151,27 @@ Der Wert wird beim Speichern typgerecht interpretiert:
 Beim Öffnen einer bestehenden Datei wird ein vorhandenes `vars:`-Mapping automatisch in einzelne
 `var`-Blöcke zerlegt — das gilt für Play-`vars:` genauso wie für die Defaults/Vars-Reiter einer
 Rolle (siehe „Eigene Rolle anlegen" oben).
+
+## Dicts als Blöcke bauen
+
+Statt ein Mapping als YAML-Text zu tippen, gibt es einen **dict-Block** (Rubrik **Data**):
+
+1. `dict`-Block auf die Canvas ziehen.
+2. `entry`-Blöcke (ebenfalls Rubrik **Data**) hineinziehen — je einen pro Key. Jeder Eintrag ist
+   `[key] : [wert]`.
+3. Den Wert eines Eintrags entweder ins Textfeld tippen (Skalar: Text/Zahl/`true`/`false`, wird
+   typgerecht umgesetzt) **oder** rechts über den `or`-Steckplatz einen Block einstecken:
+   - einen **`var`-Block** (Rubrik **Conditions**) für eine Variablen-Referenz → wird als
+     `{{ variable }}` ausgegeben (laut Ansible-Doku sind Variablen als Dict-Werte erlaubt),
+   - oder einen **weiteren `dict`-Block** für ein verschachteltes Mapping.
+
+Den fertigen `dict`-Block steckt man in den `or`-Slot eines `var`-Blocks (Variable = Dict) oder in
+den `… (dict block):`-Slot eines dict-typisierten Modul-Parameters (`uri.headers`, `set_stats.data`,
+…). Ist ein Block eingesteckt, gewinnt er gegenüber dem Textfeld. Beim Öffnen bestehender Dateien
+werden vorhandene Mappings automatisch in dict-Blöcke zerlegt.
+
+*(Hinweis: Listen haben aktuell keinen eigenen Block — sie werden weiterhin als YAML-Text im Feld
+eingegeben.)*
 
 ## Variablen-Palette
 
