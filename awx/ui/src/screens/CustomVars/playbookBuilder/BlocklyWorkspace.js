@@ -13,7 +13,11 @@ function BlocklyWorkspace({ toolbox, initialState, onChange, onWorkspaceReady, h
     const workspace = Blockly.inject(containerRef.current, {
       toolbox,
       trashcan: true,
-      zoom: { controls: true, wheel: true, startScale: 1 },
+      // Blockly's own wheel: true applies scaleSpeed^2 per wheel notch
+      // (~1.44x) vs. scaleSpeed^1 (~1.2x) for one zoom-button click — wheel
+      // steps felt twice as strong as a button click. Wheel zoom is handled
+      // by our own gentler listener below instead (see onWheel).
+      zoom: { controls: true, wheel: false, startScale: 1 },
       grid: { spacing: 24, length: 3, colour: '#e6e6e6', snap: true },
       // Category rubrics render as a horizontal navbar across the top of the
       // canvas (rather than a left-hand column).
@@ -49,8 +53,23 @@ function BlocklyWorkspace({ toolbox, initialState, onChange, onWorkspaceReady, h
     };
     workspace.addChangeListener(listener);
 
+    // Gentler wheel zoom (see the `zoom.wheel: false` note above): amount is
+    // proportional to actual scroll delta rather than Blockly's fixed
+    // per-notch amount, so both a single mouse-wheel notch (~±100) and a
+    // trackpad's smaller continuous deltas feel proportionate — roughly half
+    // of one zoom-button click per typical notch (scaleSpeed^0.5 ≈ 1.095 vs.
+    // the button's scaleSpeed^1 = 1.2).
+    const onWheel = (event) => {
+      event.preventDefault();
+      const rect = containerRef.current.getBoundingClientRect();
+      const amount = -event.deltaY / 200;
+      workspace.zoom(event.clientX - rect.left, event.clientY - rect.top, amount);
+    };
+    containerRef.current.addEventListener('wheel', onWheel, { passive: false });
+
     return () => {
       workspace.removeChangeListener(listener);
+      containerRef.current?.removeEventListener('wheel', onWheel);
       workspace.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
