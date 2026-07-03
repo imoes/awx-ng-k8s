@@ -113,11 +113,21 @@ function VariablesPanel({ projectId, roleNames, localVars = [], onCreateVariable
   };
 
   return (
-    <div data-testid="pb-variables-panel" style={{ width: 220, flexShrink: 0 }}>
+    <div
+      data-testid="pb-variables-panel"
+      style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}
+    >
       {onCreateVariable && (
         <div
           data-testid="pb-add-variable-form"
-          style={{ marginBottom: 10, padding: 6, border: '1px solid #ddd', borderRadius: 4, background: '#fafafa' }}
+          style={{
+            flex: '0 0 auto',
+            marginBottom: 10,
+            padding: 6,
+            border: '1px solid #ddd',
+            borderRadius: 4,
+            background: '#fafafa',
+          }}
         >
           <TextInput
             aria-label="New variable name"
@@ -151,9 +161,9 @@ function VariablesPanel({ projectId, roleNames, localVars = [], onCreateVariable
         placeholder="Filter variables…"
         value={search}
         onChange={setSearch}
-        style={{ marginBottom: 8 }}
+        style={{ marginBottom: 8, flex: '0 0 auto' }}
       />
-      <div style={{ maxHeight: 480, overflowY: 'auto' }}>
+      <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>
         {filtered.length === 0 && (
           <p style={{ color: '#888', fontSize: 12 }}>
             No variables for the current playbook/role. Add a role, or open a

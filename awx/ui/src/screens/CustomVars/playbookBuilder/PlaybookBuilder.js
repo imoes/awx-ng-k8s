@@ -1,6 +1,6 @@
 /* eslint-disable i18next/no-literal-string */
 // awx-ng: Visual (Blockly) playbook builder screen.
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as Blockly from 'blockly';
 import {
   Alert,
@@ -175,6 +175,25 @@ function PlaybookBuilder() {
   // Populated on tab-switch (outgoing section) and on role-open (all 4 at
   // once). Never triggers a re-render itself — it's a plain mutable cache.
   const roleSectionsRef = useRef({});
+
+  // The 3-column canvas/YAML/variables row is sized to exactly fill the
+  // remaining viewport height below it, so only THOSE columns scroll
+  // internally — never the whole page. Recomputed on resize and whenever
+  // something above the row (alerts, role tabs) could change its own
+  // height, which would otherwise push the row past the viewport bottom.
+  const builderRowRef = useRef(null);
+  const [builderRowHeight, setBuilderRowHeight] = useState(480);
+  useLayoutEffect(() => {
+    const updateHeight = () => {
+      const el = builderRowRef.current;
+      if (!el) return;
+      const top = el.getBoundingClientRect().top;
+      setBuilderRowHeight(Math.max(360, window.innerHeight - top - 24));
+    };
+    updateHeight();
+    window.addEventListener('resize', updateHeight);
+    return () => window.removeEventListener('resize', updateHeight);
+  }, [docMode, roleSection, saveError, saved, loadMessage, lintErrors.length]);
 
   const toolbox = useMemo(() => {
     registerBlocks();
@@ -693,25 +712,28 @@ function PlaybookBuilder() {
             )}
 
             <div data-testid="blockly-block-count" style={{ display: 'none' }}>{blockCount}</div>
-            <div style={{ display: 'flex', gap: 16 }}>
-              <div style={{ flex: '1 1 58%', minWidth: 0 }}>
+            <div
+              ref={builderRowRef}
+              style={{ display: 'flex', gap: 16, height: builderRowHeight }}
+            >
+              <div style={{ flex: '1 1 44%', minWidth: 0, height: '100%', overflow: 'hidden' }}>
                 <BlocklyWorkspace
                   toolbox={toolbox}
-                  height={640}
+                  height="100%"
                   onChange={refreshFromWorkspace}
                   onWorkspaceReady={handleWorkspaceReady}
                 />
               </div>
-              <div style={{ flex: '1 1 26%', minWidth: 0 }}>
-                <Title headingLevel="h3" size="sm" style={{ marginBottom: 8 }}>
+              <div style={{ flex: '1 1 36%', minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column' }}>
+                <Title headingLevel="h3" size="sm" style={{ marginBottom: 8, flex: '0 0 auto' }}>
                   {docMode === 'role' ? `Generated YAML — ${ROLE_SECTION_LABELS[roleSection]}` : 'Generated YAML'}
                 </Title>
-                <div data-testid="playbook-yaml-preview">
-                  <CodeEditor value={playbookYaml} mode="yaml" readOnly rows={30} />
+                <div data-testid="playbook-yaml-preview" style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
+                  <CodeEditor value={playbookYaml} mode="yaml" readOnly rows="auto" />
                 </div>
               </div>
-              <div style={{ flex: '0 0 auto' }}>
-                <Title headingLevel="h3" size="sm" style={{ marginBottom: 8 }}>
+              <div style={{ flex: '0 0 220px', height: '100%', display: 'flex', flexDirection: 'column' }}>
+                <Title headingLevel="h3" size="sm" style={{ marginBottom: 8, flex: '0 0 auto' }}>
                   Variables
                 </Title>
                 <VariablesPanel
