@@ -732,7 +732,7 @@ function PlaybookBuilder() {
                   <CodeEditor value={playbookYaml} mode="yaml" readOnly rows="auto" />
                 </div>
               </div>
-              <div style={{ flex: '0 0 220px', height: '100%', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ flex: '0 0 150px', height: '100%', display: 'flex', flexDirection: 'column' }}>
                 <Title headingLevel="h3" size="sm" style={{ marginBottom: 8, flex: '0 0 auto' }}>
                   Variables
                 </Title>

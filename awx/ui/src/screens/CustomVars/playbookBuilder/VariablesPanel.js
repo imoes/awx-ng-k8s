@@ -196,7 +196,7 @@ function VariablesPanel({ projectId, roleNames, localVars = [], onCreateVariable
           >
             <div
               style={{
-                display: 'inline-block',
+                display: 'block',
                 background: '#fff',
                 color: '#1a1a1a',
                 borderRadius: 3,
@@ -204,9 +204,8 @@ function VariablesPanel({ projectId, roleNames, localVars = [], onCreateVariable
                 fontWeight: 600,
                 boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.25)',
                 maxWidth: '100%',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
+                whiteSpace: 'normal',
+                wordBreak: 'break-word',
               }}
             >
               {v.name}
