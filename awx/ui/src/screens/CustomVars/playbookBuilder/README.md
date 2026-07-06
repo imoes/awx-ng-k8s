@@ -43,7 +43,9 @@ Jedes Modul-Feld kennt seinen Ansible-Datentyp (aus `ansible-doc`) und verhält 
   keine Möglichkeit, „explizit false" von „nicht gesetzt" zu unterscheiden).
 - **Liste** `[list]` (z.B. `apt.name` für mehrere Pakete): entweder kurz durch Komma getrennt
   eintragen (`nginx, curl, git`) **oder** vollständige YAML-Listensyntax
-  (`- nginx`⏎`- curl`⏎`- git`) — beides wird zu einer echten YAML-Liste.
+  (`- nginx`⏎`- curl`⏎`- git`) — beides wird zu einer echten YAML-Liste — **oder** komfortabler mit
+  einem **list-Block** (Rubrik **Data**), der in den `… (list block):`-Steckplatz des Parameters
+  kommt (siehe „Listen als Blöcke bauen" unten).
 - **Dict** `{dict}` (z.B. `set_stats.data`, `uri.headers`): entweder als YAML-Mapping ins Textfeld
   (`foo: bar`⏎`count: 3`) **oder** — komfortabler — mit einem **dict-Block** (Rubrik **Data**), der
   in den `… (dict block):`-Steckplatz des Parameters kommt (siehe „Dicts als Blöcke bauen" unten).
@@ -170,8 +172,21 @@ den `… (dict block):`-Slot eines dict-typisierten Modul-Parameters (`uri.heade
 …). Ist ein Block eingesteckt, gewinnt er gegenüber dem Textfeld. Beim Öffnen bestehender Dateien
 werden vorhandene Mappings automatisch in dict-Blöcke zerlegt.
 
-*(Hinweis: Listen haben aktuell keinen eigenen Block — sie werden weiterhin als YAML-Text im Feld
-eingegeben.)*
+## Listen als Blöcke bauen
+
+Genau dasselbe Prinzip wie beim Dict, nur ohne Key — der **list-Block** (Rubrik **Data**):
+
+1. `list`-Block auf die Canvas ziehen.
+2. `item`-Blöcke (ebenfalls Rubrik **Data**) hineinziehen — je einen pro Eintrag.
+3. Den Wert eines Eintrags entweder ins Textfeld tippen (Skalar) **oder** über den `or`-Steckplatz
+   einen Block einstecken: einen **`var`-Block** für eine Variablen-Referenz (→ `{{ variable }}`),
+   oder einen weiteren **`dict`-/`list`-Block** für einen verschachtelten Wert.
+
+Den fertigen `list`-Block steckt man in den `or`-Slot eines `var`-Blocks (Variable = Liste) oder in
+den `… (list block):`-Slot eines list-typisierten Modul-Parameters (`apt.name`, `yum.name`, …). Ist
+ein Block eingesteckt, gewinnt er gegenüber dem Textfeld. Beim Öffnen bestehender Dateien werden
+vorhandene Arrays automatisch in list-Blöcke zerlegt — z.B. wird ein bestehendes
+`apt: {name: [nginx, curl]}` beim Öffnen als `list`-Block mit zwei `item`-Einträgen dargestellt.
 
 ## Variablen-Palette
 
@@ -181,7 +196,10 @@ Rechts werden die Variablen angezeigt, die zum **aktuell offenen** Playbook/zur 
 zur Verfügung (Distribution, OS-Familie, IP-Adresse, RAM, …), unabhängig vom Projekt.
 
 - Auf ein **Modul-Textfeld** ziehen fügt `{{ variable }}` ein.
-- Auf die **leere Canvas** ziehen erzeugt stattdessen einen `var`-Block (Conditions-Rubrik),
+- Auf einen **offenen `or`-Steckplatz** ziehen (z.B. bei einem `entry`/`item`-Block oder einem
+  `var`-Block) erzeugt einen `var`-Block (Conditions-Rubrik) und verbindet ihn **sofort** dort —
+  kein Umweg mehr über die leere Canvas nötig.
+- Auf die **leere Canvas** ziehen (weit weg von jedem Steckplatz) erzeugt einen losen `var`-Block,
   vorausgefüllt mit dem Variablennamen — direkt bereit zum Einklinken in eine Bedingung
   (`compare`, `check … is …`, oder auch direkt in den `when:`-Slot).
 

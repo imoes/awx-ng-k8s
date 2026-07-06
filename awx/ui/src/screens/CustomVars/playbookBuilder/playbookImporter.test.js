@@ -171,6 +171,54 @@ describe('playbookImporter', () => {
     expect(regenerated[0].set_stats.data).toEqual({ processed: 42, status: 'ok' });
   });
 
+  it('imports a list-valued variable as a list block (mixed items), round-trips', () => {
+    const original = `
+- name: with list
+  hosts: all
+  vars:
+    servers:
+      - nginx
+      - "{{ primary_host }}"
+      - role: web
+  tasks: []
+`;
+    importPlaybookYaml(original, workspace);
+    const types = workspace.getAllBlocks(false).map((b) => b.type);
+    // Built out of list / list_item / dict / cond_var blocks, not dumped to text.
+    expect(types).toContain('list');
+    expect(types).toContain('list_item');
+    expect(types).toContain('dict'); // the nested { role: web } item
+    expect(types).toContain('cond_var'); // the {{ primary_host }} item
+
+    const playBlock = workspace.getAllBlocks(false).find((b) => b.type === 'play');
+    const varBlock = playBlock.getInputTargetBlock('VARS');
+    expect(varBlock.type).toBe('define_var');
+    expect(varBlock.getInputTargetBlock('VALUE_BLOCK').type).toBe('list');
+
+    const regenerated = yaml.load(workspaceToPlaybook(workspace));
+    expect(regenerated[0].vars.servers).toEqual(['nginx', '{{ primary_host }}', { role: 'web' }]);
+  });
+
+  it('imports a list-typed module param (apt.name) as a list block, round-trips', () => {
+    const original = `
+- name: install packages
+  apt:
+    name:
+      - nginx
+      - curl
+    state: present
+`;
+    importTasksYaml(original, workspace);
+    const apt = workspace.getAllBlocks(false).find((b) => b.type === 'module_apt');
+    expect(apt).toBeDefined();
+    // The list value lives in a list block on BLOCK_name, not the text field.
+    expect(apt.getInputTargetBlock('BLOCK_name').type).toBe('list');
+    expect(apt.getFieldValue('name')).toBe('');
+
+    const regenerated = yaml.load(serializeWorkspace(workspace, 'role'));
+    expect(regenerated[0].apt).toEqual({ name: ['nginx', 'curl'], state: 'present' });
+  });
+
   it('falls back to a raw_task block for an unrecognized (non-builtin) module, losslessly', () => {
     const original = `
 - name: firewall play
@@ -488,8 +536,10 @@ nginx_packages:
 `;
     const count = importVarsYaml(original, workspace);
     expect(count).toBe(3);
+    // nginx_packages (a list value) is now built as a list/list_item block
+    // chain rather than left as scalar YAML text — see the list-block feature.
     const varTypes = workspace.getAllBlocks(false).map((b) => b.type);
-    expect(varTypes).toEqual(['define_var', 'define_var', 'define_var']);
+    expect(varTypes).toEqual(['define_var', 'define_var', 'define_var', 'list', 'list_item', 'list_item']);
 
     const regenerated = serializeWorkspace(workspace, 'vars');
     expect(yaml.load(regenerated)).toEqual(yaml.load(original));

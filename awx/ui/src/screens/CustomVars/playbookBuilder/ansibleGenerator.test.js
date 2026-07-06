@@ -207,6 +207,62 @@ describe('ansibleGenerator', () => {
     expect(parsed[0].set_stats.data).toEqual({ processed: 42 });
   });
 
+  it('emits a list-valued variable from a list block (scalar, variable, nested dict)', () => {
+    const play = workspace.newBlock('play');
+    play.setFieldValue('with list', 'NAME');
+    play.setFieldValue('all', 'HOSTS');
+
+    const v = workspace.newBlock('define_var');
+    v.setFieldValue('servers', 'NAME');
+
+    const list = workspace.newBlock('list');
+    // item 0: 'nginx' (plain scalar text)
+    const item1 = workspace.newBlock('list_item');
+    item1.setFieldValue('nginx', 'VALUE');
+    // item 1: {{ primary_host }} (a variable → templated in a value context)
+    const item2 = workspace.newBlock('list_item');
+    const hostVar = workspace.newBlock('cond_var');
+    hostVar.setFieldValue('primary_host', 'NAME');
+    item2.getInput('VALUE_BLOCK').connection.connect(hostVar.outputConnection);
+    // item 2: { role: web } (nested dict)
+    const item3 = workspace.newBlock('list_item');
+    const nested = workspace.newBlock('dict');
+    const eRole = workspace.newBlock('dict_entry');
+    eRole.setFieldValue('role', 'KEY');
+    eRole.setFieldValue('web', 'VALUE');
+    nested.getInput('ENTRIES').connection.connect(eRole.previousConnection);
+    item3.getInput('VALUE_BLOCK').connection.connect(nested.outputConnection);
+
+    list.getInput('ITEMS').connection.connect(item1.previousConnection);
+    item1.nextConnection.connect(item2.previousConnection);
+    item2.nextConnection.connect(item3.previousConnection);
+    v.getInput('VALUE_BLOCK').connection.connect(list.outputConnection);
+    play.getInput('VARS').connection.connect(v.previousConnection);
+
+    const parsed = yaml.load(workspaceToPlaybook(workspace));
+    expect(parsed[0].vars.servers).toEqual([
+      'nginx',
+      '{{ primary_host }}',
+      { role: 'web' },
+    ]);
+  });
+
+  it('emits a list-typed module param (apt.name) from a connected list block', () => {
+    const apt = workspace.newBlock('module_apt');
+    apt.setFieldValue('install packages', 'NAME');
+    const list = workspace.newBlock('list');
+    const item1 = workspace.newBlock('list_item');
+    item1.setFieldValue('nginx', 'VALUE');
+    const item2 = workspace.newBlock('list_item');
+    item2.setFieldValue('curl', 'VALUE');
+    list.getInput('ITEMS').connection.connect(item1.previousConnection);
+    item1.nextConnection.connect(item2.previousConnection);
+    apt.getInput('BLOCK_name').connection.connect(list.outputConnection);
+
+    const parsed = yaml.load(serializeWorkspace(workspace, 'role'));
+    expect(parsed[0].apt.name).toEqual(['nginx', 'curl']);
+  });
+
   it('returns an empty-document YAML for an empty workspace', () => {
     const outputYaml = workspaceToPlaybook(workspace);
     expect(outputYaml.trim()).toBe('---');

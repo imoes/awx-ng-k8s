@@ -8,7 +8,6 @@ import {
   Dropdown,
   DropdownItem,
   DropdownToggle,
-  FormGroup,
   Modal,
   PageSection,
   Card,
@@ -286,6 +285,17 @@ function PlaybookBuilder() {
         new Blockly.utils.Coordinate(event.clientX, event.clientY)
       );
       block.moveBy(wsCoord.x, wsCoord.y);
+      // If the drop lands right on (or near) an open value socket — a
+      // dict_entry's/list_item's/define_var's "or" input, or a dict-/list-
+      // typed module param's BLOCK_<name> input — snap straight into it
+      // instead of leaving the block loose on the canvas. Reuses Blockly's
+      // own connection search/checker (the same one a manual drag-to-connect
+      // uses), so it only snaps into checks-compatible, still-open sockets.
+      const { connection: target } = block.outputConnection.closest(
+        Blockly.config.connectingSnapRadius,
+        new Blockly.utils.Coordinate(0, 0)
+      );
+      if (target && !target.isConnected()) target.connect(block.outputConnection);
       refreshFromWorkspace(ws);
     };
     document.addEventListener('dragover', onDragOver, true);
@@ -577,75 +587,79 @@ function PlaybookBuilder() {
         breadcrumbConfig={{ '/playbook-builder': 'Playbook Builder' }}
         title="Playbook Builder"
       />
-      <PageSection>
+      <PageSection style={{ paddingTop: 8, paddingBottom: 8 }}>
         <Card>
-          <CardBody>
-            <Title headingLevel="h2" size="md" style={{ marginBottom: 12 }}>
-              Playbook Builder
-            </Title>
-
-            <div style={{ display: 'flex', gap: 16, marginBottom: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-              <FormGroup label="File" fieldId="pb-file-menu">
-                <Dropdown
-                  data-testid="pb-file-menu"
-                  isOpen={menuOpen}
-                  toggle={
-                    <DropdownToggle
-                      id="pb-file-menu-toggle"
-                      data-testid="pb-file-menu-toggle"
-                      toggleIndicator={null}
-                      onToggle={(_e, val) => setMenuOpen(typeof val === 'boolean' ? val : !menuOpen)}
-                      aria-label="File actions menu"
-                    >
-                      <BarsIcon />
-                    </DropdownToggle>
-                  }
-                  dropdownItems={[
-                    <DropdownItem key="new-pb" data-testid="pb-new-playbook-button" onClick={() => { setMenuOpen(false); handleNew('playbook'); }}>
-                      New playbook
-                    </DropdownItem>,
-                    <DropdownItem key="new-role" data-testid="pb-new-role-button" onClick={() => { setMenuOpen(false); handleNew('role'); }}>
-                      New role
-                    </DropdownItem>,
-                    <DropdownItem key="open-pb" data-testid="pb-open-playbook-button" isDisabled={!projectId} onClick={() => { setMenuOpen(false); openBrowseDialog('playbook'); }}>
-                      Open playbook…
-                    </DropdownItem>,
-                    <DropdownItem key="open-role" data-testid="pb-open-role-button" isDisabled={!projectId} onClick={() => { setMenuOpen(false); openBrowseDialog('role'); }}>
-                      Open role…
-                    </DropdownItem>,
-                  ]}
-                />
-              </FormGroup>
-              <FormGroup label="Project" style={{ minWidth: 200 }}>
+          <CardBody style={{ paddingTop: 12, paddingBottom: 12 }}>
+            {/* Single compact toolbar row — no stacked FormGroup labels (each
+                one cost an extra text line of height); inline labels instead.
+                Rarely-used actions (new/open) live in the File hamburger so
+                this row stays one line and leaves room for the canvas below. */}
+            <div style={{ display: 'flex', gap: 12, marginBottom: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Dropdown
+                data-testid="pb-file-menu"
+                isOpen={menuOpen}
+                toggle={
+                  <DropdownToggle
+                    id="pb-file-menu-toggle"
+                    data-testid="pb-file-menu-toggle"
+                    toggleIndicator={null}
+                    onToggle={(_e, val) => setMenuOpen(typeof val === 'boolean' ? val : !menuOpen)}
+                    aria-label="File actions menu"
+                  >
+                    <BarsIcon />
+                  </DropdownToggle>
+                }
+                dropdownItems={[
+                  <DropdownItem key="new-pb" data-testid="pb-new-playbook-button" onClick={() => { setMenuOpen(false); handleNew('playbook'); }}>
+                    New playbook
+                  </DropdownItem>,
+                  <DropdownItem key="new-role" data-testid="pb-new-role-button" onClick={() => { setMenuOpen(false); handleNew('role'); }}>
+                    New role
+                  </DropdownItem>,
+                  <DropdownItem key="open-pb" data-testid="pb-open-playbook-button" isDisabled={!projectId} onClick={() => { setMenuOpen(false); openBrowseDialog('playbook'); }}>
+                    Open playbook…
+                  </DropdownItem>,
+                  <DropdownItem key="open-role" data-testid="pb-open-role-button" isDisabled={!projectId} onClick={() => { setMenuOpen(false); openBrowseDialog('role'); }}>
+                    Open role…
+                  </DropdownItem>,
+                ]}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <label htmlFor="pb-project-select" style={{ fontSize: 13, whiteSpace: 'nowrap' }}>Project</label>
                 <select
+                  id="pb-project-select"
                   value={projectId}
                   onChange={(e) => setProjectId(e.target.value)}
-                  style={{ width: '100%', padding: '6px 8px', border: '1px solid #ddd', borderRadius: 4 }}
+                  style={{ padding: '4px 6px', border: '1px solid #ddd', borderRadius: 4, maxWidth: 180 }}
                   data-testid="pb-project-select"
                 >
                   {projects.map((p) => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
-              </FormGroup>
+              </div>
               {docMode === 'role' ? (
-                <FormGroup label="Role name" style={{ minWidth: 320 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: '1 1 260px', minWidth: 180 }}>
+                  <label htmlFor="pb-role-name" style={{ fontSize: 13, whiteSpace: 'nowrap' }}>Role name</label>
                   <TextInput
+                    id="pb-role-name"
                     aria-label="Role name"
                     value={roleName}
                     onChange={setRoleName}
                     data-testid="pb-role-name"
                   />
-                </FormGroup>
+                </div>
               ) : (
-                <FormGroup label="Save to" style={{ minWidth: 320 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: '1 1 260px', minWidth: 180 }}>
+                  <label htmlFor="pb-target-path" style={{ fontSize: 13, whiteSpace: 'nowrap' }}>Save to</label>
                   <TextInput
+                    id="pb-target-path"
                     aria-label="Save to path"
                     value={targetPath}
                     onChange={setTargetPath}
                     data-testid="pb-target-path"
                   />
-                </FormGroup>
+                </div>
               )}
               <Button
                 variant="primary"
@@ -658,7 +672,7 @@ function PlaybookBuilder() {
             </div>
 
             {docMode === 'role' && (
-              <div style={{ display: 'flex', gap: 4, marginBottom: 12 }} data-testid="pb-role-section-tabs">
+              <div style={{ display: 'flex', gap: 4, marginBottom: 8 }} data-testid="pb-role-section-tabs">
                 {ROLE_SECTIONS.map((section) => (
                   <button
                     key={section}
@@ -666,7 +680,8 @@ function PlaybookBuilder() {
                     data-testid={`pb-role-section-${section}`}
                     onClick={() => switchRoleSection(section)}
                     style={{
-                      padding: '6px 14px',
+                      padding: '3px 12px',
+                      fontSize: 13,
                       border: '1px solid #ccc',
                       borderBottom: section === roleSection ? '2px solid #06c' : '1px solid #ccc',
                       borderRadius: '4px 4px 0 0',
@@ -681,13 +696,13 @@ function PlaybookBuilder() {
               </div>
             )}
 
-            {saveError && <Alert variant="danger" title={saveError} isInline style={{ marginBottom: 12 }} />}
+            {saveError && <Alert variant="danger" title={saveError} isInline style={{ marginBottom: 8 }} />}
             {saved && (
               <Alert
                 variant="success"
                 title={docMode === 'role' ? `Saved role ${roleName} (tasks/handlers/defaults/vars)` : `Saved to ${targetPath}`}
                 isInline
-                style={{ marginBottom: 12 }}
+                style={{ marginBottom: 8 }}
               />
             )}
             {loadMessage && (
@@ -695,12 +710,12 @@ function PlaybookBuilder() {
                 variant={loadMessage.variant}
                 title={loadMessage.text}
                 isInline
-                style={{ marginBottom: 12 }}
+                style={{ marginBottom: 8 }}
                 data-testid="pb-load-message"
               />
             )}
             {lintErrors.length > 0 && (
-              <Alert variant="warning" title="Lint issues — not saved" isInline style={{ marginBottom: 12 }}>
+              <Alert variant="warning" title="Lint issues — not saved" isInline style={{ marginBottom: 8 }}>
                 <ul data-testid="pb-lint-errors">
                   {lintErrors.map((err) => (
                     <li key={`${err.line}-${err.message}`}>

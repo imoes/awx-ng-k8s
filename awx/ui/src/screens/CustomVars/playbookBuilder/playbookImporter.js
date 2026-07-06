@@ -116,16 +116,17 @@ function importModuleBlock(workspace, moduleKey, args) {
     return null;
   }
   (canonicalArgEntries || []).forEach(([key, value]) => {
-    // A dict-typed param whose value is a mapping is built visually with a
-    // `dict` block plugged into the param's BLOCK_<key> input (see blocks.js);
-    // everything else goes into the param's text field as before.
+    // A dict-typed param whose value is a mapping, or a list-typed param
+    // whose value is an array, is built visually with a `dict`/`list` block
+    // plugged into the param's BLOCK_<key> input (see blocks.js); everything
+    // else goes into the param's text field as before.
     const isMapping = value && typeof value === 'object' && !Array.isArray(value);
-    const blockInput = paramTypes[key] === 'dict' && isMapping
-      ? moduleBlock.getInput(`BLOCK_${key}`)
-      : null;
+    const isArray = Array.isArray(value);
+    const useBlock = (paramTypes[key] === 'dict' && isMapping) || (paramTypes[key] === 'list' && isArray);
+    const blockInput = useBlock ? moduleBlock.getInput(`BLOCK_${key}`) : null;
     if (blockInput) {
-      const dictBlock = buildDictBlock(workspace, value);
-      blockInput.connection.connect(dictBlock.outputConnection);
+      const valueBlock = isMapping ? buildDictBlock(workspace, value) : buildListBlock(workspace, value);
+      blockInput.connection.connect(valueBlock.outputConnection);
     } else {
       setField(moduleBlock, key, value);
     }
@@ -202,12 +203,15 @@ function importRole(workspace, roleEntry) {
 // blockToVarValue in ansibleGenerator.js) — non-scalar values (list/dict)
 // are YAML-dumped into the multiline VALUE field via setField's existing
 // object handling.
-// Builds a "value block" for a JS value — a nested `dict` block for a plain
-// mapping, or a `cond_var` for a bare `{{ variable }}` reference — or null if
-// the value is a plain scalar/list that belongs in a text field. Inverse of
-// ansibleGenerator's valueBlockToValue.
+// Builds a "value block" for a JS value — a nested `dict`/`list` block for a
+// mapping/array, or a `cond_var` for a bare `{{ variable }}` reference — or
+// null if the value is a plain scalar that belongs in a text field. Inverse
+// of ansibleGenerator's valueBlockToValue.
 function buildValueBlock(workspace, value) {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
+  if (Array.isArray(value)) {
+    return buildListBlock(workspace, value);
+  }
+  if (value && typeof value === 'object') {
     return buildDictBlock(workspace, value);
   }
   if (typeof value === 'string') {
@@ -247,6 +251,29 @@ function buildDictBlock(workspace, obj) {
     prev = entry;
   });
   return dict;
+}
+
+// A plain array → a `list` block with a chain of `list_item` blocks. Same
+// recursion as buildDictBlock, just without keys.
+function buildListBlock(workspace, arr) {
+  const list = newBlock(workspace, 'list');
+  let prev = null;
+  arr.forEach((val) => {
+    const item = newBlock(workspace, 'list_item');
+    const vb = buildValueBlock(workspace, val);
+    if (vb) {
+      item.getInput('VALUE_BLOCK').connection.connect(vb.outputConnection);
+    } else {
+      setField(item, 'VALUE', val);
+    }
+    if (prev) {
+      prev.nextConnection.connect(item.previousConnection);
+    } else {
+      list.getInput('ITEMS').connection.connect(item.previousConnection);
+    }
+    prev = item;
+  });
+  return list;
 }
 
 function importVar(workspace, varName, varValue) {

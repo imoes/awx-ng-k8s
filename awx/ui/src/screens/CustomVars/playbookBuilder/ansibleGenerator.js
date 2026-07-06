@@ -280,11 +280,27 @@ function dictBlockToObject(dictBlock) {
   return obj;
 }
 
-// A "value block" (variable reference / literal / dict) → its JS value, in a
-// VALUE context (a variable's value or a dict/structured param) — NOT a when:
-// condition. Key difference from conditionBlockToExpr: a cond_var here becomes
-// a templated `{{ name }}` reference (in vars/params a bare name would be a
-// literal string), whereas in a when: expression it stays bare.
+// A `list` block → a plain JS array, same "block wins over field" pattern as
+// dictBlockToObject.
+function listBlockToArray(listBlock) {
+  const arr = [];
+  let item = listBlock.getInputTargetBlock('ITEMS');
+  while (item) {
+    if (item.type === 'list_item' && item.isEnabled()) {
+      const vb = item.getInputTargetBlock('VALUE_BLOCK');
+      arr.push(vb ? valueBlockToValue(vb) : coerceScalarValue(item.getFieldValue('VALUE')));
+    }
+    item = item.getNextBlock();
+  }
+  return arr;
+}
+
+// A "value block" (variable reference / literal / dict / list) → its JS
+// value, in a VALUE context (a variable's value or a dict-/list-typed param)
+// — NOT a when: condition. Key difference from conditionBlockToExpr: a
+// cond_var here becomes a templated `{{ name }}` reference (in vars/params a
+// bare name would be a literal string), whereas in a when: expression it
+// stays bare.
 export function valueBlockToValue(block) {
   if (!block) return null;
   switch (block.type) {
@@ -296,6 +312,8 @@ export function valueBlockToValue(block) {
       return coerceScalarValue(block.getFieldValue('VALUE'));
     case 'dict':
       return dictBlockToObject(block);
+    case 'list':
+      return listBlockToArray(block);
     default:
       return null;
   }

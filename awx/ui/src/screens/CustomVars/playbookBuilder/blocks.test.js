@@ -93,6 +93,64 @@ describe('playbook builder blocks', () => {
     workspace.dispose();
   });
 
+  it('registers list/list_item value blocks', () => {
+    expect(Blockly.Blocks.list).toBeDefined();
+    expect(Blockly.Blocks.list_item).toBeDefined();
+  });
+
+  it('a list is a value (not a condition): fits a variable/list slot but NOT a when: slot', () => {
+    const workspace = new Blockly.Workspace();
+    const list = workspace.newBlock('list');
+    expect(list.outputConnection.getCheck()).toContain('Value');
+
+    // Fits define_var's optional value-block input …
+    const v = workspace.newBlock('define_var');
+    v.getInput('VALUE_BLOCK').connection.connect(list.outputConnection);
+    expect(v.getInputTargetBlock('VALUE_BLOCK')).toBe(list);
+
+    // … but a list must NOT be accepted as a when: condition, same rule as dict.
+    const whenSetting = workspace.newBlock('setting_when');
+    const list2 = workspace.newBlock('list');
+    const checker = workspace.connectionChecker;
+    expect(
+      checker.canConnect(whenSetting.getInput('VALUE').connection, list2.outputConnection, false)
+    ).toBe(false);
+    workspace.dispose();
+  });
+
+  it('list_item takes a scalar text field OR a value block (variable / nested dict/list)', () => {
+    const workspace = new Blockly.Workspace();
+    const item = workspace.newBlock('list_item');
+    expect(item.getField('VALUE')).toBeDefined();
+    // A bare variable reference plugs into the item's value-block input.
+    const v = workspace.newBlock('cond_var');
+    item.getInput('VALUE_BLOCK').connection.connect(v.outputConnection);
+    expect(item.getInputTargetBlock('VALUE_BLOCK')).toBe(v);
+    // A nested dict also fits (lists and dicts can nest into each other).
+    const item2 = workspace.newBlock('list_item');
+    const nestedDict = workspace.newBlock('dict');
+    item2.getInput('VALUE_BLOCK').connection.connect(nestedDict.outputConnection);
+    expect(item2.getInputTargetBlock('VALUE_BLOCK')).toBe(nestedDict);
+    // Items chain vertically inside a list.
+    item.nextConnection.connect(item2.previousConnection);
+    expect(item.getNextBlock()).toBe(item2);
+    workspace.dispose();
+  });
+
+  it('list-typed module params (e.g. apt.name) get a BLOCK_<name> value input for a list block', () => {
+    const workspace = new Blockly.Workspace();
+    const apt = workspace.newBlock(moduleBlockType('apt'));
+    // name is primary-shown and list-typed → text field + block input.
+    expect(apt.getField('name')).toBeDefined();
+    const blockInput = apt.getInput('BLOCK_name');
+    expect(blockInput).not.toBeNull();
+    expect(blockInput.connection.getCheck()).toContain('Value');
+    const list = workspace.newBlock('list');
+    blockInput.connection.connect(list.outputConnection);
+    expect(apt.getInputTargetBlock('BLOCK_name')).toBe(list);
+    workspace.dispose();
+  });
+
   it('can instantiate a module block (e.g. debug) on a headless workspace', () => {
     const workspace = new Blockly.Workspace();
     const block = workspace.newBlock(moduleBlockType('debug'));

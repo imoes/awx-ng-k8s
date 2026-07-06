@@ -76,6 +76,7 @@ export const TASK_SETTING_CHECK = 'TaskSetting';
 // `dict` block outputs VALUE_CHECK so it fits value slots but NOT when:.
 export const VALUE_CHECK = 'Value';
 export const DICT_ENTRY_CHECK = 'DictEntry';
+export const LIST_ITEM_CHECK = 'ListItem';
 export const ENVELOPE_FIELDS = [
   { key: 'WHEN', label: 'when', yamlKey: 'when', kind: 'value', check: COND_CHECK },
   { key: 'TAGS', label: 'tags', yamlKey: 'tags', kind: 'field', fieldKind: 'text' },
@@ -143,14 +144,15 @@ function appendParamRow(block, param, moduleShortName) {
     .appendDummyInput(`ROW_${param.name}`)
     .appendField(`${label}:`)
     .appendField(fieldForParam(param, choices), param.name);
-  // dict-typed params can be built visually with a `dict` block instead of
-  // typing YAML into the text field — the block (when connected) wins over
-  // the field (see ansibleGenerator blockToModuleArgs).
-  if (param.type === 'dict') {
+  // dict-/list-typed params can be built visually with a `dict`/`list` block
+  // instead of typing YAML into the text field — the block (when connected)
+  // wins over the field (see ansibleGenerator blockToModuleArgs).
+  if (param.type === 'dict' || param.type === 'list') {
+    const kind = param.type === 'dict' ? 'dict' : 'list';
     block
       .appendValueInput(`BLOCK_${param.name}`)
       .setCheck(VALUE_CHECK)
-      .appendField(`${param.name} (dict block):`);
+      .appendField(`${param.name} (${kind} block):`);
   }
 }
 
@@ -307,7 +309,7 @@ function defineModuleBlocks() {
         this.activeOptional_.push(name);
         appendParamRow(this, paramByName[name], mod.short_name);
         this.moveInputBefore(`ROW_${name}`, 'ADD_OPT');
-        // dict params also get a `BLOCK_<name>` value input (appendParamRow) —
+        // dict/list params also get a `BLOCK_<name>` value input (appendParamRow) —
         // keep it grouped right after its row, before the "add param" dropdown.
         if (this.getInput(`BLOCK_${name}`)) this.moveInputBefore(`BLOCK_${name}`, 'ADD_OPT');
       },
@@ -616,6 +618,41 @@ function defineValueBlocks() {
       );
     },
   };
+
+  // A list (sequence of values) — same "value block with a statement chain
+  // inside" shape as `dict`, just with unkeyed items. Fits anywhere a `dict`
+  // does (define_var's value, a dict_entry's value, a list-typed module
+  // param like apt.name), and can itself hold nested dicts/lists/variables.
+  Blockly.Blocks.list = {
+    init() {
+      this.appendDummyInput().appendField('list');
+      this.appendStatementInput('ITEMS').setCheck(LIST_ITEM_CHECK);
+      this.setOutput(true, VALUE_CHECK);
+      this.setColour(200);
+      this.setTooltip(
+        'A list (ordered sequence of values). Chain "item" blocks inside; ' +
+        'each item can be typed text, a variable (var block → {{ … }}), or ' +
+        'a nested dict/list.'
+      );
+    },
+  };
+
+  // One list entry. Same "field for scalars, block for structure" pattern as
+  // dict_entry, minus the key.
+  Blockly.Blocks.list_item = {
+    init() {
+      this.appendDummyInput().appendField(new FieldMultilineInput(''), 'VALUE');
+      this.appendValueInput('VALUE_BLOCK').setCheck(VALUE_CHECK).appendField('or');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true, LIST_ITEM_CHECK);
+      this.setNextStatement(true, LIST_ITEM_CHECK);
+      this.setColour(200);
+      this.setTooltip(
+        'One list item. Type a scalar value, or plug a variable/dict/list ' +
+        'block into "or".'
+      );
+    },
+  };
 }
 
 export const CONDITION_BLOCK_TYPES = [
@@ -624,7 +661,7 @@ export const CONDITION_BLOCK_TYPES = [
 
 export const TASK_SETTING_BLOCK_TYPES = ENVELOPE_FIELDS.map((e) => settingBlockType(e.key));
 
-export const DATA_BLOCK_TYPES = ['dict', 'dict_entry'];
+export const DATA_BLOCK_TYPES = ['dict', 'dict_entry', 'list', 'list_item'];
 
 export function registerBlocks() {
   defineStaticBlocks();
