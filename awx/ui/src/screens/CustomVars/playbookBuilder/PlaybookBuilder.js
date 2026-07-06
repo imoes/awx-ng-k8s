@@ -716,20 +716,22 @@ function PlaybookBuilder() {
               ref={builderRowRef}
               style={{ display: 'flex', gap: 16, height: builderRowHeight }}
             >
-              <div style={{ flex: '1 1 44%', minWidth: 0, height: '100%', overflow: 'hidden' }}>
-                <BlocklyWorkspace
-                  toolbox={toolbox}
-                  height="100%"
-                  onChange={refreshFromWorkspace}
-                  onWorkspaceReady={handleWorkspaceReady}
-                />
-              </div>
-              <div style={{ flex: '1 1 36%', minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column' }}>
-                <Title headingLevel="h3" size="sm" style={{ marginBottom: 8, flex: '0 0 auto' }}>
-                  {docMode === 'role' ? `Generated YAML — ${ROLE_SECTION_LABELS[roleSection]}` : 'Generated YAML'}
-                </Title>
-                <div data-testid="playbook-yaml-preview" style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
-                  <CodeEditor value={playbookYaml} mode="yaml" readOnly rows="auto" />
+              <div style={{ flex: '1 1 auto', minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={{ flex: '1 1 60%', minHeight: 0, overflow: 'hidden' }}>
+                  <BlocklyWorkspace
+                    toolbox={toolbox}
+                    height="100%"
+                    onChange={refreshFromWorkspace}
+                    onWorkspaceReady={handleWorkspaceReady}
+                  />
+                </div>
+                <div style={{ flex: '1 1 40%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                  <Title headingLevel="h3" size="sm" style={{ marginBottom: 8, flex: '0 0 auto' }}>
+                    {docMode === 'role' ? `Generated YAML — ${ROLE_SECTION_LABELS[roleSection]}` : 'Generated YAML'}
+                  </Title>
+                  <div data-testid="playbook-yaml-preview" style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
+                    <CodeEditor value={playbookYaml} mode="yaml" readOnly rows="auto" />
+                  </div>
                 </div>
               </div>
               <div style={{ flex: '0 0 150px', height: '100%', display: 'flex', flexDirection: 'column' }}>
