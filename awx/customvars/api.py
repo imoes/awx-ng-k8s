@@ -1444,6 +1444,20 @@ import subprocess
 
 _ALLOWED_SUFFIXES = {'.yml', '.yaml', '.j2', '.jinja2', '.conf', '.ini', '.md', '.txt', '.cfg', '.json'}
 _MAX_FILE_BYTES = 512 * 1024  # 512 KB
+# Ansible role template/static-file directories routinely hold files with no
+# suffix at all (a `template:`/`copy:` source doesn't need a .j2/any
+# extension — e.g. a bare `docker-compose` or `docker.list`) — the suffix
+# allowlist above would otherwise lock real, already-existing role content
+# out of the Playbook Builder's Templates tab and the generic file editor.
+# Scoped to roles/<name>/{templates,files}/ specifically, not project-wide,
+# so the allowlist still applies everywhere else.
+_UNRESTRICTED_DIR_NAMES = {'templates', 'files'}
+
+
+def _is_allowed_file_path(target, project_path):
+    if target.suffix in _ALLOWED_SUFFIXES:
+        return True
+    return bool(_UNRESTRICTED_DIR_NAMES & set(target.relative_to(project_path).parts))
 
 
 def _get_project_path(pk):
@@ -1560,7 +1574,7 @@ class ProjectFileContentView(APIView):
         target = _safe_resolve(project_path, rel)
         if not target.is_file():
             return Response({'detail': 'File not found.'}, status=404)
-        if target.suffix not in _ALLOWED_SUFFIXES:
+        if not _is_allowed_file_path(target, project_path):
             return Response({'detail': 'File type not allowed.'}, status=403)
         if target.stat().st_size > _MAX_FILE_BYTES:
             return Response({'detail': 'File too large (max 512 KB).'}, status=413)
@@ -1594,7 +1608,7 @@ class ProjectFileContentView(APIView):
             return Response({'detail': 'Content too large (max 512 KB).'}, status=413)
 
         target = _safe_resolve(project_path, rel)
-        if target.suffix not in _ALLOWED_SUFFIXES:
+        if not _is_allowed_file_path(target, project_path):
             return Response({'detail': 'File type not allowed.'}, status=403)
 
         # Create parent dirs if needed (within project only)

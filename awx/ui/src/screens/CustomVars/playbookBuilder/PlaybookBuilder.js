@@ -29,6 +29,7 @@ import { importPlaybookYaml, importTasksYaml, importVarsYaml } from './playbookI
 import { sidecarPathFor } from './sidecarPath';
 import { insertVariableReference } from './varInsertion';
 import VariablesPanel from './VariablesPanel';
+import TemplatesPanel from './TemplatesPanel';
 import {
   readProjects,
   readProjectRoles,
@@ -73,7 +74,13 @@ function findFieldAtPoint(workspace, clientX, clientY) {
 // the "bare task list" shape; defaults/vars share the "bare vars mapping"
 // shape (see ansibleGenerator.js serializeWorkspace()).
 const ROLE_SECTIONS = ['tasks', 'handlers', 'defaults', 'vars'];
-const ROLE_SECTION_LABELS = { tasks: 'Tasks', handlers: 'Handlers', defaults: 'Defaults', vars: 'Vars' };
+// Tab bar order: the 4 Blockly sections, plus the non-Blockly Templates tab
+// (roles/<name>/templates/*.j2 — see TemplatesPanel.js for why it isn't a
+// 5th ROLE_SECTIONS entry: unlike the other 4, it's not one fixed-name file).
+const ROLE_TABS = [...ROLE_SECTIONS, 'templates'];
+const ROLE_SECTION_LABELS = {
+  tasks: 'Tasks', handlers: 'Handlers', defaults: 'Defaults', vars: 'Vars', templates: 'Templates',
+};
 
 function sectionSerializeMode(section) {
   return section === 'defaults' || section === 'vars' ? 'vars' : 'tasks';
@@ -342,26 +349,30 @@ function PlaybookBuilder() {
     refreshFromWorkspace(ws);
   };
 
-  // Switches the canvas to a different role section (Tasks/Handlers/
-  // Defaults/Vars), caching the outgoing section's state first so nothing
-  // is lost. All 4 sections live in the same Blockly workspace instance,
-  // swapped in and out — not 4 separate workspaces.
+  // Switches the active role tab (Tasks/Handlers/Defaults/Vars/Templates),
+  // caching the outgoing section's Blockly state first so nothing is lost.
+  // The 4 Blockly sections share one workspace instance, swapped in and out;
+  // Templates has no Blockly workspace at all (see ROLE_TABS/TemplatesPanel)
+  // — switching to/from it just hides/shows the canvas, no save/load here.
   const switchRoleSection = (nextSection) => {
     if (nextSection === roleSection) return;
     const ws = workspaceRef.current;
-    if (!ws) return;
-    roleSectionsRef.current[roleSection] = {
-      blockly: Blockly.serialization.workspaces.save(ws),
-      yaml: serializeWorkspace(ws, sectionSerializeMode(roleSection)),
-    };
-    ws.clear();
-    const cached = roleSectionsRef.current[nextSection];
-    if (cached?.blockly) {
-      Blockly.serialization.workspaces.load(cached.blockly, ws);
+    if (ws && roleSection !== 'templates') {
+      roleSectionsRef.current[roleSection] = {
+        blockly: Blockly.serialization.workspaces.save(ws),
+        yaml: serializeWorkspace(ws, sectionSerializeMode(roleSection)),
+      };
+    }
+    if (ws && nextSection !== 'templates') {
+      ws.clear();
+      const cached = roleSectionsRef.current[nextSection];
+      if (cached?.blockly) {
+        Blockly.serialization.workspaces.load(cached.blockly, ws);
+      }
     }
     setRoleSection(nextSection);
     roleSectionRef.current = nextSection;
-    refreshFromWorkspace(ws);
+    if (ws && nextSection !== 'templates') refreshFromWorkspace(ws);
   };
 
   // Creates a new define_var block from the Variables panel's "+ Add
@@ -673,7 +684,7 @@ function PlaybookBuilder() {
 
             {docMode === 'role' && (
               <div style={{ display: 'flex', gap: 4, marginBottom: 8 }} data-testid="pb-role-section-tabs">
-                {ROLE_SECTIONS.map((section) => (
+                {ROLE_TABS.map((section) => (
                   <button
                     key={section}
                     type="button"
@@ -731,39 +742,47 @@ function PlaybookBuilder() {
               ref={builderRowRef}
               style={{ display: 'flex', gap: 16, height: builderRowHeight }}
             >
-              <div style={{ flex: '1 1 auto', minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <div style={{ flex: '1 1 60%', minHeight: 0, overflow: 'hidden' }}>
-                  <BlocklyWorkspace
-                    toolbox={toolbox}
-                    height="100%"
-                    onChange={refreshFromWorkspace}
-                    onWorkspaceReady={handleWorkspaceReady}
-                  />
+              {docMode === 'role' && roleSection === 'templates' ? (
+                <div style={{ flex: '1 1 auto', minWidth: 0, height: '100%' }} data-testid="pb-templates-panel">
+                  <TemplatesPanel projectId={projectId} roleName={roleName} />
                 </div>
-                <div style={{ flex: '1 1 40%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                  <Title headingLevel="h3" size="sm" style={{ marginBottom: 8, flex: '0 0 auto' }}>
-                    {docMode === 'role' ? `Generated YAML — ${ROLE_SECTION_LABELS[roleSection]}` : 'Generated YAML'}
-                  </Title>
-                  <div data-testid="playbook-yaml-preview" style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
-                    <CodeEditor value={playbookYaml} mode="yaml" readOnly rows="auto" />
+              ) : (
+                <>
+                  <div style={{ flex: '1 1 auto', minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    <div style={{ flex: '1 1 60%', minHeight: 0, overflow: 'hidden' }}>
+                      <BlocklyWorkspace
+                        toolbox={toolbox}
+                        height="100%"
+                        onChange={refreshFromWorkspace}
+                        onWorkspaceReady={handleWorkspaceReady}
+                      />
+                    </div>
+                    <div style={{ flex: '1 1 40%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                      <Title headingLevel="h3" size="sm" style={{ marginBottom: 8, flex: '0 0 auto' }}>
+                        {docMode === 'role' ? `Generated YAML — ${ROLE_SECTION_LABELS[roleSection]}` : 'Generated YAML'}
+                      </Title>
+                      <div data-testid="playbook-yaml-preview" style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
+                        <CodeEditor value={playbookYaml} mode="yaml" readOnly rows="auto" />
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-              <div style={{ flex: '0 0 150px', height: '100%', display: 'flex', flexDirection: 'column' }}>
-                <Title headingLevel="h3" size="sm" style={{ marginBottom: 8, flex: '0 0 auto' }}>
-                  Variables
-                </Title>
-                <VariablesPanel
-                  projectId={projectId}
-                  roleNames={relevantRoles}
-                  localVars={docVars.map((v) => ({ name: v.name, source: 'this document', preview: v.value }))}
-                  onCreateVariable={
-                    docMode === 'playbook' || sectionSerializeMode(roleSection) === 'vars'
-                      ? handleCreateVariable
-                      : undefined
-                  }
-                />
-              </div>
+                  <div style={{ flex: '0 0 150px', height: '100%', display: 'flex', flexDirection: 'column' }}>
+                    <Title headingLevel="h3" size="sm" style={{ marginBottom: 8, flex: '0 0 auto' }}>
+                      Variables
+                    </Title>
+                    <VariablesPanel
+                      projectId={projectId}
+                      roleNames={relevantRoles}
+                      localVars={docVars.map((v) => ({ name: v.name, source: 'this document', preview: v.value }))}
+                      onCreateVariable={
+                        docMode === 'playbook' || sectionSerializeMode(roleSection) === 'vars'
+                          ? handleCreateVariable
+                          : undefined
+                      }
+                    />
+                  </div>
+                </>
+              )}
             </div>
           </CardBody>
         </Card>

@@ -91,23 +91,51 @@ als fertiger Block — einfach reinziehen (landet im separaten `roles:`-Slot des
 nicht bei den Tasks). Im `vars (optional):`-Feld können projektspezifische Rollen-Variablen als
 YAML-Mapping mitgegeben werden.
 
-## Eigene Rolle anlegen (Tasks/Handlers/Defaults/Vars)
+## Eigene Rolle anlegen (Tasks/Handlers/Defaults/Vars/Templates)
 
-**☰ → New role** legt eine neue Rolle mit **4 Reitern** an: **Tasks | Handlers | Defaults | Vars**
-— entspricht den 4 realen Dateien `roles/<name>/{tasks,handlers,defaults,vars}/main.yml`. Alle 4
-werden in **derselben** Canvas bearbeitet; beim Reiter-Wechsel wird der aktuelle Inhalt gemerkt
-(nicht verworfen). Man muss sich um nichts kümmern:
+**☰ → New role** legt eine neue Rolle mit **5 Reitern** an: **Tasks | Handlers | Defaults | Vars |
+Templates** — die ersten 4 entsprechen den 4 realen Dateien
+`roles/<name>/{tasks,handlers,defaults,vars}/main.yml`, alle 4 werden in **derselben** Blockly-
+Canvas bearbeitet; beim Reiter-Wechsel wird der aktuelle Inhalt gemerkt (nicht verworfen). Man muss
+sich um nichts kümmern:
 
 - **Tasks**/**Handlers**: normale Modul-Blöcke wie sonst auch. Ein Handler wird über den
   `notify:`-Task-Einstellung eines Tasks per Namen angesprochen (`task name:`-Feld des
   Handler-Blocks = der Name, den `notify:` erwartet).
 - **Defaults**/**Vars**: `var`-Blöcke wie im Play (siehe „Variablen anlegen" unten) — landen in
   `defaults/main.yml` bzw. `vars/main.yml`.
-- **☰ → Lint & Save** schreibt **alle 4 Dateien auf einmal** — auch Reiter, die man nie angeklickt
-  hat, werden als leere Datei angelegt. Die Verzeichnisse entstehen dabei automatisch; man muss sie
-  nicht selbst anlegen.
-- **☰ → Open role…** lädt eine bestehende Rolle wieder komplett (alle 4 Dateien auf einmal, nicht
-  nacheinander) — Reiter wechseln ist danach sofort, ohne weiteres Nachladen.
+- **Templates**: kein Blockly-Reiter, sondern ein eigenes Datei-Panel für
+  `roles/<name>/templates/*.j2` — siehe „Templates verwalten" unten.
+- **☰ → Lint & Save** schreibt **die 4 Blockly-Dateien auf einmal** — auch Reiter, die man nie
+  angeklickt hat, werden als leere Datei angelegt. Die Verzeichnisse entstehen dabei automatisch;
+  man muss sie nicht selbst anlegen. Templates werden **unabhängig davon** direkt beim Klick auf
+  „Save template" gespeichert (siehe unten), nicht erst bei „Lint & Save".
+- **☰ → Open role…** lädt eine bestehende Rolle wieder komplett (alle 4 Blockly-Dateien auf einmal,
+  nicht nacheinander) — Reiter wechseln ist danach sofort, ohne weiteres Nachladen. Die
+  Templates-Liste wird beim Öffnen des Templates-Reiters separat vom Server geholt.
+
+## Templates verwalten
+
+Der **Templates**-Reiter einer Rolle verwaltet `roles/<name>/templates/*.j2` — die Jinja2-Dateien,
+die das `template`-Modul über seinen `src:`-Parameter referenziert. Anders als die anderen 4 Reiter
+ist das **kein Blockly-Canvas**: ein Jinja2-Template ist beliebiger Text (oft eine ganze Config-
+Datei mit ein paar `{{ variable }}`-Stellen darin), kein YAML mit fester Struktur — daher links eine
+einfache Dateiliste, rechts ein Text-/Code-Editor (derselbe Monaco-Editor wie im normalen
+Datei-Editor-Screen, mit Jinja-Syntax-Highlighting für `.j2`/`.jinja2`):
+
+1. Dateiname oben links eintragen (z.B. `nginx.conf.j2`) und **+** klicken — legt die Datei leer an
+   und öffnet sie sofort zum Bearbeiten.
+2. Bestehende Datei in der Liste anklicken zum Öffnen.
+3. Inhalt tippen, **Save template** klicken (oder Strg+S) — speichert **sofort**, unabhängig vom
+   großen „Lint & Save"-Button oben (der nur die 4 Blockly-Dateien betrifft).
+4. Papierkorb-Icon neben einer Datei löscht sie (mit Bestätigung).
+
+Ein Template braucht **keine** `.j2`-Endung — viele echte Rollen (z.B. `img_docker`) haben
+Template-Quelldateien ganz ohne Endung (`docker-compose`, `docker.list`, …), weil Ansibles
+`template:`-Modul selbst keine Endung verlangt. Der Datei-Editor erlaubt das gezielt für
+`roles/*/templates/` und `roles/*/files/` (siehe `_is_allowed_file_path` in
+`awx/customvars/api.py`) — außerhalb dieser beiden Verzeichnisse gilt weiterhin die normale
+Endungs-Positivliste (`.yml`/`.yaml`/`.j2`/`.jinja2`/`.conf`/`.ini`/`.md`/`.txt`/`.cfg`/`.json`).
 
 ## Bestehende Playbooks/Rollen öffnen (Import)
 
@@ -213,9 +241,11 @@ zur Verfügung (Distribution, OS-Familie, IP-Adresse, RAM, …), unabhängig vom
 - `block:`/`rescue:`/`always:`-Strukturen haben (noch) keinen eigenen Block und werden als
   `raw task` dargestellt.
 - Checkbox-Felder können „nicht gesetzt" nicht von „explizit false" unterscheiden.
-- Beim Rollen-Speichern wird nur die **aktive** Sektion gelintet, nicht alle 4 auf einmal.
-- `templates/`, `files/`, `meta/` (Rollen-Metadaten, Jinja-Templates, statische Dateien) werden
-  vom Builder (noch) nicht verwaltet — nur tasks/handlers/defaults/vars.
+- Beim Rollen-Speichern wird nur die **aktive** Blockly-Sektion gelintet, nicht alle 4 auf einmal;
+  Templates werden gar nicht gelintet (Jinja ist kein YAML).
+- `templates/` hat einen eigenen Reiter (siehe „Templates verwalten" oben) — `files/` (statische,
+  nicht-templatete Dateien) und `meta/` (Rollen-Metadaten) haben (noch) keinen eigenen Reiter; für
+  `files/` funktioniert der normale Datei-Editor-Screen (`/editor`) bereits ohne Einschränkung.
 
 ## Technischer Hintergrund
 
