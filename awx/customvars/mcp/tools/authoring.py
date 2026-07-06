@@ -61,6 +61,19 @@ def _clean_desc(text) -> str:
     return _MACRO_RE.sub(r"\1", str(text)).strip()
 
 
+def _short_desc(text, cap: int = 160) -> str:
+    """First sentence of a (cleaned) description, capped — keeps get_module token-lean so a
+    small-context model (e.g. a 4k/8k local 7B–14B) can read a full module spec without blowing
+    its context. The param name/type/required/choices/aliases carry most of the signal anyway."""
+    d = _clean_desc(text)
+    if not d:
+        return ""
+    first = d.split(". ")[0].rstrip(".")
+    if len(first) > cap:
+        first = first[:cap].rsplit(" ", 1)[0] + "…"
+    return first
+
+
 def _module_by_name(name: str) -> dict | None:
     """Find a catalog module by short name (apt) or FQCN (ansible.builtin.apt)."""
     short = name.split(".")[-1]
@@ -274,7 +287,7 @@ def get_module(name: str) -> dict:
                 "choices": p.get("choices"),
                 "default": p.get("default"),
                 "aliases": p.get("aliases"),
-                "description": _clean_desc(p.get("description")),
+                "description": _short_desc(p.get("description")),
             }
             for p in mod.get("params", [])
         ],
