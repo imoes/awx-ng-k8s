@@ -17,14 +17,19 @@ Later blocks add the authoring loop (draft/lint/check_run) and the pgvector RAG 
 generation cache. search_modules is written so the semantic backend can drop in behind
 it without changing the tool's contract.
 """
+import hashlib
 import json
 import re
 from functools import lru_cache
 from pathlib import Path
 
-from awx.customvars.models import RoleVariable, RoleTag, RoleHandler
+from awx.customvars.models import RoleVariable, RoleTag, RoleHandler, EmbeddedBlock, AuthoringCacheEntry
 from awx.customvars.mcp.server import mcp
 from awx.customvars.mcp.tools._client import awx_http
+from awx.customvars.mcp import embeddings
+
+# Fuzzy cache-hit threshold: bge-m3 cosine on short prose. Conservative (yolo-man uses 0.85).
+_CACHE_SIM_THRESHOLD = 0.85
 
 # The module catalog is generated for the UI (playbookBuilder/tools/gen-module-catalog.py)
 # and copied into this package so the backend can read it without the UI source tree.
@@ -126,19 +131,17 @@ def _lexical_score(mod: dict, terms: list) -> int:
     return score
 
 
-@mcp.tool()
-def search_modules(query: str, top_k: int = 8) -> list:
-    """Find the ansible.builtin modules most relevant to a task described in words.
+def _module_hit(mod: dict, score) -> dict:
+    return {
+        "short_name": mod.get("short_name"),
+        "name": mod.get("name"),
+        "short_description": _clean_desc(mod.get("short_description")),
+        "required_params": _required_params(mod),
+        "score": score,
+    }
 
-    Returns compact hits (not full specs) so only relevant building blocks enter the model's
-    context. Follow up with get_module(name) to read the full parameter spec of a chosen module.
 
-    Args:
-        query:  Natural-language task or keywords (e.g. "install a package", "open firewall port", "create user")
-        top_k:  Maximum number of modules to return (default 8)
-
-    Returns: list of {short_name, name, short_description, required_params, score}, best first.
-    """
+def _lexical_modules(query: str, top_k: int) -> list:
     terms = [t for t in re.split(r"\W+", (query or "").lower()) if t]
     scored = []
     for mod in _catalog():
@@ -146,16 +149,100 @@ def search_modules(query: str, top_k: int = 8) -> list:
         if s > 0:
             scored.append((s, mod))
     scored.sort(key=lambda x: (-x[0], x[1].get("short_name", "")))
-    return [
-        {
-            "short_name": mod.get("short_name"),
-            "name": mod.get("name"),
-            "short_description": _clean_desc(mod.get("short_description")),
-            "required_params": _required_params(mod),
-            "score": s,
-        }
-        for s, mod in scored[: max(1, top_k)]
-    ]
+    return [_module_hit(mod, s) for s, mod in scored[: max(1, top_k)]]
+
+
+def _semantic_refs(kind: str, project_id: int, query: str, top_k: int):
+    """Semantic top-k refs for a kind, or None to signal 'fall back to lexical'.
+
+    Returns None when the embedding endpoint is down OR nothing is indexed yet — so every
+    caller degrades to lexical search without an error.
+    """
+    qv = embeddings.embed_one(query)
+    if qv is None:
+        return None
+    rows = list(EmbeddedBlock.objects.filter(kind=kind, project_id=project_id).only("ref", "embedding"))
+    if not rows:
+        return None
+    return embeddings.rank(qv, [(r.ref, r.embedding) for r in rows], top_k)
+
+
+@mcp.tool()
+def search_modules(query: str, top_k: int = 8) -> list:
+    """Find the ansible.builtin modules most relevant to a task described in words.
+
+    Uses semantic search (bge-m3 embeddings) when the index is populated (awx-manage mcp_reindex);
+    otherwise falls back to lexical keyword scoring. Returns compact hits (not full specs) so only
+    relevant building blocks enter the model's context — follow up with get_module(name).
+
+    Args:
+        query:  Natural-language task or keywords (e.g. "install a package", "open firewall port", "create user")
+        top_k:  Maximum number of modules to return (default 8)
+
+    Returns: list of {short_name, name, short_description, required_params, score}, best first.
+             (score is cosine similarity for semantic hits, a keyword count for lexical.)
+    """
+    ranked = _semantic_refs(EmbeddedBlock.KIND_MODULE, 0, query, top_k)
+    if ranked is None:
+        return _lexical_modules(query, top_k)
+    hits = []
+    for ref, score in ranked:
+        mod = _module_by_name(ref)
+        if mod:
+            hits.append(_module_hit(mod, round(score, 4)))
+    return hits or _lexical_modules(query, top_k)
+
+
+@mcp.tool()
+def search_roles(query: str, project_id: int, top_k: int = 6) -> list:
+    """Find the project's own roles most relevant to a task (semantic, lexical fallback).
+
+    Prefer an existing role over hand-writing tasks. Follow up with get_role(project_id, role).
+
+    Args:
+        query:      Natural-language task or keywords
+        project_id: ID of the project whose roles to search
+        top_k:      Maximum number of roles to return (default 6)
+
+    Returns: list of {role_name, score}, best first.
+    """
+    ranked = _semantic_refs(EmbeddedBlock.KIND_ROLE, project_id, query, top_k)
+    if ranked is not None:
+        return [{"role_name": ref, "score": round(score, 4)} for ref, score in ranked]
+    # Lexical fallback: substring over role names known to this project.
+    terms = [t for t in re.split(r"\W+", (query or "").lower()) if t]
+    names = set(RoleVariable.objects.filter(project_id=project_id).values_list("role_name", flat=True))
+    names |= set(RoleTag.objects.filter(project_id=project_id).values_list("role_name", flat=True))
+    names |= set(RoleHandler.objects.filter(project_id=project_id).values_list("role_name", flat=True))
+    scored = [(sum(t in rn.lower() for t in terms), rn) for rn in names]
+    scored = [(s, rn) for s, rn in scored if s > 0]
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [{"role_name": rn, "score": s} for s, rn in scored[: max(1, top_k)]]
+
+
+@mcp.tool()
+def search_playbooks(query: str, project_id: int, top_k: int = 6) -> list:
+    """Find a project's existing playbooks most relevant to a task (semantic, lexical fallback).
+
+    Args:
+        query:      Natural-language task or keywords
+        project_id: ID of the project whose playbooks to search
+        top_k:      Maximum number of playbook paths to return (default 6)
+
+    Returns: list of {playbook, score}, best first.
+    """
+    ranked = _semantic_refs(EmbeddedBlock.KIND_PLAYBOOK, project_id, query, top_k)
+    if ranked is not None:
+        return [{"playbook": ref, "score": round(score, 4)} for ref, score in ranked]
+    # Lexical fallback: substring over the project's playbook paths.
+    terms = [t for t in re.split(r"\W+", (query or "").lower()) if t]
+    with awx_http() as client:
+        resp = client.get(f"projects/{project_id}/playbooks/")
+        paths = resp.json() if resp.status_code == 200 else []
+    scored = [(sum(t in str(p).lower() for t in terms), str(p)) for p in paths]
+    scored = [(s, p) for s, p in scored if s > 0]
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [{"playbook": p, "score": s} for s, p in scored[: max(1, top_k)]]
 
 
 @mcp.tool()
@@ -437,3 +524,69 @@ def check_result(job_id: int, stdout_tail_chars: int = 4000) -> dict:
         "total_failed": sum(h["failed"] + h["unreachable"] for h in recap),
         "stdout_tail": text[-max(0, stdout_tail_chars):],
     }
+
+
+# ── Generation cache (Block 3) ────────────────────────────────────────────────
+# Reuse a previously-produced, validated artifact for the same/near-duplicate prose so a
+# repeat request costs zero LLM tokens (yolo-man's chunk-similarity cache). Exact match via
+# sha256 of the normalized prose; fuzzy match via bge-m3 cosine ≥ threshold.
+
+def _normalize_prose(prose: str) -> str:
+    return " ".join((prose or "").split()).lower()
+
+
+@mcp.tool()
+def cache_lookup(prose: str) -> dict:
+    """Check whether a validated artifact already exists for this (or a near-identical) prose request.
+
+    Call this BEFORE authoring: on a hit you can return the stored playbook/plan directly and skip
+    generation entirely. Exact match = same normalized text; fuzzy match = cosine ≥ 0.85 on bge-m3
+    embeddings (falls back to exact-only if the embedding endpoint is down).
+
+    Args:
+        prose: The natural-language request to look up.
+
+    Returns: {hit: "exact"|"fuzzy"|null, similarity?, artifact?} — artifact is the stored result.
+    """
+    norm = _normalize_prose(prose)
+    h = hashlib.sha256(norm.encode("utf-8")).hexdigest()
+    exact = AuthoringCacheEntry.objects.filter(source_hash=h).first()
+    if exact:
+        AuthoringCacheEntry.objects.filter(pk=exact.pk).update(hits=exact.hits + 1)
+        return {"hit": "exact", "artifact": exact.artifact_json}
+
+    qv = embeddings.embed_one(norm)
+    if qv is None:
+        return {"hit": None}
+    rows = list(AuthoringCacheEntry.objects.exclude(prompt_embedding=None).only("id", "prompt_embedding", "artifact_json"))
+    if not rows:
+        return {"hit": None}
+    ranked = embeddings.rank(qv, [(r, r.prompt_embedding) for r in rows], 1)
+    best_row, best_score = ranked[0]
+    if best_score >= _CACHE_SIM_THRESHOLD:
+        AuthoringCacheEntry.objects.filter(pk=best_row.pk).update(hits=best_row.hits + 1)
+        return {"hit": "fuzzy", "similarity": round(best_score, 4), "artifact": best_row.artifact_json}
+    return {"hit": None}
+
+
+@mcp.tool()
+def cache_store(prose: str, artifact: dict) -> dict:
+    """Store a validated authoring artifact so future identical/near-duplicate prose reuses it.
+
+    Call this AFTER the generated playbook passed lint_playbook and check_run (i.e. it's known-good),
+    so cache_lookup can later return it with zero LLM tokens. Upserts by normalized-prose hash.
+
+    Args:
+        prose:    The natural-language request that produced the artifact.
+        artifact: The validated result to store (e.g. {"path": ..., "content": ...} or a plan object).
+
+    Returns: {stored: true, source_hash, embedded: bool}
+    """
+    norm = _normalize_prose(prose)
+    h = hashlib.sha256(norm.encode("utf-8")).hexdigest()
+    vec = embeddings.embed_one(norm)
+    AuthoringCacheEntry.objects.update_or_create(
+        source_hash=h,
+        defaults={"prose": prose, "prompt_embedding": vec, "artifact_json": artifact},
+    )
+    return {"stored": True, "source_hash": h, "embedded": vec is not None}

@@ -227,3 +227,57 @@ class ExecutionNodeLocation(models.Model):
     def __str__(self):
         loc = self.location.name if self.location else "unassigned"
         return f"{self.instance_hostname} → {loc}"
+
+
+# ── 4. MCP prose-authoring: semantic retrieval + generation cache ─────────────
+# Embeddings are stored as a plain JSON list[float] (bge-m3, 1024-dim) and cosine
+# similarity is computed in Python — NOT pgvector. At this scale (dozens of modules +
+# a few hundred role/playbook/cache rows) brute-force cosine is <1ms and needs no DB
+# extension / image change (see plan). Transparently upgradable to pgvector later.
+
+class EmbeddedBlock(models.Model):
+    """One embedded building block (a module, a role, or a playbook) for semantic search.
+
+    Populated by `awx-manage mcp_reindex`. `ref` identifies the block within its kind
+    (module short_name, "<project_id>:<role_name>", or a playbook path). Modules are
+    project-agnostic (project_id=0); roles/playbooks are per-project.
+    """
+    KIND_MODULE = "module"
+    KIND_ROLE = "role"
+    KIND_PLAYBOOK = "playbook"
+    KIND_CHOICES = [(KIND_MODULE, "module"), (KIND_ROLE, "role"), (KIND_PLAYBOOK, "playbook")]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES, db_index=True)
+    project_id = models.IntegerField(db_index=True, default=0)  # 0 = project-agnostic (modules)
+    ref = models.CharField(max_length=512, db_index=True)       # short_name / role / playbook path
+    text = models.TextField()                                   # the text that was embedded
+    embedding = models.JSONField()                              # list[float], bge-m3 (1024)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [("kind", "project_id", "ref")]
+        indexes = [models.Index(fields=["kind", "project_id"])]
+
+    def __str__(self):
+        return f"{self.kind}:{self.ref}"
+
+
+class AuthoringCacheEntry(models.Model):
+    """A previously-produced, validated authoring artifact keyed by the prose request.
+
+    Exact reuse via `source_hash` (sha256 of the normalized prose); fuzzy reuse via cosine
+    over `prompt_embedding` (≥ threshold) so a near-duplicate request returns the stored
+    playbook/plan with zero LLM tokens.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    source_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    prose = models.TextField()
+    prompt_embedding = models.JSONField(null=True, blank=True)  # list[float] or null
+    artifact_json = models.JSONField()                          # the produced artifact
+    hits = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"cache:{self.source_hash[:12]} (hits={self.hits})"
