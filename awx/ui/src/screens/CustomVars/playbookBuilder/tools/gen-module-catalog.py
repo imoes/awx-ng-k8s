@@ -1,16 +1,26 @@
 #!/usr/bin/env python3
 """
-Generates moduleCatalog.generated.json from `ansible-doc -j` for every
-ansible.builtin module. Run inside an execution environment that has
-ansible-doc on PATH (e.g. the awx_ee container):
+Generates moduleCatalog.generated.json from `ansible-doc -j`. Run inside an
+execution environment that has ansible-doc on PATH (e.g. the awx_ee container).
 
-    docker compose exec -T awx_ee python3 - < gen-module-catalog.py > moduleCatalog.generated.json
+  # UI catalog — ansible.builtin only (keeps the Blockly toolbox lean):
+  docker compose exec -T awx_ee python3 - < gen-module-catalog.py > moduleCatalog.generated.json
 
-Re-run whenever ansible-core is upgraded to pick up new/changed modules.
+  # Backend/MCP catalog — broader coverage for the prose-authoring semantic search:
+  docker compose exec -T awx_ee python3 - ansible.builtin ansible.posix community.general \
+      community.docker community.crypto < gen-module-catalog.py > moduleCatalog.generated.json
+
+Namespaces are given as argv (default: ansible.builtin). Re-run whenever ansible-core /
+collections are upgraded. NOTE: with multiple namespaces, short_names can collide across
+collections (e.g. several `.copy`) — consumers must key on the FQCN `name`, not `short_name`
+(the earliest namespace on the command line wins a bare short_name lookup).
 """
 import json
 import subprocess
 import sys
+
+# Namespaces to include, in priority order (earlier wins a bare short_name collision).
+NAMESPACES = sys.argv[1:] or ['ansible.builtin']
 
 
 def _text(value):
@@ -20,15 +30,26 @@ def _text(value):
     return str(value) if value is not None else ''
 
 
-def list_builtin_modules():
+def list_namespace_modules(namespace):
     out = subprocess.run(
-        ['ansible-doc', '-l', 'ansible.builtin'],
+        ['ansible-doc', '-l', namespace],
         check=True, capture_output=True, text=True,
     ).stdout
     # `ansible-doc -l` intersperses section headers (e.g. "DEPRECATED:")
-    # among the module lines — keep only real ansible.builtin.* module names.
+    # among the module lines — keep only real <namespace>.* module names.
     names = (line.split()[0] for line in out.splitlines() if line.strip())
-    return sorted(n for n in names if n.startswith('ansible.builtin.'))
+    return sorted(n for n in names if n.startswith(namespace + '.'))
+
+
+def list_builtin_modules():
+    seen = set()
+    ordered = []
+    for ns in NAMESPACES:
+        for n in list_namespace_modules(ns):
+            if n not in seen:
+                seen.add(n)
+                ordered.append(n)
+    return ordered
 
 
 def compact_options(options):
@@ -51,20 +72,7 @@ def compact_options(options):
     return result
 
 
-class ModuleRemoved(Exception):
-    """Raised when ansible-doc no longer knows this module (e.g. removed
-    aliases like ansible.builtin.include in modern ansible-core)."""
-
-
-def fetch_module_doc(fqcn):
-    out = subprocess.run(
-        ['ansible-doc', '-j', fqcn],
-        check=True, capture_output=True, text=True,
-    ).stdout
-    data = json.loads(out)
-    if fqcn not in data:
-        raise ModuleRemoved(fqcn)
-    doc = data[fqcn]['doc']
+def _doc_to_entry(fqcn, doc):
     return {
         'name': fqcn,
         'short_name': fqcn.rsplit('.', 1)[-1],
@@ -73,22 +81,43 @@ def fetch_module_doc(fqcn):
     }
 
 
+def fetch_batch(fqcns):
+    """ansible-doc -j accepts many module names and returns {fqcn: {doc:...}} —
+    batching keeps a 700+ module catalog build to seconds, not minutes."""
+    out = subprocess.run(
+        ['ansible-doc', '-j', *fqcns],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    data = json.loads(out)
+    return {fqcn: data[fqcn]['doc'] for fqcn in fqcns if fqcn in data and 'doc' in data[fqcn]}
+
+
 def main():
     modules = list_builtin_modules()
     catalog = []
     errors = []
-    for fqcn in modules:
+    BATCH = 40
+    for i in range(0, len(modules), BATCH):
+        batch = modules[i:i + BATCH]
         try:
-            catalog.append(fetch_module_doc(fqcn))
-        except ModuleRemoved:
-            errors.append(f'{fqcn}: removed from ansible-core, skipped')
-        except Exception as exc:  # noqa: BLE001 — best-effort catalog build
-            errors.append(f'{fqcn}: {exc}')
+            docs = fetch_batch(batch)
+        except Exception as exc:  # noqa: BLE001 — fall back to per-module on batch failure
+            docs = {}
+            for fqcn in batch:
+                try:
+                    docs.update(fetch_batch([fqcn]))
+                except Exception as exc2:  # noqa: BLE001
+                    errors.append(f'{fqcn}: {exc2}')
+        for fqcn in batch:
+            if fqcn in docs:
+                catalog.append(_doc_to_entry(fqcn, docs[fqcn]))
+            else:
+                errors.append(f'{fqcn}: no doc (removed/alias), skipped')
 
     print(json.dumps(catalog, indent=2, sort_keys=False))
     if errors:
-        print(f'--- {len(errors)} module(s) failed ---', file=sys.stderr)
-        for e in errors:
+        print(f'--- {len(errors)} module(s) failed/skipped ---', file=sys.stderr)
+        for e in errors[:40]:
             print(e, file=sys.stderr)
 
 

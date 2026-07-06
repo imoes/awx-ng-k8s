@@ -103,24 +103,39 @@ def ansible_conventions() -> str:
         return "# Ansible conventions unavailable (context file missing)."
 
 
+def _namespace_of(mod: dict) -> str:
+    return (mod.get("name") or "").rsplit(".", 1)[0]
+
+
 @mcp.tool()
 def get_catalog() -> str:
-    """Return a compact, byte-stable Markdown digest of every available ansible.builtin module.
+    """Return a compact, byte-stable Markdown digest of the available modules.
 
-    One line per module (name — purpose — required params). Deterministic ordering so it is
-    safe to prompt-cache client-side. Use this to see what building blocks exist, then call
-    search_modules() to narrow down and get_module() to read one module's full parameter spec.
+    Lists every `ansible.builtin` module in full (name — purpose — required params), then, for the
+    larger collections (community.general etc.), only a per-namespace count with a pointer to
+    search_modules — a full dump of all ~700 modules would blow a small model's context. So: skim
+    builtin here, and use search_modules() for anything in the other collections; get_module() reads
+    one module's full parameter spec.
 
-    Returns: Markdown string, one bullet per module.
+    Returns: Markdown string (builtin bullets + a namespace summary).
     """
-    lines = ["# ansible.builtin module catalog", ""]
-    for mod in sorted(_catalog(), key=lambda m: m.get("short_name", "")):
+    cat = _catalog()
+    builtin = [m for m in cat if _namespace_of(m) == "ansible.builtin"]
+    other = [m for m in cat if _namespace_of(m) != "ansible.builtin"]
+    lines = ["# Module catalog", "", "## ansible.builtin (use these names directly)", ""]
+    for mod in sorted(builtin, key=lambda m: m.get("short_name", "")):
         req = _required_params(mod)
         req_txt = f" — required: {', '.join(req)}" if req else ""
         lines.append(
             f"- **{mod.get('short_name')}** ({mod.get('name')}): "
             f"{_clean_desc(mod.get('short_description'))}{req_txt}"
         )
+    if other:
+        from collections import Counter
+        counts = Counter(_namespace_of(m) for m in other)
+        lines += ["", "## Other collections (search_modules to find these, then get_module)", ""]
+        for ns, n in sorted(counts.items()):
+            lines.append(f"- **{ns}**: {n} modules — e.g. use search_modules(\"…\") to discover")
     return "\n".join(lines)
 
 

@@ -31,8 +31,10 @@ def _module_texts():
         return
     for mod in catalog:
         params = " ".join(p.get("name", "") for p in mod.get("params", []))
-        text = f"{mod.get('short_name')} {mod.get('short_description') or ''} params: {params}"
-        yield mod.get("short_name"), text
+        # ref = FQCN (collision-safe across namespaces); include short_name in the embedded
+        # text so a query like "copy" still matches community.* copies too.
+        text = f"{mod.get('name')} ({mod.get('short_name')}) {mod.get('short_description') or ''} params: {params}"
+        yield mod.get("name"), text
 
 
 def _role_texts(project_id):
