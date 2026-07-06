@@ -201,3 +201,4 @@ from awx.customvars.mcp.tools import projects     # noqa: F401, E402
 from awx.customvars.mcp.tools import jobs         # noqa: F401, E402
 from awx.customvars.mcp.tools import locations    # noqa: F401, E402
 from awx.customvars.mcp.tools import credentials  # noqa: F401, E402
+from awx.customvars.mcp.tools import authoring     # noqa: F401, E402
