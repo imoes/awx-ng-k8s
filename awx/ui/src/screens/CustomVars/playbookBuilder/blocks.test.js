@@ -21,6 +21,19 @@ describe('playbook builder blocks', () => {
     expect(Blockly.Blocks.define_var).toBeDefined();
   });
 
+  it('registers raw_section (whole-file fallback for an unparseable role section)', () => {
+    expect(Blockly.Blocks.raw_section).toBeDefined();
+    const workspace = new Blockly.Workspace();
+    const block = workspace.newBlock('raw_section');
+    expect(block.getField('RAW_YAML')).toBeDefined();
+    // No previous/next/output connection — it floats alone as the section's
+    // sole content rather than chaining with other blocks.
+    expect(block.previousConnection).toBeNull();
+    expect(block.nextConnection).toBeNull();
+    expect(block.outputConnection).toBeNull();
+    workspace.dispose();
+  });
+
   it('play has a VARS statement chain for define_var blocks, alongside ROLES/TASKS', () => {
     const workspace = new Blockly.Workspace();
     const play = workspace.newBlock('play');

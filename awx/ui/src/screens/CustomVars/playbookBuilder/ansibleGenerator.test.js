@@ -263,6 +263,15 @@ describe('ansibleGenerator', () => {
     expect(parsed[0].apt.name).toEqual(['nginx', 'curl']);
   });
 
+  it('serializeWorkspace re-emits a raw_section block verbatim for vars/tasks/role modes (lossless fallback)', () => {
+    const original = 'docker_daemon_gelf:\n  tag: !unsafe "{{.Name}}"\n';
+    const raw = workspace.newBlock('raw_section');
+    raw.setFieldValue(original, 'RAW_YAML');
+    expect(serializeWorkspace(workspace, 'vars')).toBe(original);
+    expect(serializeWorkspace(workspace, 'tasks')).toBe(original);
+    expect(serializeWorkspace(workspace, 'role')).toBe(original);
+  });
+
   it('returns an empty-document YAML for an empty workspace', () => {
     const outputYaml = workspaceToPlaybook(workspace);
     expect(outputYaml.trim()).toBe('---');

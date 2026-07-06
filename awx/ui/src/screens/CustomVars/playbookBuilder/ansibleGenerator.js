@@ -419,6 +419,18 @@ export function workspaceToPlaybook(workspace) {
 //   bare vars: mapping (defaults/main.yml and vars/main.yml are the same
 //   shape) — see the role section tabs in PlaybookBuilder.js.
 export function serializeWorkspace(workspace, mode = 'playbook') {
+  // A role section (vars/tasks/handlers/defaults) whose file failed to parse
+  // on import becomes a single raw_section block holding the original text
+  // verbatim (see playbookImporter's importVarsYaml/importTasksYaml) — if
+  // present, that text IS this section's output, unchanged. Without this
+  // check, saving would silently regenerate an empty mapping/list from the
+  // (correctly) empty set of define_var/module blocks and overwrite the
+  // real file. Not relevant to 'playbook' mode — importPlaybookYaml throws
+  // visibly instead of ever creating this block.
+  if (mode === 'vars' || mode === 'role' || mode === 'tasks') {
+    const rawSection = workspace.getTopBlocks(true).find((b) => b.type === 'raw_section' && b.isEnabled());
+    if (rawSection) return fieldValue(rawSection, 'RAW_YAML');
+  }
   if (mode === 'vars') return jsonToYaml(JSON.stringify(workspaceToVarsMapping(workspace)));
   const doc = (mode === 'role' || mode === 'tasks') ? workspaceToTasks(workspace) : workspaceToPlays(workspace);
   return jsonToYaml(JSON.stringify(doc));

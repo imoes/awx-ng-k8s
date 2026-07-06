@@ -386,9 +386,20 @@ export function importPlaybookYaml(content, workspace) {
 // (a freshly-scaffolded stub file, "---\n") is treated as zero tasks rather
 // than an error, so a brand-new role's untouched sections still open.
 export function importTasksYaml(content, workspace) {
-  const tasks = yaml.load(content) || [];
-  if (!Array.isArray(tasks)) {
-    throw new Error('Expected a YAML list of tasks at the top level.');
+  let tasks;
+  try {
+    tasks = yaml.load(content) || [];
+    if (!Array.isArray(tasks)) throw new Error('Expected a YAML list of tasks at the top level.');
+  } catch {
+    // Content exists but js-yaml can't parse it at all (e.g. an Ansible
+    // !unsafe/!vault tag) — preserve it verbatim via raw_section rather than
+    // silently importing as "0 tasks" (which the caller can't tell apart
+    // from a genuinely empty file, and would then overwrite on save).
+    workspace.clear();
+    const rawBlock = newBlock(workspace, 'raw_section');
+    setField(rawBlock, 'RAW_YAML', content);
+    if (typeof rawBlock.moveBy === 'function') rawBlock.moveBy(20, 20);
+    return 0;
   }
   workspace.clear();
   let previousTask = null;
@@ -411,9 +422,25 @@ export function importTasksYaml(content, workspace) {
 // ansibleGenerator's workspaceToVarsMapping(). An empty/null document (a
 // freshly-scaffolded stub file) is treated as zero variables.
 export function importVarsYaml(content, workspace) {
-  const varsObj = yaml.load(content) || {};
-  if (typeof varsObj !== 'object' || Array.isArray(varsObj)) {
-    throw new Error('Expected a YAML mapping of variables at the top level.');
+  let varsObj;
+  try {
+    varsObj = yaml.load(content) || {};
+    if (typeof varsObj !== 'object' || Array.isArray(varsObj)) {
+      throw new Error('Expected a YAML mapping of variables at the top level.');
+    }
+  } catch {
+    // Same rationale as importTasksYaml's catch above — preserve verbatim
+    // via raw_section instead of silently showing "0 variables" (this is
+    // exactly what was happening for real roles using !unsafe, e.g. a
+    // Docker daemon.json default containing a Go-template string that must
+    // NOT be Jinja-rendered — the vars were on disk and in the Variables
+    // panel's role_variables scan, but invisible on this tab and one
+    // "Lint & Save" away from being wiped out).
+    workspace.clear();
+    const rawBlock = newBlock(workspace, 'raw_section');
+    setField(rawBlock, 'RAW_YAML', content);
+    if (typeof rawBlock.moveBy === 'function') rawBlock.moveBy(20, 20);
+    return 0;
   }
   workspace.clear();
   let previousVar = null;

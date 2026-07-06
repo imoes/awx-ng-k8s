@@ -455,6 +455,30 @@ function defineStaticBlocks() {
       this.setTooltip('Fallback block: holds raw task YAML verbatim (round-trip safety).');
     },
   };
+
+  // Whole-FILE escape hatch for a role's tasks/handlers/defaults/vars
+  // section: created by the importer (never dragged from the toolbox — like
+  // cond_raw, it's programmatic-only) when a file's content fails to parse
+  // at all, e.g. Ansible's `!unsafe`/`!vault` YAML tags (unknown to js-yaml's
+  // default schema) or an unexpected top-level shape. Without this, such a
+  // section used to come up looking empty (silently swallowed by the
+  // open-role catch block) — and worse, hitting "Lint & Save" would then
+  // overwrite the real file with an empty stub. No previous/next connection:
+  // it floats alone as the section's sole content, standing in for the
+  // entire file rather than one item within it.
+  Blockly.Blocks.raw_section = {
+    init() {
+      this.appendDummyInput().appendField("raw file (couldn't be parsed into blocks)");
+      this.appendDummyInput().appendField(new FieldMultilineInput(''), 'RAW_YAML');
+      this.setColour(0);
+      this.setTooltip(
+        "This file's content is preserved here verbatim because it couldn't be broken " +
+        'down into blocks — commonly an Ansible !unsafe/!vault YAML tag, which js-yaml ' +
+        "doesn't know natively. Nothing is lost: edit the raw YAML directly, or fix it " +
+        'in the raw file editor and reopen. Saving re-emits this text unchanged.'
+      );
+    },
+  };
 }
 
 // Condition ("when:") blocks — value-returning blocks that compose into a

@@ -551,4 +551,47 @@ nginx_packages:
     expect(importTasksYaml('---\n', workspace)).toBe(0);
     expect(workspace.getAllBlocks(false)).toHaveLength(0);
   });
+
+  it('falls back to raw_section (not silently empty) for a defaults/vars file js-yaml cannot parse, and round-trips it losslessly', () => {
+    // Reproduces a real bug: img_docker's defaults/main.yml uses Ansible's
+    // !unsafe tag (js-yaml's default schema doesn't know it, so yaml.load()
+    // throws) to protect a Docker Go-template string from Jinja templating.
+    // Before this fix, the whole section silently imported as "0 variables"
+    // — invisible on the Defaults tab (though still shown correctly by the
+    // Variables panel, which reads role_variables via a separate backend
+    // scan) — and the next "Lint & Save" would have overwritten the real
+    // file with an empty vars: mapping.
+    const original = `docker_daemon_base:
+  default-address-pools:
+    - base: "172.29.0.0/16"
+      size: 24
+docker_daemon_gelf:
+  live-restore: true
+  log-opts:
+    tag: !unsafe "{{.Name}}"
+`;
+    const count = importVarsYaml(original, workspace);
+    expect(count).toBe(0);
+    const blocks = workspace.getAllBlocks(false);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].type).toBe('raw_section');
+    expect(blocks[0].getFieldValue('RAW_YAML')).toBe(original);
+
+    // Lossless round-trip: saving must re-emit the exact original text, not
+    // an empty (or worse, silently regenerated) vars: mapping.
+    expect(serializeWorkspace(workspace, 'vars')).toBe(original);
+  });
+
+  it('falls back to raw_section for a tasks/handlers file js-yaml cannot parse, and round-trips it losslessly', () => {
+    const original = `- name: set gelf tag
+  set_fact:
+    tag: !unsafe "{{.Name}}"
+`;
+    const count = importTasksYaml(original, workspace);
+    expect(count).toBe(0);
+    const blocks = workspace.getAllBlocks(false);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].type).toBe('raw_section');
+    expect(serializeWorkspace(workspace, 'tasks')).toBe(original);
+  });
 });

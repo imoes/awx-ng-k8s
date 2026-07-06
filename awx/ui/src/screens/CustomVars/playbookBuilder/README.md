@@ -148,6 +148,12 @@ Endungs-Positivliste (`.yml`/`.yaml`/`.j2`/`.jinja2`/`.conf`/`.ini`/`.md`/`.txt`
 - Nicht erkannte Module (andere Collections, z.B. `community.general.*`) oder Konstrukte ohne
   eindeutiges Modul (`block:`/`rescue:`/`always:`) landen unverändert in einem **raw task**-Block
   — nichts geht verloren, es lässt sich nur (noch) nicht grafisch bearbeiten.
+- Lässt sich eine Rollen-Sektion (Tasks/Handlers/Defaults/Vars) **gar nicht** als YAML parsen —
+  z.B. wegen Ansibles `!unsafe`/`!vault`-Tags, die `js-yaml` nicht kennt — erscheint statt einer
+  leeren Canvas ein **„raw file (couldn't be parsed into blocks)"**-Block mit dem kompletten
+  Original-Inhalt. Einfach direkt als Text bearbeiten (oder die Datei im Datei-Editor reparieren
+  und die Rolle neu öffnen) — „Lint & Save" schreibt diesen Text unverändert zurück, überschreibt
+  ihn also nicht mit einer leeren Datei.
 - `with_items:` wird als Alias für `loop:` erkannt; beim erneuten Speichern wird immer die
   moderne Schreibweise `loop:` erzeugt.
 - Parameter-Aliase aus der Ansible-Dokumentation werden erkannt (z.B. `dest:`/`name:` statt
