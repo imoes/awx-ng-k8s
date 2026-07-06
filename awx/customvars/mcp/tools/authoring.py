@@ -24,6 +24,7 @@ from pathlib import Path
 
 from awx.customvars.models import RoleVariable, RoleTag, RoleHandler
 from awx.customvars.mcp.server import mcp
+from awx.customvars.mcp.tools._client import awx_http
 
 # The module catalog is generated for the UI (playbookBuilder/tools/gen-module-catalog.py)
 # and copied into this package so the backend can read it without the UI source tree.
@@ -267,4 +268,172 @@ def get_role(project_id: int, role_name: str) -> dict:
         "variables": variables,
         "tags": tags,
         "handlers": handlers,
+    }
+
+
+# ── Authoring + verification loop (Block 2) ───────────────────────────────────
+# draft → lint → check-mode dry-run. This is the deterministic scaffolding that lets a
+# small model be wrong-then-corrected instead of right-first-try: lint returns structured
+# errors to retry against, and check_run/check_result preview changes with --check so a bad
+# guess is shown, never converged. Real (non-check) execution stays with the separate
+# awx_launch_job_template tool + explicit human approval.
+
+def _lint(project_id: int, content: str, path: str) -> dict:
+    with awx_http() as client:
+        resp = client.post(f"projects/{project_id}/files/lint/", json={"content": content, "path": path})
+        resp.raise_for_status()
+        return resp.json()
+
+
+@mcp.tool()
+def draft_playbook(project_id: int, path: str, content: str) -> dict:
+    """Write a draft playbook/role file into a project AND lint it in one step.
+
+    Combines the write + lint round-trips so you get immediate feedback. On lint errors, fix the
+    content and call draft_playbook again (or lint_playbook to check without rewriting). A written
+    .yml is immediately available to check_run (the project's playbook list auto-refreshes).
+
+    Args:
+        project_id: ID of the project (see awx_list_projects)
+        path:       File path relative to project root (e.g. "playbooks/nginx.yml")
+        content:    Full YAML content
+
+    Returns: {path, written, valid, errors:[{line,col,message,severity,source}]}
+    """
+    with awx_http() as client:
+        resp = client.put(
+            f"projects/{project_id}/files/content/",
+            params={"path": path},
+            json={"content": content},
+        )
+        resp.raise_for_status()
+    lint = _lint(project_id, content, path)
+    return {
+        "path": path,
+        "written": True,
+        "valid": lint.get("valid", False),
+        "errors": lint.get("errors", []),
+    }
+
+
+@mcp.tool()
+def lint_playbook(project_id: int, content: str, path: str = "playbook.yml") -> dict:
+    """Lint YAML playbook/role content WITHOUT writing it (YAML syntax + ansible-lint).
+
+    Use this in a validate→retry loop: generate, lint, fix reported errors, repeat until valid,
+    then draft_playbook() to persist. Errors are structured (line/col/message) so a small model
+    can correct precisely.
+
+    Args:
+        project_id: ID of the project (lint runs in the project's context)
+        content:    Full YAML content to check
+        path:       Nominal path (affects ansible-lint's file-type detection; default "playbook.yml")
+
+    Returns: {valid: bool, errors: [{line, col, message, severity, source, rule}]}
+    """
+    return _lint(project_id, content, path)
+
+
+def _find_or_create_check_jt(client, project_id: int, playbook: str, inventory_id: int,
+                             credential_id: int = 0) -> dict:
+    """Return (create if needed) a check-mode job template for this (project, playbook).
+
+    Named deterministically so repeated check_run calls on the same playbook reuse one JT
+    instead of piling up scratch templates. JT creation uses the stock AWX REST API (there is
+    no custom create-JT endpoint).
+    """
+    name = f"[MCP check] {playbook}"
+    resp = client.get("job_templates/", params={"name": name})
+    resp.raise_for_status()
+    results = resp.json().get("results", [])
+    if results:
+        jt = results[0]
+    else:
+        create = client.post("job_templates/", json={
+            "name": name,
+            "description": "Auto-created check-mode dry-run template for MCP prose authoring.",
+            "job_type": "check",
+            "project": project_id,
+            "playbook": playbook,
+            "inventory": inventory_id,
+            "ask_limit_on_launch": True,
+        })
+        create.raise_for_status()
+        jt = create.json()
+        if credential_id:
+            client.post(f"job_templates/{jt['id']}/credentials/", json={"id": credential_id})
+    return jt
+
+
+@mcp.tool()
+def check_run(project_id: int, playbook: str, inventory_id: int, limit: str = "", credential_id: int = 0) -> dict:
+    """Launch a CHECK-MODE (--check) dry run of a playbook — previews changes, converges nothing.
+
+    This is the idempotence safety net: it reports what WOULD change without touching hosts. Create
+    the playbook first (draft_playbook). A check job that reports changed>0 on a first run and
+    changed==0 on a second run is idempotent. Reuses one auto-created check-mode job template per
+    playbook. Poll awx_get_job_status(job_id) until finished, then call check_result(job_id).
+
+    Args:
+        project_id:    ID of the project containing the playbook
+        playbook:      Playbook path relative to project root (e.g. "playbooks/nginx.yml")
+        inventory_id:  Inventory to run against (see awx_list_inventories)
+        limit:         Optional Ansible host limit pattern
+        credential_id: Optional machine credential ID to attach (SSH) if not provided by Location routing
+
+    Returns: {job_id, template_id, status}
+    """
+    with awx_http() as client:
+        jt = _find_or_create_check_jt(client, project_id, playbook, inventory_id, credential_id)
+        payload = {}
+        if limit:
+            payload["limit"] = limit
+        launch = client.post(f"job_templates/{jt['id']}/launch/", json=payload)
+        launch.raise_for_status()
+        job = launch.json()
+    return {"job_id": job.get("id"), "template_id": jt.get("id"), "status": job.get("status", "pending")}
+
+
+# Matches an ansible PLAY RECAP host line: "host : ok=1 changed=0 unreachable=0 failed=0 ..."
+_RECAP_RE = re.compile(
+    r"^(?P<host>\S+)\s*:\s*ok=(?P<ok>\d+)\s+changed=(?P<changed>\d+)\s+"
+    r"unreachable=(?P<unreachable>\d+)\s+failed=(?P<failed>\d+)",
+    re.M,
+)
+
+
+@mcp.tool()
+def check_result(job_id: int, stdout_tail_chars: int = 4000) -> dict:
+    """Get the outcome of a check_run job: the PLAY RECAP totals + a tail of stdout.
+
+    Call after awx_get_job_status(job_id) reports finished. The parsed recap tells you whether the
+    dry run would change anything (total_changed) and whether it failed — the signal for the
+    idempotence check.
+
+    Args:
+        job_id:            The check job's ID (from check_run)
+        stdout_tail_chars: How many trailing chars of stdout to include (default 4000, token budget)
+
+    Returns: {job_id, status, failed, recap:[{host,ok,changed,unreachable,failed}],
+              total_changed, total_failed, stdout_tail}
+    """
+    with awx_http() as client:
+        status = client.get(f"jobs/{job_id}/")
+        status.raise_for_status()
+        job = status.json()
+        out = client.get(f"jobs/{job_id}/stdout/", params={"format": "txt"})
+        text = out.text if out.status_code == 200 else ""
+
+    recap = [
+        {k: (int(v) if k != "host" else v) for k, v in m.groupdict().items()}
+        for m in _RECAP_RE.finditer(text)
+    ]
+    return {
+        "job_id": job_id,
+        "status": job.get("status"),
+        "failed": job.get("failed"),
+        "recap": recap,
+        "total_changed": sum(h["changed"] for h in recap),
+        "total_failed": sum(h["failed"] + h["unreachable"] for h in recap),
+        "stdout_tail": text[-max(0, stdout_tail_chars):],
     }
