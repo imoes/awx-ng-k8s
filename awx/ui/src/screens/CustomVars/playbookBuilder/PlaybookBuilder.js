@@ -18,9 +18,9 @@ import {
   Title,
 } from '@patternfly/react-core';
 import { BarsIcon } from '@patternfly/react-icons';
-import ScreenHeader from 'components/ScreenHeader/ScreenHeader';
 import CodeEditor from 'components/CodeEditor';
 import useRequest from 'hooks/useRequest';
+import useTitle from 'hooks/useTitle';
 import BlocklyWorkspace from './BlocklyWorkspace';
 import { registerBlocks } from './blocks';
 import { buildToolbox } from './toolbox';
@@ -134,6 +134,11 @@ function workspaceRoleNames(workspace) {
 }
 
 function PlaybookBuilder() {
+  // Sets the browser tab title without rendering the (breadcrumb + big h2)
+  // ScreenHeader bar — that bar was pure overhead here (single-crumb route,
+  // collapses to just a heading) and pushed the canvas down; every other
+  // pixel matters for the workbench (user feedback).
+  useTitle('Playbook Builder');
   const [blockCount, setBlockCount] = useState(0);
   const [playbookYaml, setPlaybookYaml] = useState('---\n');
   const [projects, setProjects] = useState([]);
@@ -156,6 +161,22 @@ function PlaybookBuilder() {
   const [lintErrors, setLintErrors] = useState([]);
   const [saved, setSaved] = useState(false);
   const [loadMessage, setLoadMessage] = useState(null);
+
+  // Transient success confirmations ("Saved to …", "Opened role …") are
+  // pure feedback, not something the user needs to act on — auto-dismiss
+  // them so they don't permanently eat vertical space (user feedback: every
+  // pixel matters here). Errors/warnings (saveError, a danger loadMessage,
+  // lintErrors) stay until the user resolves them or takes another action.
+  useEffect(() => {
+    if (!saved) return undefined;
+    const timer = setTimeout(() => setSaved(false), 4000);
+    return () => clearTimeout(timer);
+  }, [saved]);
+  useEffect(() => {
+    if (!loadMessage || loadMessage.variant !== 'success') return undefined;
+    const timer = setTimeout(() => setLoadMessage(null), 4000);
+    return () => clearTimeout(timer);
+  }, [loadMessage]);
 
   // Open-dialog state
   const [openDialog, setOpenDialog] = useState(false);
@@ -248,7 +269,14 @@ function PlaybookBuilder() {
   // drops onto Blockly's open inline HTML input (which would otherwise paste
   // the raw variable name without the {{ }} wrapper).
   useEffect(() => {
+    // Templates tab has no live Blockly canvas (see ROLE_TABS/TemplatesPanel)
+    // — workspaceRef.current still points at the LAST Blockly instance
+    // (BlocklyWorkspace disposes it on unmount but nothing nulls the ref),
+    // so this guard is required, not just an optimization. TemplatesPanel
+    // handles its own variable-drop locally (drop straight into Monaco).
+    const isTemplatesTab = () => docModeRef.current === 'role' && roleSectionRef.current === 'templates';
     const onDragOver = (event) => {
+      if (isTemplatesTab()) return;
       const ws = workspaceRef.current;
       if (!ws) return;
       if (findFieldAtPoint(ws, event.clientX, event.clientY)) {
@@ -261,6 +289,7 @@ function PlaybookBuilder() {
       }
     };
     const onDrop = (event) => {
+      if (isTemplatesTab()) return;
       const ws = workspaceRef.current;
       if (!ws) return;
       const varName = event.dataTransfer?.getData('text/plain');
@@ -593,11 +622,6 @@ function PlaybookBuilder() {
 
   return (
     <>
-      <ScreenHeader
-        streamType="playbook_builder"
-        breadcrumbConfig={{ '/playbook-builder': 'Playbook Builder' }}
-        title="Playbook Builder"
-      />
       <PageSection style={{ paddingTop: 8, paddingBottom: 8 }}>
         <Card>
           <CardBody style={{ paddingTop: 12, paddingBottom: 12 }}>
@@ -747,42 +771,45 @@ function PlaybookBuilder() {
                   <TemplatesPanel projectId={projectId} roleName={roleName} />
                 </div>
               ) : (
-                <>
-                  <div style={{ flex: '1 1 auto', minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
-                    <div style={{ flex: '1 1 60%', minHeight: 0, overflow: 'hidden' }}>
-                      <BlocklyWorkspace
-                        toolbox={toolbox}
-                        height="100%"
-                        onChange={refreshFromWorkspace}
-                        onWorkspaceReady={handleWorkspaceReady}
-                      />
-                    </div>
-                    <div style={{ flex: '1 1 40%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                      <Title headingLevel="h3" size="sm" style={{ marginBottom: 8, flex: '0 0 auto' }}>
-                        {docMode === 'role' ? `Generated YAML — ${ROLE_SECTION_LABELS[roleSection]}` : 'Generated YAML'}
-                      </Title>
-                      <div data-testid="playbook-yaml-preview" style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
-                        <CodeEditor value={playbookYaml} mode="yaml" readOnly rows="auto" />
-                      </div>
-                    </div>
-                  </div>
-                  <div style={{ flex: '0 0 150px', height: '100%', display: 'flex', flexDirection: 'column' }}>
-                    <Title headingLevel="h3" size="sm" style={{ marginBottom: 8, flex: '0 0 auto' }}>
-                      Variables
-                    </Title>
-                    <VariablesPanel
-                      projectId={projectId}
-                      roleNames={relevantRoles}
-                      localVars={docVars.map((v) => ({ name: v.name, source: 'this document', preview: v.value }))}
-                      onCreateVariable={
-                        docMode === 'playbook' || sectionSerializeMode(roleSection) === 'vars'
-                          ? handleCreateVariable
-                          : undefined
-                      }
+                <div style={{ flex: '1 1 auto', minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  <div style={{ flex: '1 1 60%', minHeight: 0, overflow: 'hidden' }}>
+                    <BlocklyWorkspace
+                      toolbox={toolbox}
+                      height="100%"
+                      onChange={refreshFromWorkspace}
+                      onWorkspaceReady={handleWorkspaceReady}
                     />
                   </div>
-                </>
+                  <div style={{ flex: '1 1 40%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                    <Title headingLevel="h3" size="sm" style={{ marginBottom: 8, flex: '0 0 auto' }}>
+                      {docMode === 'role' ? `Generated YAML — ${ROLE_SECTION_LABELS[roleSection]}` : 'Generated YAML'}
+                    </Title>
+                    <div data-testid="playbook-yaml-preview" style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
+                      <CodeEditor value={playbookYaml} mode="yaml" readOnly rows="auto" />
+                    </div>
+                  </div>
+                </div>
               )}
+              {/* Variables column stays visible on every tab, including
+                  Templates — a Jinja2 template is exactly where you'd want
+                  to look up/drag a {{ variable }} name (see VariablesPanel's
+                  onDragStart + TemplatesPanel's own drop handler). Creating
+                  a NEW variable only makes sense on a vars-shaped document. */}
+              <div style={{ flex: '0 0 150px', height: '100%', display: 'flex', flexDirection: 'column' }}>
+                <Title headingLevel="h3" size="sm" style={{ marginBottom: 8, flex: '0 0 auto' }}>
+                  Variables
+                </Title>
+                <VariablesPanel
+                  projectId={projectId}
+                  roleNames={relevantRoles}
+                  localVars={docVars.map((v) => ({ name: v.name, source: 'this document', preview: v.value }))}
+                  onCreateVariable={
+                    docMode === 'playbook' || (roleSection !== 'templates' && sectionSerializeMode(roleSection) === 'vars')
+                      ? handleCreateVariable
+                      : undefined
+                  }
+                />
+              </div>
             </div>
           </CardBody>
         </Card>

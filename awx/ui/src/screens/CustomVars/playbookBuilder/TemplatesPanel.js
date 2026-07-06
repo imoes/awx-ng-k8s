@@ -10,7 +10,7 @@
 // YamlEditor (which already treats .j2/.jinja2 as Jinja/handlebars syntax)
 // and file API as the standalone Editor screen (ProjectEditor.js), just
 // scoped to one directory.
-import React, { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Spinner, TextInput } from '@patternfly/react-core';
 import { TrashAltIcon } from '@patternfly/react-icons';
 import { listProjectFiles, readProjectFile, saveProjectFile, deleteProjectFile } from '../api';
@@ -32,6 +32,8 @@ function TemplatesPanel({ projectId, roleName }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [savedFlash, setSavedFlash] = useState(false);
+  const editorRef = useRef(null);
+  const monacoRef = useRef(null);
 
   const dirty = selectedPath !== null && content !== savedContent;
 
@@ -101,6 +103,27 @@ function TemplatesPanel({ projectId, roleName }) {
       setSaving(false);
     }
   }, [projectId, selectedPath, content]);
+
+  // Drag a variable from the right-side panel straight into the Monaco
+  // editor — inserts {{ name }} at the exact drop position (not just
+  // appended at the end), mirroring the Blockly-side "drop onto a field"
+  // behavior in PlaybookBuilder.js's own drop handler (which explicitly
+  // skips this tab and leaves it to us — see isTemplatesTab() there).
+  const handleEditorDrop = (event) => {
+    event.preventDefault();
+    const varName = event.dataTransfer?.getData('text/plain');
+    const editor = editorRef.current;
+    const monacoNs = monacoRef.current;
+    if (!varName || !editor || !monacoNs) return;
+    const target = editor.getTargetAtClientPoint(event.clientX, event.clientY);
+    const position = target?.position || editor.getPosition() || { lineNumber: 1, column: 1 };
+    editor.executeEdits('variable-drop', [{
+      range: new monacoNs.Range(position.lineNumber, position.column, position.lineNumber, position.column),
+      text: `{{ ${varName} }}`,
+      forceMoveMarkers: true,
+    }]);
+    editor.focus();
+  };
 
   const removeTemplate = async (entry, e) => {
     e.stopPropagation();
@@ -195,7 +218,11 @@ function TemplatesPanel({ projectId, roleName }) {
               </Button>
               {savedFlash && <span style={{ color: '#3e8635', fontSize: 13 }}>Saved.</span>}
             </div>
-            <div style={{ flex: '1 1 auto', minHeight: 0 }}>
+            <div
+              style={{ flex: '1 1 auto', minHeight: 0 }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={handleEditorDrop}
+            >
               {loadingContent ? (
                 <Spinner size="md" style={{ margin: 20 }} />
               ) : (
@@ -206,6 +233,7 @@ function TemplatesPanel({ projectId, roleName }) {
                     path={selectedPath}
                     onSave={saveTemplate}
                     height="100%"
+                    onEditorMount={(editor, monacoNs) => { editorRef.current = editor; monacoRef.current = monacoNs; }}
                   />
                 </Suspense>
               )}

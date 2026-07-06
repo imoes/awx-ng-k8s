@@ -35,6 +35,9 @@ function configureYamlOnce(monaco) {
  *   readOnly     {boolean}
  *   height       {string}   — CSS-Höhe, default '100%'
  *   onSave       {fn}       — wird bei Ctrl+S aufgerufen
+ *   onEditorMount {fn}      — (editor, monaco) => void, für Callers die z.B.
+ *                             Drag&Drop-Insert an der Cursor-/Drop-Position
+ *                             brauchen (siehe TemplatesPanel.js)
  */
 export default function YamlEditor({
   value = '',
@@ -44,6 +47,7 @@ export default function YamlEditor({
   readOnly = false,
   height = '100%',
   onSave,
+  onEditorMount,
 }) {
   const monaco = useMonaco();
   const editorRef = useRef(null);
@@ -86,8 +90,9 @@ export default function YamlEditor({
           onSave
         );
       }
+      if (onEditorMount) onEditorMount(editor, monaco);
     },
-    [monaco, onSave]
+    [monaco, onSave, onEditorMount]
   );
 
   // Sprache anhand Datei-Extension bestimmen
