@@ -331,7 +331,20 @@ docker compose exec awx_web awx-manage showmigrations customvars
 
 ## MCP-Server (AWX-ng)
 
-- Endpoint: `https://<host>/mcp` (JSON-RPC 2.0)
-- Auth: Bearer-Token (OAuth2) oder Django-Session
-- Token erstellen: UI → Resources → API Tokens oder `POST /api/v2/tokens/`
-- Tools: `awx_run_playbook`, `awx_list_inventories`, `awx_list_projects`, etc.
+- Endpoint: `https://<host>/mcp` (JSON-RPC 2.0), Engine `awx/customvars/mcp/server.py` (`MCPServer`, `@mcp.tool()`-Decorator, Auto-JSON-Schema aus Type-Hints), Tool-Module unter `awx/customvars/mcp/tools/` (am Ende von `server.py` importiert).
+- Auth: Bearer-Token (OAuth2) oder Django-Session (`mcp/view.py`)
+- Token erstellen: UI → Resources → API Tokens, `POST /api/v2/tokens/`, oder `awx-manage create_oauth2_token --user admin`
+- Basis-Tools (Django-ORM-Reads + `awx_http()`-Client für Mutationen): System/Inventories/Hosts/Groups/Projects/Jobs/Locations/Credentials.
+
+### MCP Prose-Authoring-Schicht (`tools/authoring.py` + `embeddings.py`)
+
+Ziel: so strukturierten, abrufbaren Kontext liefern, dass ein **kleines lokales Modell (7B, Ollama/vLLM/llama.cpp)** Ansible bedienen kann — nicht indem Kontext die Modellgröße ersetzt, sondern indem die Aufgabe verkleinert wird (RAG statt Recall, Schema-constrained Tool-I/O, Zerlegung pro Teilaufgabe, Lint→Retry, `--check`-Dry-Run als Netz). Referenz: yolo-man/Bossman, aber auf **echtem** ansible-runner (Idempotenz/`--check` nativ statt nachgebaut).
+
+**14 Tools** in drei Gruppen:
+- *Kontext-Lieferung*: `ansible_conventions()` (byte-stabile Geerling-Konventionen aus `~/skills/ansible`, client-prompt-cachebar), `get_catalog()` (byte-stabiler Kompakt-Digest aller 71 `ansible.builtin`-Module), `search_modules`/`search_roles`/`search_playbooks` (semantisch, s.u.), `get_module(name)` (voller typisierter Param-Spec — read-don't-recall), `list_roles`/`get_role` (Projekt-Rollen als Bausteine; nutzt die **echten** Feldnamen `var_name`/`tag_name`/`handler_name` — die alten `awx_get_role_*` in `projects.py` referenzieren `.name`/`order_by("name")` und sind latent kaputt).
+- *Authoring-Schleife*: `draft_playbook` (schreiben + sofort linten), `lint_playbook` (YAML + ansible-lint, strukturierte Fehler für Retry-Loop), `check_run` (legt/rehut ein `job_type='check'`-Job-Template pro Playbook an — Stock-AWX-REST, da kein Custom-JT-Endpoint — und startet einen `--check`-Dry-Run), `check_result` (parst PLAY RECAP → `total_changed`/`total_failed` + stdout-Tail; changed>0 dann changed==0 = idempotent). Echte (Nicht-Check-)Ausführung bleibt bei `awx_launch_job_template` + explizitem Human-Approval.
+- *Generation-Cache* (Token-Spar-Multiplikator): `cache_lookup(prose)` (sha256-Exakt-Treffer, sonst Cosine ≥ 0.85 Fuzzy → gespeichertes Artefakt = **0 LLM-Tokens**), `cache_store(prose, artifact)` nach erfolgreichem Lint+Check.
+
+**Retrieval/Cache-Storage** (`embeddings.py` + Models `EmbeddedBlock`/`AuthoringCacheEntry`, Migration `0014`): Embeddings als **JSONField (list[float])** + Cosine-in-Python — **kein pgvector** (bei dieser Datenmenge <1ms, kein DB-Image-Swap/Extension/Startup-Risiko; später transparent upgradebar). Embedding-Client: bge-m3 über OpenAI-kompatibles `{AWX_EMBED_URL}/v1/embeddings` (Default `llamacpp03.ippen.media/embed`, dim 1024, kein Auth), **fail-soft** → `None` ⇒ Tools fallen auf lexikalische Suche zurück (Extension nie hart nötig). Index-Aufbau: `awx-manage mcp_reindex [project_id]` (embeddet Katalog project-agnostisch + Rollen/Playbooks je Projekt). **Nach jedem Deploy/Projektwechsel `mcp_reindex` laufen lassen**, sonst greift der lexikalische Fallback.
+
+Verifiziert (Projekt 8, über HTTP+OAuth2): 63 Tools total (49 + 14), Migration sauber (nur 2 Tabellen), Reindex 71 Module + 36 Rollen + 288 Playbooks; Einzel-Intent-Suche präzise (`open a firewall port`→`iptables`, `create a user account`→`user`, `copy a template file`→`template`); Cache exact+fuzzy(0.96)+miss. **Offen: Live-7B-Akzeptanztest** (lokaler Modell-MCP-Client mit Tool-Calling + grammar-constrained decoding gegen `/mcp`; Erfolg = Prosa → lint-sauberes, `--check`-idempotentes Playbook) — Server-Seite fertig, Client-Harness ausstehend.
