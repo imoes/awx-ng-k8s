@@ -16,6 +16,7 @@ coerced conservatively (exact true/false, ints, floats; Jinja {{…}}/{%…%} al
 everything else stays a string). On export scalars are stringified. Jinja2 templates are opaque
 text and are NOT parsed here — they pass through untouched.
 """
+import datetime
 import json
 import re
 
@@ -40,10 +41,34 @@ class FormatError(ValueError):
 
 # ── YAML / JSON ⇄ obj ─────────────────────────────────────────────────────────
 
+def _json_safe(node):
+    """Coerce a parsed structure to JSON-native types only, so it round-trips through jsonb.
+
+    YAML's SafeLoader emits datetime/date/time for timestamp scalars (e.g. `2024-01-01`) and can
+    emit bytes/set — none are JSON-serializable and none belong in the JSON-IR. Dates/times become
+    ISO strings, bytes decode, anything exotic stringifies. (Ansible treats these as strings anyway.)
+    """
+    if isinstance(node, dict):
+        return {str(k): _json_safe(v) for k, v in node.items()}
+    if isinstance(node, (list, tuple, set)):
+        return [_json_safe(v) for v in node]
+    if isinstance(node, bool) or node is None or isinstance(node, (int, float, str)):
+        return node
+    if isinstance(node, (datetime.datetime, datetime.date, datetime.time)):
+        return node.isoformat()
+    if isinstance(node, bytes):
+        return node.decode("utf-8", "replace")
+    return str(node)
+
+
 def yaml_to_obj(text):
-    """Parse YAML (or JSON — it's a subset) into a plain Python object (the JSON-IR)."""
+    """Parse YAML (or JSON — it's a subset) into a plain Python object (the JSON-IR).
+
+    The result contains only JSON-native types (dates → ISO strings, etc.) so it can be stored in
+    a jsonb column and re-serialized losslessly.
+    """
     try:
-        return yaml.safe_load(text)
+        return _json_safe(yaml.safe_load(text))
     except yaml.YAMLError as exc:
         raise FormatError(f"invalid YAML: {exc}") from exc
 

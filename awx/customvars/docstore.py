@@ -19,7 +19,9 @@ from awx.customvars.models import ProjectDocument
 from awx.customvars import formats
 
 STRUCTURED_EXTS = {"yml", "yaml", "json", "nt"}
-SKIP_DIRS = {".git", "__pycache__", ".ansible", ".svn"}
+# ansible_collections = vendored/installed Galaxy dependencies (thousands of files) — not the
+# project's own editable content; collections/requirements.yml (the declaration) is kept.
+SKIP_DIRS = {".git", "__pycache__", ".ansible", ".svn", "ansible_collections", "node_modules", ".github"}
 MAX_BYTES = 512 * 1024
 
 

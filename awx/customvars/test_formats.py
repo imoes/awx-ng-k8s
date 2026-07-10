@@ -65,6 +65,14 @@ def test_convert_between_formats():
     assert F.json_to_obj(j) == PLAY
 
 
+def test_yaml_dates_become_json_safe_strings():
+    # YAML timestamp scalars must not leak datetime/date objects into the JSON-IR (jsonb).
+    import json as _j
+    obj = F.yaml_to_obj("released: 2024-01-01\nts: 2024-01-01 12:30:00\nname: prod\n")
+    assert obj == {"released": "2024-01-01", "ts": "2024-01-01T12:30:00", "name": "prod"}
+    _j.dumps(obj)  # must be JSON-serializable (would raise before the fix)
+
+
 def test_fmt_from_path():
     assert F.fmt_from_path("roles/x/tasks/main.yml") == "yml"
     assert F.fmt_from_path("playbook.json") == "json"
