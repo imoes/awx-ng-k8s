@@ -281,3 +281,33 @@ class AuthoringCacheEntry(models.Model):
 
     def __str__(self):
         return f"cache:{self.source_hash[:12]} (hits={self.hits})"
+
+
+# ── 5. JSON-IR document store (DB-authoritative project content) ───────────────
+# Single source of truth for a project's EDITABLE content, to end the DB↔filesystem
+# split-brain: editors (Monaco/Blockly/MCP) read & write THIS, never the on-disk checkout.
+# The git working tree is a projection produced by export; import parses git back into here.
+# Structured files (yaml/yml/json/nt) are stored as their parsed JSON-IR in `doc` (JSONField =
+# Postgres jsonb); non-structured files (Jinja2 .j2, static files/) are stored verbatim in `raw`
+# so the DB is authoritative for the WHOLE project, not just the structured parts.
+
+class ProjectDocument(models.Model):
+    STRUCTURED = "structured"
+    RAW = "raw"
+    KIND_CHOICES = [(STRUCTURED, "structured (JSON-IR)"), (RAW, "raw text")]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project_id = models.IntegerField(db_index=True)
+    path = models.CharField(max_length=1024, db_index=True)  # repo-relative, e.g. roles/x/tasks/main.yml
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES, default=STRUCTURED)
+    fmt = models.CharField(max_length=16, default="yaml")     # on-disk serialization for export (yaml/json/nt)
+    doc = models.JSONField(null=True, blank=True)             # JSON-IR (structured); jsonb on Postgres
+    raw = models.TextField(blank=True, default="")           # verbatim text (raw kind)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [("project_id", "path")]
+        indexes = [models.Index(fields=["project_id", "kind"])]
+
+    def __str__(self):
+        return f"proj{self.project_id}:{self.path} ({self.kind})"
