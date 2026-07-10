@@ -1571,6 +1571,20 @@ class ProjectFileContentView(APIView):
         if not rel:
             return Response({'detail': 'path parameter required.'}, status=400)
 
+        # DB-authoritative projects: read from the JSON-IR store, not the filesystem.
+        from awx.customvars import docstore
+        pid = int(pk)
+        if docstore.is_db_managed(pid):
+            doc = docstore.read_document(pid, rel)
+            if doc is not None:
+                content = doc['content']
+                return Response({
+                    'path': rel, 'content': content,
+                    'size': len(content.encode('utf-8')),
+                    'suffix': pathlib.Path(rel).suffix, 'source': 'db',
+                })
+            # Not in the store (e.g. a skipped binary) — fall through to a legacy filesystem read.
+
         target = _safe_resolve(project_path, rel)
         if not target.is_file():
             return Response({'detail': 'File not found.'}, status=404)
@@ -1606,6 +1620,22 @@ class ProjectFileContentView(APIView):
             return Response({'detail': '"content" field required.'}, status=400)
         if len(content.encode('utf-8')) > _MAX_FILE_BYTES:
             return Response({'detail': 'Content too large (max 512 KB).'}, status=413)
+
+        # DB-authoritative projects: write ONLY the store — never the filesystem or git. Export /
+        # execution-materialization are the sole filesystem writers (ends the DB↔FS split-brain).
+        # Structured content is parsed to JSON-IR; a role write incrementally re-scans that role.
+        from awx.customvars import docstore
+        from awx.customvars.formats import FormatError
+        pid = int(pk)
+        if docstore.is_db_managed(pid):
+            try:
+                result = docstore.write_document(pid, rel, content)
+            except FormatError as exc:
+                return Response({'detail': f'parse error: {exc}'}, status=400)
+            resp = {'path': rel, 'saved': True, 'source': 'db'}
+            if 'rescanned_role' in result:
+                resp['rescanned_role'] = result['rescanned_role']
+            return Response(resp)
 
         target = _safe_resolve(project_path, rel)
         if not _is_allowed_file_path(target, project_path):
@@ -1683,6 +1713,24 @@ class ProjectFileContentView(APIView):
         rel = request.query_params.get('path', '')
         if not rel:
             return Response({'detail': 'path parameter required.'}, status=400)
+
+        # DB-authoritative projects: delete from the store (a "directory" = all docs under the
+        # prefix); no filesystem/git touch. Refresh the affected role's scan from what remains.
+        from awx.customvars import docstore
+        from awx.customvars.models import ProjectDocument
+        from django.db.models import Q
+        pid = int(pk)
+        if docstore.is_db_managed(pid):
+            qs = ProjectDocument.objects.filter(project_id=pid).filter(
+                Q(path=rel) | Q(path__startswith=rel.rstrip('/') + '/'))
+            count = qs.count()
+            if count == 0:
+                return Response({'detail': 'Not found.'}, status=404)
+            qs.delete()
+            parts = rel.split('/')
+            if parts[0] == 'roles' and len(parts) >= 2 and parts[1]:
+                docstore.rescan_role(pid, parts[1])  # 0 remaining docs → clears its scan records
+            return Response(status=204)
 
         target = _safe_resolve(project_path, rel)
         is_dir = target.is_dir()

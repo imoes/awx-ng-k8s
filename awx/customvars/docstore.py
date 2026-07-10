@@ -13,6 +13,8 @@ or exact formatting — round-tripping a commented .yml normalizes it and drops 
 inherent to "JSON is the source of truth"; templates/static (.raw) are preserved byte-for-byte.
 """
 import os
+import shutil
+import tempfile
 from pathlib import Path
 
 from awx.customvars.models import ProjectDocument
@@ -28,6 +30,17 @@ MAX_BYTES = 512 * 1024
 def _is_structured(path: str) -> bool:
     ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
     return ext in STRUCTURED_EXTS
+
+
+def is_db_managed(project_id: int) -> bool:
+    """True once a project has been imported into the store — then the editor/execution use the DB."""
+    return ProjectDocument.objects.filter(project_id=project_id).exists()
+
+
+def role_of(path: str):
+    """`roles/<name>/...` → <name>, else None."""
+    parts = path.split("/")
+    return parts[1] if len(parts) >= 2 and parts[0] == "roles" else None
 
 
 def import_project(project_id: int, project_path) -> dict:
@@ -77,7 +90,65 @@ def import_project(project_id: int, project_path) -> dict:
     stale = ProjectDocument.objects.filter(project_id=project_id).exclude(path__in=seen)
     stats["pruned"] = stale.count()
     stale.delete()
+    # One full role re-scan so the imported project's RoleVariable/Tag/Handler are correct.
+    rescan_all_roles(project_id)
     return stats
+
+
+# ── Role extraction from the store (incremental on write) ─────────────────────
+
+def rescan_role(project_id: int, role_name: str) -> dict:
+    """Re-extract RoleVariable/RoleTag/RoleHandler for ONE role from the DB store.
+
+    The store is the source of truth, so we materialize just this role's docs into a temp dir and
+    reuse the existing (Ansible-tag-aware) extractors in extract.py — no logic duplicated, and files
+    stored as raw (e.g. !unsafe/!vault) still scan correctly because extract.py's loader handles them.
+    """
+    from awx.customvars import extract
+    from awx.customvars.models import RoleVariable, RoleTag, RoleHandler
+
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        prefix = f"roles/{role_name}/"
+        for d in ProjectDocument.objects.filter(project_id=project_id, path__startswith=prefix):
+            target = tmp / d.path[len("roles/"):]  # tmp/<role>/<section>/...
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(_render(d), encoding="utf-8")
+        role_dir = tmp / role_name
+        revision = "docstore"
+
+        variables = extract.extract_role(role_dir, project_id, revision)
+        RoleVariable.objects.filter(project_id=project_id, role_name=role_name).delete()
+        RoleVariable.objects.bulk_create([RoleVariable(**v) for v in variables])
+
+        tags = extract.extract_role_tags(role_dir)
+        RoleTag.objects.filter(project_id=project_id, role_name=role_name).delete()
+        RoleTag.objects.bulk_create([
+            RoleTag(project_id=project_id, role_name=role_name, tag_name=t, task_count=c,
+                    scanned_revision=revision)
+            for t, c in tags.items()
+        ])
+
+        handlers = extract.extract_role_handlers(role_dir)
+        RoleHandler.objects.filter(project_id=project_id, role_name=role_name).delete()
+        RoleHandler.objects.bulk_create([
+            RoleHandler(project_id=project_id, role_name=role_name, scanned_revision=revision, **h)
+            for h in handlers
+        ])
+        return {"role": role_name, "vars": len(variables), "tags": len(tags), "handlers": len(handlers)}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def rescan_all_roles(project_id: int) -> dict:
+    """Re-scan every role present in the store (used after a full import)."""
+    roles = set()
+    for p in (ProjectDocument.objects.filter(project_id=project_id, path__startswith="roles/")
+              .values_list("path", flat=True)):
+        r = role_of(p)
+        if r:
+            roles.add(r)
+    return {r: rescan_role(project_id, r) for r in sorted(roles)}
 
 
 def _render(doc: "ProjectDocument") -> str:
@@ -130,4 +201,10 @@ def write_document(project_id: int, path: str, content: str, fmt: str = None) ->
         d, _ = ProjectDocument.objects.update_or_create(
             project_id=project_id, path=path,
             defaults={"kind": ProjectDocument.RAW, "raw": content, "doc": None, "fmt": "raw"})
-    return {"path": path, "kind": d.kind, "fmt": d.fmt}
+    result = {"path": path, "kind": d.kind, "fmt": d.fmt}
+    # Incremental re-scan of the affected role (the user's "beim Schreiben inkrementell"): any write
+    # to a roles/<name>/... doc refreshes that role's RoleVariable/Tag/Handler from the store.
+    r = role_of(path)
+    if r:
+        result["rescanned_role"] = rescan_role(project_id, r)
+    return result
