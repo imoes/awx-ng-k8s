@@ -25,6 +25,9 @@ _timer = None
 # Matches any file inside a role directory:  .../roles/<role_name>/...
 _ROLE_FILE_RE = re.compile(r'(.*)/roles/([^/]+)/(.+)$')
 
+# Matches a project host_vars/group_vars file:  <project_dir>/host_vars/<name>.yml
+_HOSTVARS_RE = re.compile(r'(.*)/(host_vars|group_vars)/([^/]+)\.ya?ml$')
+
 # Base path of the watched PROJECTS_ROOT — set once by start_watcher()
 _watch_root: str = ''
 
@@ -145,6 +148,51 @@ def _rescan_project_full(project_dir: str):
         log.warning('watcher: error in _rescan_project_full project_dir=%s: %s', project_dir, exc)
 
 
+# ── host_vars/group_vars → Host/Group cache reconcile ──────────────────────────
+
+def _reconcile_vars_file(abs_path: str) -> bool:
+    """A `host_vars/<name>.yml` / `group_vars/<name>.yml` changed on disk (git pull, external edit,
+    or our own editor mirror) → refresh the matching native `Host.variables`/`Group.variables` CACHE
+    so the DB reflects the file ("the filesystem is the database"; the DB field is a cache). Maps the
+    file to inventory objects via the project's SCM inventory source (source_project). Best-effort:
+    returns True if the path IS a host_vars/group_vars file (so the caller skips a pointless role
+    rescan), regardless of whether a mapping/object was found."""
+    m = _HOSTVARS_RE.match(abs_path)
+    if not m:
+        return False
+    project_dir, kind, name = m.group(1), m.group(2), m.group(3)
+    try:
+        import yaml
+        from awx.main.models import Host, Group, InventorySource
+
+        project_id = _project_id_for_dir(project_dir)
+        if project_id is None:
+            return True
+        try:
+            data = yaml.safe_load(pathlib.Path(abs_path).read_text(encoding='utf-8')) or {}
+        except Exception:
+            return True
+        inv_ids = list(
+            InventorySource.objects.filter(source_project_id=project_id)
+            .values_list('inventory_id', flat=True)
+        )
+        if not inv_ids:
+            return True  # project not linked to an inventory — file is authoritative at runtime anyway
+        Model = Host if kind == 'host_vars' else Group
+        dumped = yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        n = 0
+        for obj in Model.objects.filter(inventory_id__in=inv_ids, name=name):
+            obj.variables = dumped
+            obj.save(update_fields=['variables'])
+            n += 1
+        if n:
+            log.info('watcher: reconciled %s cache: project=%s name=%s → %d obj(s)', kind, project_id, name, n)
+        return True
+    except Exception as exc:
+        log.warning('watcher: error reconciling vars file %s: %s', abs_path, exc)
+        return True
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _project_id_for_dir(project_dir: str) -> int | None:
@@ -215,7 +263,11 @@ class _Handler:
             _debounce(project_dir, role_name)
             return
 
-        # Any other file (playbook, group_vars, host_vars, …) — full rescan
+        # host_vars/group_vars file → reconcile the Host/Group cache (not a role rescan).
+        if _reconcile_vars_file(path):
+            return
+
+        # Any other file (playbook, inventory, …) — full role rescan
         project_dir = _project_dir_from_path(path)
         if project_dir and project_dir != path:
             log.debug('watcher: non-role file changed: %s — full rescan queued', path)
