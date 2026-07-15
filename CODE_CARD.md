@@ -311,6 +311,23 @@ docker compose exec -T awx_ee python3 - < awx/ui/src/screens/CustomVars/playbook
   > awx/ui/src/screens/CustomVars/playbookBuilder/moduleCatalog.generated.json
 ```
 
+### Projekt-Speicher: Dateisystem-first, DB-Opt-in (JSON-IR docstore)
+Leitprinzip „das Dateisystem ist auch eine Datenbank". Speichermodus je Projekt via `scm_type`:
+- **git/SCM → Dateisystem-autoritativ** (Default). Editor + Host-/Group-Var-Editor schreiben Dateien
+  (+ git-Commit); Postgres nur abgeleiteter Cache (`RoleVariable`, `Host/Group.variables`), vom
+  Watchdog aus Dateien versöhnt. Kein Split-Brain.
+- **Manual → DB-Opt-in** via „Import DB" (`POST /projects/{id}/docstore/ {action:import}`). Der
+  JSON-IR-Store (`ProjectDocument`, JSONField=jsonb) wird Quelle; Job-Start materialisiert ihn ins
+  Runner-Dir.
+
+Komponenten (alle unter `awx/customvars/`):
+- **`formats.py`** — JSON-IR-Konverter yaml/json/**nestedtext** (`to_obj`/`from_obj`/`convert`). YAML-Datumsskalare → JSON-sichere Strings (`_json_safe`); NestedText-Typschicht konservativ (führende Nullen wie `0755` bleiben String, `yes/no/on/off/null` nicht typisiert — vermeidet YAML-Fallen). `nestedtext` in `deploy/Dockerfile` (pip). Tests: `test_formats.py`.
+- **`docstore.py`** — `is_manual_project`/`is_db_managed` (scm_type-gated), `import_project`/`export_project` (git↔DB, `ansible_collections` etc. übersprungen), `read_document`/`write_document` (nur DB), `rescan_role`/`rescan_all_roles` (inkrementeller Rollen-Scan aus dem Store, materialisiert Rolle in Temp-Dir + nutzt `extract.py` unverändert). `awx-manage project_docstore import|export <id>`. Modell + Migration `0015`.
+- **`api.py` `ProjectFileContentView`** GET/PUT/DELETE routen für DB-managed Projekte durch `docstore` statt Dateisystem; `ProjectDocStoreView` (`/docstore/` GET-Status + POST import/export). **`_mirror_vars_to_project`** — Host-/Group-Var-Edits (`HostRoleVariableDetailView`/`GroupRoleVariableDetailView`) spiegeln zusätzlich nach `host_vars/<host>.yml`/`group_vars/<group>.yml` (git-Modus, +Commit) bzw. docstore (DB-Modus); Projekt via `_infer_project_id` (Inventory-SCM-Source oder RoleVariable-Treffer).
+- **`file_watcher.py`** — `_reconcile_vars_file`: host_vars/group_vars-Datei-Änderung → `Host/Group.variables`-Cache aus der Datei aktualisiert (Mapping via `InventorySource.source_project`).
+- **`awx/main/tasks/jobs.py` `RunJob.build_project_dir`** — nach `sync_and_copy` für DB-managed Projekte `docstore.export_project` ins `private_data_dir/project` (Runner führt DB-Wahrheit aus; git-Projekte unberührt). **Achtung: `jobs.py` in `awx_web` UND `awx_task` (separate Images) neu bauen.**
+- **UI** (`ProjectEditor.js`): „Import DB"-Button + „DB · N"-Label + „Export to files" (nur Manual); `readProjectDocStore`/`projectDocStoreAction` in `api.js`.
+
 ### Playbook-Cache
 `project.playbook_files` (JSONField) wird nur beim Project-Sync aktualisiert.  
 Editor-Endpunkte rufen `_refresh_playbook_cache(pk)` auf. `could_be_playbook()` prüft Dateiinhalt — nur Dateien mit `hosts:` / `import_playbook:` / `include:` werden erkannt.
