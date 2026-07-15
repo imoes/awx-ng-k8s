@@ -32,9 +32,21 @@ def _is_structured(path: str) -> bool:
     return ext in STRUCTURED_EXTS
 
 
+def is_manual_project(project_id: int) -> bool:
+    """A Manual (non-SCM) project — the only kind that may become DB-authoritative. A git/svn/…
+    project's source of truth is its filesystem/git checkout ('the filesystem is also a database'),
+    so it is never DB-managed and the editor always writes files."""
+    from awx.main.models import Project
+    try:
+        return Project.objects.get(pk=project_id).scm_type == ""
+    except Project.DoesNotExist:
+        return False
+
+
 def is_db_managed(project_id: int) -> bool:
-    """True once a project has been imported into the store — then the editor/execution use the DB."""
-    return ProjectDocument.objects.filter(project_id=project_id).exists()
+    """True only for a Manual project that has been explicitly imported into the store ('Import DB').
+    Git/SCM projects are always filesystem-authoritative (False), even if rows somehow exist."""
+    return is_manual_project(project_id) and ProjectDocument.objects.filter(project_id=project_id).exists()
 
 
 def role_of(path: str):
@@ -47,8 +59,13 @@ def import_project(project_id: int, project_path) -> dict:
     """git working tree → DB. Parse structured files to JSON-IR, store the rest verbatim.
 
     A structured file that fails to parse is kept as raw (lossless) and reported in errors.
-    Returns {structured, raw, skipped, pruned, errors:[...]}.
+    Returns {structured, raw, skipped, pruned, errors:[...]}. Refuses non-Manual projects:
+    git/SCM projects stay filesystem-authoritative and must never be imported into the DB.
     """
+    if not is_manual_project(project_id):
+        raise ValueError(
+            f"project {project_id} is a git/SCM project — it is filesystem-authoritative and "
+            "cannot be imported into the DB store (only Manual projects can be DB-managed).")
     base = Path(project_path)
     stats = {"structured": 0, "raw": 0, "skipped": 0, "pruned": 0, "errors": []}
     seen = set()
