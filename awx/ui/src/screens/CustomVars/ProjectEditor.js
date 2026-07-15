@@ -48,6 +48,8 @@ import {
   deleteProjectFile,
   gitProjectAction,
   gitProjectStatus,
+  readProjectDocStore,
+  projectDocStoreAction,
   listProjectFiles,
   lintProjectFile,
   readProjectFile,
@@ -400,6 +402,11 @@ export default function ProjectEditor() {
   const [gitBusy, setGitBusy] = useState(false);
   const [gitOutput, setGitOutput] = useState(null); // {stdout, stderr, returncode}
 
+  // DB doc store status: {manual, db_managed, doc_count} — Manual projects can opt into
+  // DB-authoritative editing (the editor then writes the DB instead of the filesystem).
+  const [docStore, setDocStore] = useState(null);
+  const [docStoreBusy, setDocStoreBusy] = useState(false);
+
   const location = useLocation();
   const lintTimer = useRef(null);
   const deeplinkDone = useRef(false);
@@ -436,14 +443,53 @@ export default function ProjectEditor() {
       .catch(() => {});
   }, [location.search]);
 
-  // Reload git status whenever project changes
+  // Reload git status + doc-store mode whenever project changes
   useEffect(() => {
     setGitStatus(null);
+    setDocStore(null);
     if (!projectId) return;
     gitProjectStatus(projectId)
       .then(({ data }) => setGitStatus(data))
       .catch(() => setGitStatus({ is_git_repo: false }));
+    readProjectDocStore(projectId)
+      .then(({ data }) => setDocStore(data))
+      .catch(() => setDocStore(null));
   }, [projectId]);
+
+  // "Import DB" — opt a Manual project into DB-authoritative editing (the editor then writes the
+  // DB; export/job-launch materialize it to files). Refuses git projects backend-side.
+  const importToDb = async () => {
+    if (!window.confirm(
+      'Import this project into the database and switch it to DB-authoritative editing?\n\n'
+      + 'The editor will then write the database instead of the filesystem; use "Export to files" '
+      + 'to write it back to disk.'
+    )) return;
+    setDocStoreBusy(true);
+    try {
+      const { data } = await projectDocStoreAction(projectId, 'import');
+      setMsg(`Imported to DB: ${data.structured || 0} structured, ${data.raw || 0} raw docs.`);
+      const { data: st } = await readProjectDocStore(projectId);
+      setDocStore(st);
+      setTreeKey((k) => k + 1);
+    } catch (e) {
+      setErr(e?.response?.data?.detail || e.message);
+    } finally {
+      setDocStoreBusy(false);
+    }
+  };
+
+  const exportDbToFiles = async () => {
+    setDocStoreBusy(true);
+    try {
+      const { data } = await projectDocStoreAction(projectId, 'export');
+      setMsg(`Exported DB → files: ${data.written || 0} written.`);
+      setTreeKey((k) => k + 1);
+    } catch (e) {
+      setErr(e?.response?.data?.detail || e.message);
+    } finally {
+      setDocStoreBusy(false);
+    }
+  };
 
   // ── Mountpoint project creation ──────────────────────────────────────────────
   const openMountModal = async () => {
@@ -792,6 +838,29 @@ export default function ProjectEditor() {
               >
                 Upload
               </Button>
+              {docStore?.manual && !docStore?.db_managed && (
+                <Button
+                  variant="secondary"
+                  onClick={importToDb}
+                  isDisabled={!projectId || docStoreBusy}
+                  title="Import this Manual project into the database (DB-authoritative editing)"
+                >
+                  Import DB
+                </Button>
+              )}
+              {docStore?.db_managed && (
+                <>
+                  <Label color="green" isCompact>DB · {docStore.doc_count}</Label>
+                  <Button
+                    variant="secondary"
+                    onClick={exportDbToFiles}
+                    isDisabled={docStoreBusy}
+                    title="Write the database content back to the project files"
+                  >
+                    Export to files
+                  </Button>
+                </>
+              )}
               {gitStatus?.is_git_repo && (
                 <Button
                   variant="secondary"

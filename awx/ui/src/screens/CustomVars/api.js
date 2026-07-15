@@ -239,6 +239,14 @@ export function gitProjectAction(projectId, payload) {
   return LocationsAPI.http.post(`/api/v2/projects/${projectId}/git/`, payload);
 }
 
+// ── DB doc store (Manual projects can opt into DB-authoritative editing) ──────
+export function readProjectDocStore(projectId) {
+  return LocationsAPI.http.get(`/api/v2/projects/${projectId}/docstore/`);
+}
+export function projectDocStoreAction(projectId, action) {
+  return LocationsAPI.http.post(`/api/v2/projects/${projectId}/docstore/`, { action });
+}
+
 // ── Personal OAuth2 tokens (work for both /api/v2/ and /mcp) ─────────────────
 export function listMyTokens() {
   return LocationsAPI.http.get('/api/v2/tokens/');
