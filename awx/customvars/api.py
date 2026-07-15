@@ -1832,6 +1832,45 @@ class ProjectFileLintView(APIView):
         return Response({'valid': True, 'errors': errors})
 
 
+class ProjectDocStoreView(APIView):
+    """
+    GET  /api/v2/projects/{pk}/docstore/  → {manual, db_managed, doc_count}
+    POST /api/v2/projects/{pk}/docstore/  Body {"action": "import"|"export"}
+      import: parse the on-disk checkout into the DB JSON-IR store (Manual projects ONLY) — the
+              project becomes DB-authoritative ("Import DB"); the editor then writes the DB.
+      export: render the DB store back into the working tree (materialize to files).
+    Git/SCM projects stay filesystem-authoritative — import is refused for them (see docstore).
+    """
+    def get(self, request, pk, **kwargs):
+        from awx.customvars import docstore
+        from awx.customvars.models import ProjectDocument
+        pid = int(pk)
+        return Response({
+            'manual': docstore.is_manual_project(pid),
+            'db_managed': docstore.is_db_managed(pid),
+            'doc_count': ProjectDocument.objects.filter(project_id=pid).count(),
+        })
+
+    def post(self, request, pk, **kwargs):
+        if not request.user.is_superuser:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('Only superusers may manage the project doc store.')
+        from awx.customvars import docstore
+        pid = int(pk)
+        action = (request.data.get('action') or '').strip()
+        project_path = _get_project_path(pk)
+        if action == 'import':
+            try:
+                stats = docstore.import_project(pid, project_path)
+            except ValueError as exc:
+                return Response({'detail': str(exc)}, status=400)
+            return Response({'action': 'import', 'db_managed': docstore.is_db_managed(pid), **stats})
+        if action == 'export':
+            stats = docstore.export_project(pid, project_path)
+            return Response({'action': 'export', **stats})
+        return Response({'detail': "action must be 'import' or 'export'."}, status=400)
+
+
 class ProjectFileRenameView(APIView):
     """
     POST /api/v2/projects/{pk}/files/rename/

@@ -13,6 +13,7 @@ from awx.customvars.api import (
     ProjectRolesListView,
     ProjectFilesListView,
     ProjectFileContentView,
+    ProjectDocStoreView,
     ProjectFileLintView,
     ProjectFileRenameView,
     ProjectFilesUploadView,
@@ -80,6 +81,7 @@ urls = [
     # awx-ng: Projekt-Datei-Editor
     re_path(r'^(?P<pk>[0-9]+)/files/$', ProjectFilesListView.as_view(), name='project_files_list'),
     re_path(r'^(?P<pk>[0-9]+)/files/content/$', ProjectFileContentView.as_view(), name='project_file_content'),
+    re_path(r'^(?P<pk>[0-9]+)/docstore/$', ProjectDocStoreView.as_view(), name='project_docstore'),
     re_path(r'^(?P<pk>[0-9]+)/files/lint/$', ProjectFileLintView.as_view(), name='project_file_lint'),
     re_path(r'^(?P<pk>[0-9]+)/files/rename/$', ProjectFileRenameView.as_view(), name='project_file_rename'),
     re_path(r'^(?P<pk>[0-9]+)/files/upload/$', ProjectFilesUploadView.as_view(), name='project_files_upload'),
