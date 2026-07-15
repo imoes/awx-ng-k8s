@@ -950,6 +950,26 @@ class RunJob(SourceControlMixin, BaseTask):
             paths = [os.path.join(CONTAINER_ROOT, folder)] + paths
             env[env_key] = os.pathsep.join(paths)
 
+        # Inject environment variables for the runner executing this job.
+        # Effective value = per-runner override (ExecutionNodeLocation) if set,
+        # else the Site (Location) default. Overrides global AWX_TASK_ENV so
+        # runner/site-specific proxy settings work.
+        try:
+            from awx.customvars.models import ExecutionNodeLocation
+            from awx.customvars.api import _parse_env_text, _effective_setting
+            node = job.execution_node or job.controller_node or ''
+            enl = ExecutionNodeLocation.objects.filter(instance_hostname=node).first()
+            if enl is None:
+                candidates = ExecutionNodeLocation.objects.all()
+                if candidates.count() == 1:
+                    enl = candidates.first()
+            if enl:
+                env_text = _effective_setting(enl, 'environment')
+                if env_text:
+                    env.update(_parse_env_text(env_text))
+        except Exception:
+            pass
+
         return env
 
     def build_args(self, job, private_data_dir, passwords):
@@ -1097,6 +1117,17 @@ class RunJob(SourceControlMixin, BaseTask):
 
     def build_project_dir(self, job, private_data_dir):
         self.sync_and_copy(job.project, private_data_dir, scm_branch=job.scm_branch)
+        # awx-ng: for a DB-authoritative (imported Manual) project, the JSON-IR store is the source of
+        # truth — materialize it into the per-job project dir so ansible-runner executes the DB
+        # content (the persistent checkout + git are untouched; this is the ephemeral runner copy).
+        # Git/SCM projects are never DB-managed and run from their checkout unchanged.
+        try:
+            from awx.customvars import docstore
+            if job.project_id and docstore.is_db_managed(job.project_id):
+                import os as _os
+                docstore.export_project(job.project_id, _os.path.join(private_data_dir, 'project'))
+        except Exception:
+            logger.exception('awx-ng docstore materialize failed for job %s', job.pk)
 
     def post_run_hook(self, job, status):
         super(RunJob, self).post_run_hook(job, status)
