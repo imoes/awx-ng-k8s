@@ -773,6 +773,55 @@ def _infer_project_id_for_roles(host, roles):
     return None
 
 
+def _infer_project_id(inventory, roles):
+    """Best-effort source project for an inventory's host/group vars — the inventory's SCM source
+    project, else the RoleVariable project matching the most of `roles`. (Host-agnostic variant of
+    _infer_project_id_for_roles, also usable for groups.)"""
+    try:
+        for src in inventory.inventory_sources.all():
+            if getattr(src, 'source_project_id', None):
+                return src.source_project_id
+    except Exception:
+        pass
+    if roles:
+        from django.db.models import Count
+        match = (
+            RoleVariable.objects.filter(role_name__in=roles)
+            .values('project_id').annotate(n=Count('role_name', distinct=True)).order_by('-n').first()
+        )
+        if match:
+            return match['project_id']
+    return None
+
+
+def _mirror_vars_to_project(project_id, rel_path, vars_dict, username):
+    """Mirror host/group override vars to their source project so the FILESYSTEM stays authoritative
+    ("the filesystem is also a database"): a DB-managed (imported Manual) project gets the docstore
+    doc; every other project (git/SCM, or un-imported Manual) gets the file written + git-committed.
+    Best-effort — any failure is returned, never raised (the native Host/Group.variables cache write
+    already succeeded). Returns a short status dict or None (no project inferred)."""
+    if not project_id:
+        return None
+    import yaml as _yaml
+    from awx.customvars import docstore
+    content = _yaml.dump(vars_dict or {}, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    try:
+        if docstore.is_db_managed(project_id):
+            docstore.write_document(project_id, rel_path, content)
+            return {'target': 'db', 'path': rel_path, 'project_id': project_id}
+        project_path = _get_project_path(project_id)
+        target = _safe_resolve(project_path, rel_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding='utf-8')
+        repo = project_path.resolve()
+        subprocess.run(['git', 'add', str(target)], cwd=str(repo), capture_output=True, timeout=10)
+        subprocess.run(['git', 'commit', '-m', f'awx-ng: update {rel_path}',
+                        '--author', f'{username} <awx-ng@localhost>'], cwd=str(repo), capture_output=True, timeout=10)
+        return {'target': 'fs', 'path': rel_path, 'project_id': project_id}
+    except Exception as exc:  # noqa: BLE001 — best-effort mirror; the DB cache is already updated
+        return {'error': str(exc), 'path': rel_path}
+
+
 class HostAssignRolesView(APIView):
     """
     POST /api/v2/hosts/{pk}/assign_roles/
@@ -894,7 +943,13 @@ class HostRoleVariableDetailView(APIView):
         hvars = host.variables_dict or {}
         hvars[var_name] = request.data['value']
         self._save(host, hvars)
-        return Response({'var_name': var_name, 'value': hvars[var_name], 'is_overridden': True})
+        mirror = _mirror_vars_to_project(
+            _infer_project_id(host.inventory, hvars.get('host_roles') or []),
+            f"host_vars/{host.name}.yml", hvars, request.user.username)
+        resp = {'var_name': var_name, 'value': hvars[var_name], 'is_overridden': True}
+        if mirror:
+            resp['mirrored'] = mirror
+        return Response(resp)
 
     def delete(self, request, pk, var_name, **kwargs):
         host = self._get_host(request, pk)
@@ -903,6 +958,9 @@ class HostRoleVariableDetailView(APIView):
         if existed:
             del hvars[var_name]
             self._save(host, hvars)
+            _mirror_vars_to_project(
+                _infer_project_id(host.inventory, hvars.get('host_roles') or []),
+                f"host_vars/{host.name}.yml", hvars, request.user.username)
         return Response({'var_name': var_name, 'is_overridden': False, 'removed': existed})
 
 
@@ -1008,7 +1066,13 @@ class GroupRoleVariableDetailView(APIView):
         gvars = group.variables_dict or {}
         gvars[var_name] = request.data['value']
         self._save(group, gvars)
-        return Response({'var_name': var_name, 'value': gvars[var_name], 'is_overridden': True})
+        mirror = _mirror_vars_to_project(
+            _infer_project_id(group.inventory, gvars.get('host_roles') or []),
+            f"group_vars/{group.name}.yml", gvars, request.user.username)
+        resp = {'var_name': var_name, 'value': gvars[var_name], 'is_overridden': True}
+        if mirror:
+            resp['mirrored'] = mirror
+        return Response(resp)
 
     def delete(self, request, pk, var_name, **kwargs):
         group = self._get_group(request, pk)
@@ -1017,6 +1081,9 @@ class GroupRoleVariableDetailView(APIView):
         if existed:
             del gvars[var_name]
             self._save(group, gvars)
+            _mirror_vars_to_project(
+                _infer_project_id(group.inventory, gvars.get('host_roles') or []),
+                f"group_vars/{group.name}.yml", gvars, request.user.username)
         return Response({'var_name': var_name, 'is_overridden': False, 'removed': existed})
 
 
